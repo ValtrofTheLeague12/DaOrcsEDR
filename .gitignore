@@ -41,6 +41,20 @@ capa-sigs/
 yara-rules/
 node/
 
+# Secrets and local credentials
+# .env holds real values and must never be committed; .env.example is the
+# committed template that documents which keys the project expects.
+.env
+.env.*
+!.env.example
+secrets.json
+bitwarden*.json
+*.pem
+*.key
+*.pfx
+*.p12
+credentials.json
+
 # Editor / OS
 .vscode/
 .kilo/
