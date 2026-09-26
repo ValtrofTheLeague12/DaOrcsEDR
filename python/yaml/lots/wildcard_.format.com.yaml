@@ -1,0 +1,4 @@
+host: '*.format.com'
+provider: Format
+tags:
+- Phishing

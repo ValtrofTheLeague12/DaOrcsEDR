@@ -1,0 +1,4 @@
+host: pastebin.pl
+provider: Pastebin.pl
+tags:
+- ExfiltrationC&CDownload

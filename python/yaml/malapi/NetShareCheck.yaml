@@ -1,0 +1,6 @@
+name: NetShareCheck
+dll: Netapi32.dll
+description: NetShareCheck is used to check whether or not a server is sharing a device.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/NetShareCheck.html

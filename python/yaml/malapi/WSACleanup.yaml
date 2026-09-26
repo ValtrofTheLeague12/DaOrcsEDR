@@ -1,0 +1,7 @@
+name: WSACleanup
+dll: Ws2_32.dll
+description: WSACleanup is used to terminate the use of the Winsock 2 DLL. This function
+  is commonly used by malware upon successfully utilizing the Winsock 2 functions.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/WSACleanup.html

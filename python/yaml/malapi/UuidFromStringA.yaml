@@ -1,0 +1,10 @@
+name: UuidFromStringA
+dll: Rpcrt4.dll
+description: UuidFromStringA is used to convert a string to a UUID. This function
+  can be abused to both decode data and write it to memory without using common functions
+  such as memcpy or WriteProcessMemory.
+attacks:
+- Evasion
+- Injection
+- Helper
+source: malapi/malapi.io/winapi/UuidFromStringA.html

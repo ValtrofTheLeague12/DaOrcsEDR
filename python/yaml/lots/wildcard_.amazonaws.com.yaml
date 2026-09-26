@@ -1,0 +1,4 @@
+host: '*.amazonaws.com'
+provider: Amazon Web Services
+tags:
+- PhishingDownloadExfiltrationC&C

@@ -1,0 +1,7 @@
+name: VirtualAlloc2
+dll: Kernel32.dll
+description: VirtualAlloc2 is used to reserve or changes the state of a region of
+  pages in the virtual address space of a specified process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/VirtualAlloc2.html

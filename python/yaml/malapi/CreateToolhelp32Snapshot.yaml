@@ -1,0 +1,9 @@
+name: CreateToolhelp32Snapshot
+dll: Kernel32.dll
+description: CreateToolhelp32Snapshot is used to enumerate processes, threads, and
+  modules. This function is commonly used by malware to enumerate processes before
+  process injection.
+attacks:
+- Enumeration
+- Anti-Debugging
+source: malapi/malapi.io/winapi/CreateToolhelp32Snapshot.html

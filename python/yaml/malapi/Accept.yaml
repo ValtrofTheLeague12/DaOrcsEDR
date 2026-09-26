@@ -1,0 +1,6 @@
+name: Accept
+dll: Ws2_32.dll
+description: Accept is used to permit an incoming connection attempt on a socket.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Accept.html

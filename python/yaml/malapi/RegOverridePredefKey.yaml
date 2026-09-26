@@ -1,0 +1,7 @@
+name: RegOverridePredefKey
+dll: Advapi32.dll
+description: RegOverridePredefKey is used to map a predefined registry key to the
+  specified registry key.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegOverridePredefKey.html

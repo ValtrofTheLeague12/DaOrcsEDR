@@ -1,0 +1,9 @@
+name: Sleep
+dll: Kernel32.dll
+description: Sleep is used to suspend the execution of the current thread for a set
+  time. This function is commonly used for time-based evasion by adding delays in
+  the code.
+attacks:
+- Evasion
+- Anti-Debugging
+source: malapi/malapi.io/winapi/Sleep.html

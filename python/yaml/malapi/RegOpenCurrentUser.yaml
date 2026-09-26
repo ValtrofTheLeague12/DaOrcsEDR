@@ -1,0 +1,7 @@
+name: RegOpenCurrentUser
+dll: Advapi32.dll
+description: RegOpenCurrentUser is used to retrieve a handle to the HKEY_CURRENT_USER
+  key for the user the current thread is impersonating.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegOpenCurrentUser.html

@@ -1,0 +1,6 @@
+name: LdrLoadDll
+dll: Ntdll.dll
+description: LdrLoadDll is used instead of LoadLibrary to load modules.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/LdrLoadDll.html

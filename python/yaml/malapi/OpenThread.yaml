@@ -1,0 +1,7 @@
+name: OpenThread
+dll: Kernel32.dll
+description: OpenThread is used to get a handle on a specified thread. It is commonly
+  seen in process injection techniques.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/OpenThread.html

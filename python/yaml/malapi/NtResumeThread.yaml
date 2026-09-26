@@ -1,0 +1,6 @@
+name: NtResumeThread
+dll: Ntdll.dll
+description: NtResumeThread is used to resume a suspended thread.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtResumeThread.html

@@ -1,0 +1,8 @@
+name: EnumWindows
+dll: User32.dll
+description: EnumWindows is used to enumerate all top-level windows on the screen
+  by passing the handle to each window, in turn, to an application-defined callback
+  function. This function is commonly used for enumeration purposes.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/EnumWindows.html

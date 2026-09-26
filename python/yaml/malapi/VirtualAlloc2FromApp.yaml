@@ -1,0 +1,7 @@
+name: VirtualAlloc2FromApp
+dll: Kernel32.dll
+description: VirtualAlloc2FromApp is used to reserve or changes the state of a region
+  of pages in the virtual address space of the calling process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/VirtualAlloc2FromApp.html

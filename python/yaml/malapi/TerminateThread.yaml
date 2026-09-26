@@ -1,0 +1,6 @@
+name: TerminateThread
+dll: Kernel32.dll
+description: TerminateThread is used to terminate a thread.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/TerminateThread.html

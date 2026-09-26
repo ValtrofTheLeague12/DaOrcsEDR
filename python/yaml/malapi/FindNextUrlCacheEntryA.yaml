@@ -1,0 +1,8 @@
+name: FindNextUrlCacheEntryA
+dll: Wininet.dll
+description: FindNextUrlCacheEntryA is used to retrieve the next entry in the Internet
+  cache.
+attacks:
+- Enumeration
+- Internet
+source: malapi/malapi.io/winapi/FindNextUrlCacheEntryA.html

@@ -1,0 +1,13 @@
+name: EnumSystemLocalesA
+dll: Kernel32.dll
+description: EnumSystemLocalesA is used enumerate installed locale identifiers, all
+  of the supported identifiers or alternate sort identifiers, according to which flag
+  is passed to the API. Can be used to geofence infection campaigns or avoid infecting
+  systems from a certain region/country. It can also be used to jump to allocated
+  shellcode and execute it.
+attacks:
+- Injection
+- Enumeration
+- Evasion
+- Ransomware
+source: malapi/malapi.io/winapi/EnumSystemLocalesA.html

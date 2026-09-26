@@ -1,0 +1,6 @@
+name: CryptEncrypt
+dll: Advapi32.dll
+description: CryptEncrypt is used to encrypt data.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptEncrypt.html

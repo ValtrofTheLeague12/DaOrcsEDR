@@ -1,0 +1,4 @@
+host: tinyurl.com
+provider: TinyURL
+tags:
+- PhishingDownload

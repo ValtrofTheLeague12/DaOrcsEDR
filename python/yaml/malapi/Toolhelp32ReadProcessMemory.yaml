@@ -1,0 +1,7 @@
+name: Toolhelp32ReadProcessMemory
+dll: Kernel32.dll
+description: Toolhelp32ReadProcessMemory can be used to read the memory of other processes.
+attacks:
+- Enumeration
+- Injection
+source: malapi/malapi.io/winapi/Toolhelp32ReadProcessMemory.html

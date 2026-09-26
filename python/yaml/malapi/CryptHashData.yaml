@@ -1,0 +1,6 @@
+name: CryptHashData
+dll: Advapi32.dll
+description: CryptHashData is used to create a hash.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptHashData.html

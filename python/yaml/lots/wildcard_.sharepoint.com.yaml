@@ -1,0 +1,4 @@
+host: '*.sharepoint.com'
+provider: Microsoft
+tags:
+- PhishingDownload

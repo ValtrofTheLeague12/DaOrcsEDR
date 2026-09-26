@@ -1,0 +1,7 @@
+name: GetProcessHeap
+dll: Kernel32.dll
+description: GetProcessHeap is used to retrieve a handle to the default heap of the
+  calling process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/GetProcessHeap.html

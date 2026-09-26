@@ -1,0 +1,8 @@
+name: CreateServiceA
+dll: Advapi32.dll
+description: CreateServiceA is used to create a service object and adds it to the
+  specified service control manager database. This function is commonly used by malware
+  for persistence.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/CreateServiceA.html

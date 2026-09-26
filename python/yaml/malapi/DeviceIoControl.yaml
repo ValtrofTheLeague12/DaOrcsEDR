@@ -1,0 +1,8 @@
+name: DeviceIoControl
+dll: Kernel32.dll
+description: DeviceIoControl is used to send a control message from user space to
+  a device driver. DeviceIoControl is popular with kernel malware because it is an
+  easy, flexible way to pass information between user space and kernel space.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/DeviceIoControl.html

@@ -1,0 +1,8 @@
+name: Process32First
+dll: Kernel32.dll
+description: Process32First is used as part of CreateToolhelp32Snapshot for enumeration
+  purposes.
+attacks:
+- Enumeration
+- Injection
+source: malapi/malapi.io/winapi/Process32First.html

@@ -1,0 +1,8 @@
+name: SetThreadToken
+dll: Advapi32.dll
+description: The SetThreadToken function assigns an impersonation token to a thread.
+  The function can also cause a thread to stop using an impersonation token.
+attacks:
+- Evasion
+- Helper
+source: malapi/malapi.io/winapi/SetThreadToken.html

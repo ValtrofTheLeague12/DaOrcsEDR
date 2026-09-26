@@ -1,0 +1,4 @@
+host: '*.mystrikingly.com'
+provider: Strikingly
+tags:
+- PhishingC&C

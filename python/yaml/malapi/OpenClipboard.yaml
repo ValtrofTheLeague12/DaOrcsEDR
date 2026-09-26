@@ -1,0 +1,6 @@
+name: OpenClipboard
+dll: User32.dll
+description: OpenClipboard is used to get a handle on the clipboard.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/OpenClipboard.html

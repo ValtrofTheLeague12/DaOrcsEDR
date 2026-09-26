@@ -1,0 +1,6 @@
+name: NtSetSystemEnvironmentValueEx
+dll: Ntdll.dll
+description: NtSetSystemEnvironmentValueEx is used to set a system environment variable.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtSetSystemEnvironmentValueEx.html

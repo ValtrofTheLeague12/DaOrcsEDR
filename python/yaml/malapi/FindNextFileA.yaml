@@ -1,0 +1,7 @@
+name: FindNextFileA
+dll: Kernel32.dll
+description: FindNextFileA is used to search through a directory and enumerate the
+  filesystem.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/FindNextFileA.html

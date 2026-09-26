@@ -1,0 +1,6 @@
+name: Bind
+dll: Ws2_32.dll
+description: Bind is used to associates a local address with a socket.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Bind.html

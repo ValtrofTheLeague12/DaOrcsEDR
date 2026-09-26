@@ -1,0 +1,7 @@
+name: RegCreateKeyA
+dll: Advapi32.dll
+description: RegCreateKeyA is used to create a specified registry key. If the key
+  already exists, the function opens it.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegCreateKeyA.html

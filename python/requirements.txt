@@ -1,0 +1,7 @@
+requests
+colorama
+pywebcopy
+loguru
+flask
+selectolax
+PyYAML

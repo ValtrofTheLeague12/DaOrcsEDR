@@ -1,0 +1,7 @@
+name: MoveFileExA
+dll: Kernel32.dll
+description: MoveFileExA is used to move an existing file or a directory, including
+  its children.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/MoveFileExA.html

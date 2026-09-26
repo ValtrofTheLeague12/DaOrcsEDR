@@ -1,0 +1,6 @@
+name: FtpPutFileA
+dll: Wininet.dll
+description: FtpPutFileA is used to upload a file to a server via FTP.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/FtpPutFileA.html

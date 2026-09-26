@@ -1,0 +1,8 @@
+name: FindWindowA
+dll: User32.dll
+description: FindWindowA is used to get a handle to the top-level window whose class
+  name and window name match the specified strings. This function is commonly used
+  by malware as an anti-debugging technique.
+attacks:
+- Anti-Debugging
+source: malapi/malapi.io/winapi/FindWindowA.html

@@ -1,0 +1,6 @@
+name: CryptGetHashParam
+dll: Advapi32.dll
+description: CryptGetHashParam
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptGetHashParam.html

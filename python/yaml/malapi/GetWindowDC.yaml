@@ -1,0 +1,8 @@
+name: GetWindowDC
+dll: User32.dll
+description: GetWindowDC is used to retrieve the device context (DC) for the entire
+  window, including title bar, menus, and scroll bars. This function is commonly used
+  by spyware and keyloggers to capture screenshots.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/GetWindowDC.html

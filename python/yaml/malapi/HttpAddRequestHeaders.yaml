@@ -1,0 +1,7 @@
+name: HttpAddRequestHeaders
+dll: Wininet.dll
+description: HttpAddRequestHeaders adds HTTP request headers to forge custom request
+  handle
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/HttpAddRequestHeaders.html

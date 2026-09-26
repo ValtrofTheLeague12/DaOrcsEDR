@@ -1,0 +1,7 @@
+name: VirtualAllocEx
+dll: Kernel32.dll
+description: VirtualAllocEx is often used by malware to allocate memory in a remote
+  process as part of process injection.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/VirtualAllocEx.html

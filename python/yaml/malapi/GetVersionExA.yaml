@@ -1,0 +1,6 @@
+name: GetVersionExA
+dll: Kernel32.dll
+description: GetVersionExA is a classic method used to retrieve the Windows version.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetVersionExA.html

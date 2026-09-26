@@ -1,0 +1,7 @@
+name: InternetReadFile
+dll: Wininet.dll
+description: InternetReadFile is used to read data from a handle opened by the InternetOpenUrl,
+  FtpOpenFile, or HttpOpenRequest function.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/InternetReadFile.html

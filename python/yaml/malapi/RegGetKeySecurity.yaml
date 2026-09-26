@@ -1,0 +1,7 @@
+name: RegGetKeySecurity
+dll: Advapi32.dll
+description: RegGetKeySecurity is used to retrieve a copy of the security descriptor
+  protecting the specified open registry key.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegGetKeySecurity.html

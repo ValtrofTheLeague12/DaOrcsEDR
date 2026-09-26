@@ -1,0 +1,11 @@
+name: EnumResourceTypesExA
+dll: Kernel32.dll
+description: EnumResourceTypesExA is used to enumerate resource types associated with
+  a specified binary module. The search can include both a language-neutral Portable
+  Executable file (LN file) and its associated .mui files. Alternately, it can be
+  limited to a single binary module of any type, or to the .mui files associated with
+  a single LN file. The search can also be limited to a single associated .mui file
+  that contains resources for a specific language.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/EnumResourceTypesExA.html

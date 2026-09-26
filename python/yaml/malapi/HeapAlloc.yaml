@@ -1,0 +1,6 @@
+name: HeapAlloc
+dll: Kernel32.dll
+description: HeapAlloc is used to allocate a block of memory from a heap.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/HeapAlloc.html

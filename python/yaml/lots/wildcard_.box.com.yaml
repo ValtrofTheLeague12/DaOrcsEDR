@@ -1,0 +1,4 @@
+host: '*.box.com'
+provider: Box
+tags:
+- PhishingDownloadExfiltration

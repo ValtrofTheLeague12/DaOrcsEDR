@@ -1,0 +1,8 @@
+name: RegEnumKeyExA
+dll: Advapi32.dll
+description: RegEnumKeyExA is used to enumerate the subkeys of the specified open
+  registry key.
+attacks:
+- Enumeration
+- Helper
+source: malapi/malapi.io/winapi/RegEnumKeyExA.html

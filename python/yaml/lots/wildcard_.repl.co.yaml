@@ -1,0 +1,4 @@
+host: '*.repl.co'
+provider: Replit
+tags:
+- PhishingC&CExfiltrationDownload

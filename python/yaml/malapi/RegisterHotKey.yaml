@@ -1,0 +1,9 @@
+name: RegisterHotKey
+dll: User32.dll
+description: RegisterHotKey is used to create a system wide hotkey. This function
+  is commonly used by spyware or keyloggers to recieve a notification when a certain
+  combination of keys are pressed.
+attacks:
+- Evasion
+- Spying
+source: malapi/malapi.io/winapi/RegisterHotKey.html

@@ -1,0 +1,11 @@
+name: CreateProcessInternal
+dll: Kernel32.dll
+description: CreateProcessInternal is an undocumented API for process creation. According
+  to Windows Internals, CreateProcess and CreateProcessAsUser actually lead to this
+  API, which is responsible for starting the process creation in user land. Eventually
+  it calls NtCreateUserProcess for the kernel land operations. This API is commonly
+  used for spawning a suspended process to be hollowed/injected.
+attacks:
+- Injection
+- Evasion
+source: malapi/malapi.io/winapi/CreateProcessInternal.html

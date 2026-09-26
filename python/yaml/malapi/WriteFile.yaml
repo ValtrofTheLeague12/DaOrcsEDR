@@ -1,0 +1,7 @@
+name: WriteFile
+dll: Kernel32.dll
+description: WriteFile is used to write data to the specified file or input/output
+  (I/O) device.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/WriteFile.html

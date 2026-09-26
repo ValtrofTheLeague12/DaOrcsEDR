@@ -1,0 +1,7 @@
+name: GetThreadContext
+dll: Kernel32.dll
+description: GetThreadContext is used to retrieve a thread's context. This is often
+  used as part of process injection techniques.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/GetThreadContext.html

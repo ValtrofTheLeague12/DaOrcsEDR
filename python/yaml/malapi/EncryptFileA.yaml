@@ -1,0 +1,6 @@
+name: EncryptFileA
+dll: Advapi32.dll
+description: EncryptFileA is used to encrypt a file or directory.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/EncryptFileA.html

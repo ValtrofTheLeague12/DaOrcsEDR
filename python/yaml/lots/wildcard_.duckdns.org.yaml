@@ -1,0 +1,4 @@
+host: '*.duckdns.org'
+provider: DuckDNS
+tags:
+- PhishingC&C

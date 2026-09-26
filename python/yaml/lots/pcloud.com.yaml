@@ -1,0 +1,4 @@
+host: pcloud.com
+provider: pCloud
+tags:
+- PhishingDownloadExfiltration

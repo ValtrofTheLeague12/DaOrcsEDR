@@ -1,0 +1,6 @@
+name: Send
+dll: Ws2_32.dll
+description: Send is used to send data on a connected socket.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Send.html

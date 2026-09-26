@@ -1,0 +1,4 @@
+host: '*.dropmark.com'
+provider: Dropmark
+tags:
+- Phishing

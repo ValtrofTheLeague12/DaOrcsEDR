@@ -1,0 +1,6 @@
+name: NtClose
+dll: Ntdll.dll
+description: NtClose is used to close an open handle.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtClose.html

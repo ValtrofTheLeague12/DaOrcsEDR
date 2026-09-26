@@ -1,0 +1,6 @@
+name: NtDeleteKey
+dll: Ntdll.dll
+description: NtDeleteKey is used to delete a registry key.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtDeleteKey.html

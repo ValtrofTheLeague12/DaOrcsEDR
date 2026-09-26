@@ -1,0 +1,4 @@
+host: ufile.io
+provider: Ufile
+tags:
+- PhishingExfiltrationDownload

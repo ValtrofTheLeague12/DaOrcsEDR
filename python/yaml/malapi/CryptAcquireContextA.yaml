@@ -1,0 +1,7 @@
+name: CryptAcquireContextA
+dll: Advapi32.dll
+description: CryptAcquireContextA is used to acquire a handle to a particular key
+  container within a particular cryptographic service provider (CSP)
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptAcquireContextA.html

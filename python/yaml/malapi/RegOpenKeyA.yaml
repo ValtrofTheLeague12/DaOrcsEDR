@@ -1,0 +1,6 @@
+name: RegOpenKeyA
+dll: Advapi32.dll
+description: RegOpenKeyA is used to open a specified registry key.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegOpenKeyA.html

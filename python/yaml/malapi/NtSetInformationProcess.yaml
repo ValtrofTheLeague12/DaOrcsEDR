@@ -1,0 +1,7 @@
+name: NtSetInformationProcess
+dll: Ntdll.dll
+description: NtSetInformationProcess is used to modify information about a process
+  such making it a critical process.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtSetInformationProcess.html

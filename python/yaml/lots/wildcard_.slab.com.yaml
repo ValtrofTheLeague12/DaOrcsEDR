@@ -1,0 +1,4 @@
+host: '*.slab.com'
+provider: Slab
+tags:
+- Phishing

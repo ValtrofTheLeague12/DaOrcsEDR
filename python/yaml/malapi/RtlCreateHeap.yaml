@@ -1,0 +1,7 @@
+name: RtlCreateHeap
+dll: Ntdll.dll
+description: RtlCreateHeap is used to create a heap object that can be used by the
+  calling process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/RtlCreateHeap.html

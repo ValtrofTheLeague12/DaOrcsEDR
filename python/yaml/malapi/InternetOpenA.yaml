@@ -1,0 +1,6 @@
+name: InternetOpenA
+dll: Wininet.dll
+description: InternetOpenA is used to initialize the use of WinINet functions.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/InternetOpenA.html

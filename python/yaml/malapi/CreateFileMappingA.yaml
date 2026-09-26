@@ -1,0 +1,9 @@
+name: CreateFileMappingA
+dll: Kernel32.dll
+description: CreateFileMappingA creates a handle to a file mapping that loads a file
+  into memory and makes it accessible via memory addresses. Launchers, loaders, and
+  injectors use this function to read and modify PE files.
+attacks:
+- Injection
+- Evasion
+source: malapi/malapi.io/winapi/CreateFileMappingA.html

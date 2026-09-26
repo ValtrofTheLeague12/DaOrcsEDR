@@ -1,0 +1,8 @@
+name: VirtualQueryEx
+dll: Kernel32.dll
+description: VirtualQueryEx is used to retrieve information about a range of pages
+  within the virtual address space of a specified process. This function is commonly
+  used by malware to enumerate an external process.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/VirtualQueryEx.html

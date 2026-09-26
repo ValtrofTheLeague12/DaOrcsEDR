@@ -1,0 +1,6 @@
+name: NtCreateThread
+dll: Ntdll.dll
+description: NtCreateThread is used to create a new thread.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtCreateThread.html

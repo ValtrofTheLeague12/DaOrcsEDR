@@ -1,0 +1,8 @@
+name: AttachThreadInput
+dll: User32.dll
+description: AttachThreadInput is used to attach the input processing from one thread
+  to another so that the second thread receives input events such as keyboard and
+  mouse events. This function is commonly used by keyloggers.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/AttachThreadInput.html

@@ -1,0 +1,7 @@
+name: CreateWaitableTimer
+dll: Kernel32.dll
+description: CreateWaitableTimer is used to create a delay timer. This function is
+  used by malware for time-based evasion.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/CreateWaitableTimer.html

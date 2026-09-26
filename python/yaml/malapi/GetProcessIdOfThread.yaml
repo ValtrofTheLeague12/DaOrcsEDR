@@ -1,0 +1,7 @@
+name: GetProcessIdOfThread
+dll: Kernel32.dll
+description: GetProcessIdOfThread is used to retrieve the process identifier of the
+  process associated with the specified thread.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetProcessIdOfThread.html

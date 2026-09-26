@@ -1,0 +1,7 @@
+name: WSAIoctl
+dll: ws2_32.dll
+description: 'WSAIoctl Can be used to retrieve and set socket mode. E.g.: Put NIC
+  in ''Promiscuous Mode'''
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/WSAIoctl.html

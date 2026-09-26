@@ -1,0 +1,6 @@
+name: InternetWriteFile
+dll: Wininet.dll
+description: InternetWriteFile is used to write data to an open Internet file.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/InternetWriteFile.html

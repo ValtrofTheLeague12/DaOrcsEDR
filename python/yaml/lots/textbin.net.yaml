@@ -1,0 +1,4 @@
+host: textbin.net
+provider: TextBin
+tags:
+- ExfiltrationC&CDownload

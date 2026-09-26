@@ -1,0 +1,8 @@
+name: ImpersonateLoggedOnUser
+dll: Advapi32.dll
+description: The ImpersonateLoggedOnUser function lets the calling thread impersonate
+  the security context of a logged-on user. The user is represented by a token handle.
+attacks:
+- Evasion
+- Helper
+source: malapi/malapi.io/winapi/ImpersonateLoggedOnUser.html

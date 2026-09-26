@@ -1,0 +1,4 @@
+host: '*.docusign.com'
+provider: DocuSign
+tags:
+- Phishing

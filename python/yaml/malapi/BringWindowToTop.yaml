@@ -1,0 +1,7 @@
+name: BringWindowToTop
+dll: User32.dll
+description: BringWindowToTop is used for bringing the specified window to the top
+  of the Z order.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/BringWindowToTop.html

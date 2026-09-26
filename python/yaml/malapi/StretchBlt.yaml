@@ -1,0 +1,7 @@
+name: StretchBlt
+dll: Gdi32.dll
+description: StretchBlt is used to copy graphic data from one device to another. Spyware
+  sometimes uses this function to capture screenshots.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/StretchBlt.html

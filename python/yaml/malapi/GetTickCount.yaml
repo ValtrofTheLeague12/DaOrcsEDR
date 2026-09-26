@@ -1,0 +1,7 @@
+name: GetTickCount
+dll: Kernel32.dll
+description: GetTickCount is used to retrieve the number of milliseconds since bootup.
+  This function is used by malware for anti-debugging purposes.
+attacks:
+- Anti-Debugging
+source: malapi/malapi.io/winapi/GetTickCount.html

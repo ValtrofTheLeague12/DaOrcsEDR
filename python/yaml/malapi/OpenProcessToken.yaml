@@ -1,0 +1,6 @@
+name: OpenProcessToken
+dll: Advapi32.dll
+description: OpenProcessToken is used to open the access token associated with a process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/OpenProcessToken.html

@@ -1,0 +1,4 @@
+host: '*.github.io'
+provider: Github
+tags:
+- Phishing

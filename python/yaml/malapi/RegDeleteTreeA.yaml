@@ -1,0 +1,7 @@
+name: RegDeleteTreeA
+dll: Advapi32.dll
+description: RegDeleteTreeA is used to delete the subkeys and values of the specified
+  key recursively.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegDeleteTreeA.html

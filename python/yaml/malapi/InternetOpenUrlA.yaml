@@ -1,0 +1,7 @@
+name: InternetOpenUrlA
+dll: Wininet.dll
+description: InternetOpenUrlA is used to open a resource specified by a complete FTP
+  or HTTP URL.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/InternetOpenUrlA.html

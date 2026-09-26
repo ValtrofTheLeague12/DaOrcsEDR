@@ -1,0 +1,6 @@
+name: NtQueryTimer
+dll: Ntdll.dll
+description: NtQueryTimer is used to query a timer's attributes.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtQueryTimer.html

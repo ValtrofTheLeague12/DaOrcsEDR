@@ -1,0 +1,7 @@
+name: GetProcessId
+dll: Kernel32.dll
+description: GetProcessId is used to retrieve the process identifier of the specified
+  process.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetProcessId.html

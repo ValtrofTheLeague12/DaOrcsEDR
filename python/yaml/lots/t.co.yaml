@@ -1,0 +1,4 @@
+host: t.co
+provider: Twitter
+tags:
+- PhishingC&C

@@ -1,0 +1,4 @@
+host: transfer.sh
+provider: Transfer.sh
+tags:
+- PhishingExfiltrationDownload

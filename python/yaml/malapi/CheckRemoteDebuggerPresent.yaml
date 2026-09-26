@@ -1,0 +1,7 @@
+name: CheckRemoteDebuggerPresent
+dll: Kernel32.dll
+description: CheckRemoteDebuggerPresent is used to check if a debugger is being used.
+  This function is commonly used by malware for anti-debugging techniques.
+attacks:
+- Anti-Debugging
+source: malapi/malapi.io/winapi/CheckRemoteDebuggerPresent.html

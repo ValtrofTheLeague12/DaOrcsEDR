@@ -1,0 +1,7 @@
+name: NtResumeProcess
+dll: ntdll.dll
+description: NtResumeProcess is used to resume a suspended process
+attacks:
+- Injection
+- Helper
+source: malapi/malapi.io/winapi/NtResumeProcess.html

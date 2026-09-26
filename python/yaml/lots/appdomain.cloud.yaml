@@ -1,0 +1,4 @@
+host: appdomain.cloud
+provider: IBM
+tags:
+- PhishingDownloadC&CExfiltration

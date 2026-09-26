@@ -1,0 +1,7 @@
+name: RtlCopyMemory
+dll: Ntdll.dll
+description: RtlCopyMemory is used to copy the contents of a source memory block to
+  a destination memory block.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/RtlCopyMemory.html

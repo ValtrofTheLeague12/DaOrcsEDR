@@ -1,0 +1,6 @@
+name: RegCloseKey
+dll: Advapi32.dll
+description: RegCloseKey is used to close a handle to the specified registry key.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegCloseKey.html

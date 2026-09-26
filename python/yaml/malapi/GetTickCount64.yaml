@@ -1,0 +1,8 @@
+name: GetTickCount64
+dll: Kernel32.dll
+description: GetTickCount64 is used to retrieve the number of milliseconds that have
+  elapsed since the system was started. This function is used by malware for anti-debugging
+  purposes by checking how long the system uptime is.
+attacks:
+- Anti-Debugging
+source: malapi/malapi.io/winapi/GetTickCount64.html

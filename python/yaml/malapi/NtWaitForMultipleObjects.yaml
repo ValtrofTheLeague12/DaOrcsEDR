@@ -1,0 +1,9 @@
+name: NtWaitForMultipleObjects
+dll: Ntdll.dll
+description: NtWaitForMultipleObjects is used to wait until one or all of the specified
+  objects are in the signaled state or the time-out interval elapses. This function
+  is commonly used by malware for evasion purposes
+attacks:
+- Evasion
+- Injection
+source: malapi/malapi.io/winapi/NtWaitForMultipleObjects.html

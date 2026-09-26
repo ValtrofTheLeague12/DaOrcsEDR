@@ -1,0 +1,6 @@
+name: Closesocket
+dll: Ws2_32.dll
+description: Closesocket is used to close an existing socket.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Closesocket.html

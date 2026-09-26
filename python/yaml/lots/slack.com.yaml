@@ -1,0 +1,4 @@
+host: slack.com
+provider: Slack
+tags:
+- C&C

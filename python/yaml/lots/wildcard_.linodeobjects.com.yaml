@@ -1,0 +1,4 @@
+host: '*.linodeobjects.com'
+provider: Linode
+tags:
+- PhishingExfiltrationDownload

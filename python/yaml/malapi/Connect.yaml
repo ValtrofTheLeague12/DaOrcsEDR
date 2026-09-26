@@ -1,0 +1,6 @@
+name: Connect
+dll: Ws2_32.dll
+description: Connect is used to establish a connection to a specified socket.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Connect.html

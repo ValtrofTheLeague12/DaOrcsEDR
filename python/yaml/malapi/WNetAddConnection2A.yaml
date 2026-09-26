@@ -1,0 +1,9 @@
+name: WNetAddConnection2A
+dll: Mpr.dll
+description: The WNetAddConnection2A function makes a connection to a network resource
+  and can redirect a local device to the network resource. The WNetAddConnection2
+  function supersedes the WNetAddConnection function.
+attacks:
+- Enumeration
+- Helper
+source: malapi/malapi.io/winapi/WNetAddConnection2A.html

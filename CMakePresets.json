@@ -1,0 +1,37 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "ucrt64",
+      "displayName": "MSYS2 UCRT64",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build-ucrt",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "C:/msys64/ucrt64/bin/g++.exe",
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ucrt64-release",
+      "configurePreset": "ucrt64",
+      "jobs": 4
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "ucrt64-tests",
+      "configurePreset": "ucrt64",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

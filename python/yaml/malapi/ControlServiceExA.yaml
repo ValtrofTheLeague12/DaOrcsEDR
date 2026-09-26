@@ -1,0 +1,8 @@
+name: ControlServiceExA
+dll: Advapi32.dll
+description: ControlServiceExA is used to start, stop, modify, or send a signal to
+  a running service. This function is commonly used by malware went it requires interaction
+  with a service for malicious purposes.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/ControlServiceExA.html

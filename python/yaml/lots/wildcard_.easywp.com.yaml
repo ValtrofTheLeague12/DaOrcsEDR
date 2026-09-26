@@ -1,0 +1,4 @@
+host: '*.easywp.com'
+provider: EasyWP
+tags:
+- Phishing

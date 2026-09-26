@@ -1,0 +1,4 @@
+host: '*.azurewebsites.net'
+provider: Microsoft
+tags:
+- PhishingDownloadExfiltrationC&C

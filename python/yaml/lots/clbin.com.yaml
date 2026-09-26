@@ -1,0 +1,4 @@
+host: clbin.com
+provider: Clbin
+tags:
+- C&CExfiltrationDownload

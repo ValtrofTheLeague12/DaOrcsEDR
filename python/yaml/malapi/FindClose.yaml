@@ -1,0 +1,6 @@
+name: FindClose
+dll: Kernel32.dll
+description: FindClose is used to close a file search handle.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/FindClose.html

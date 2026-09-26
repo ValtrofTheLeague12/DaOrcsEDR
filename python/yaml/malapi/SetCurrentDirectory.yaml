@@ -1,0 +1,7 @@
+name: SetCurrentDirectory
+dll: Kernel32.dll
+description: SetCurrentDirectory is used to change the current directory for the current
+  process.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/SetCurrentDirectory.html

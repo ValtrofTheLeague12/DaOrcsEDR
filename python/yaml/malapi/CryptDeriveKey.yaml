@@ -1,0 +1,6 @@
+name: CryptDeriveKey
+dll: Advapi32.dll
+description: CryptDeriveKey is used to create encryption keys.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptDeriveKey.html

@@ -1,0 +1,4 @@
+host: '*.ngrok.io'
+provider: Ngrok
+tags:
+- PhishingC&CExfiltrationDownload

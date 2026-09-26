@@ -1,0 +1,7 @@
+name: SetClipboardData
+dll: User32.dll
+description: SetClipboardData is used to place data on the clipboard in a specified
+  clipboard format.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/SetClipboardData.html

@@ -1,0 +1,8 @@
+name: GetComputerNameA
+dll: Kernel32.dll
+description: GetComputerNameA is used to retrieve the computer name. This is commonly
+  used by malware for anti-debugging purposes.
+attacks:
+- Enumeration
+- Anti-Debugging
+source: malapi/malapi.io/winapi/GetComputerNameA.html

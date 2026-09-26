@@ -1,0 +1,7 @@
+name: CreateTimerQueueTimer
+dll: Kernel32.dll
+description: CreateTimerQueueTimer is used to create a timer-queue timer. This function
+  is commonly used by malware for time-based evasion.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/CreateTimerQueueTimer.html

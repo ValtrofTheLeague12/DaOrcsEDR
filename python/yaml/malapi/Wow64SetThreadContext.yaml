@@ -1,0 +1,7 @@
+name: Wow64SetThreadContext
+dll: Kernel32.dll
+description: Wow64SetThreadContext is used to set the context for the specified thread.
+  This function can be used by malware as part of a process hollowing attack.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/Wow64SetThreadContext.html

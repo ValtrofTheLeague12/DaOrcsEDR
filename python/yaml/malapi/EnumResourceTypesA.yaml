@@ -1,0 +1,13 @@
+name: EnumResourceTypesA
+dll: Kernel32.dll
+description: EnumResourceTypesA is used to enumerate resource types within a binary
+  module. Starting with Windows Vista, this is typically a language-neutral Portable
+  Executable (LN file), and the enumeration also includes resources from one of the
+  corresponding language-specific resource files (.mui files)â€”if one existsâ€”that
+  contain localizable language resources. It is also possible to use hModule to specify
+  a .mui file, in which case only that file is searched for resource types. Alternately,
+  applications can call EnumResourceTypesEx, which provides more precise control over
+  which resource files to enumerate.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/EnumResourceTypesA.html

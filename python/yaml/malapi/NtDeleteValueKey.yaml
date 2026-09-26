@@ -1,0 +1,6 @@
+name: NtDeleteValueKey
+dll: Ntdll.dll
+description: NtDeleteValueKey is used to delete a registry key value.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtDeleteValueKey.html

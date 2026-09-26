@@ -1,0 +1,7 @@
+name: PostThreadMessageA
+dll: User32.dll
+description: PostThreadMessageA is used to post a message to the message queue of
+  the specified thread.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/PostThreadMessageA.html

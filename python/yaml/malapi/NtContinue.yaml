@@ -1,0 +1,6 @@
+name: NtContinue
+dll: Ntdll.dll
+description: NtContinue is used to resume the execution of a thread.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtContinue.html

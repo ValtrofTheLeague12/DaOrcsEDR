@@ -1,0 +1,4 @@
+host: '*.cloudwaysapps.com'
+provider: Cloudways
+tags:
+- PhishingDownloadExfiltrationC&C

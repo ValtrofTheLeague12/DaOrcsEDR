@@ -1,0 +1,4 @@
+host: cdn.discordapp.com
+provider: Discord
+tags:
+- PhishingDownload

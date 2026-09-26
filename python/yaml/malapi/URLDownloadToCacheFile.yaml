@@ -1,0 +1,7 @@
+name: URLDownloadToCacheFile
+dll: Urlmon.dll
+description: URLDownloadToCacheFile is used to download data to the Internet cache
+  and returns the file name of the cache location for retrieving the bits.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/URLDownloadToCacheFile.html

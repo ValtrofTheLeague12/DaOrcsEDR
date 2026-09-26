@@ -1,0 +1,7 @@
+name: RegGetValueA
+dll: Advapi32.dll
+description: RegGetValueA is used to retrieve the type and data for the specified
+  registry value.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegGetValueA.html

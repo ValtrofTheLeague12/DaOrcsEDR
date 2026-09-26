@@ -1,0 +1,4 @@
+host: '*.fleek.co'
+provider: Fleek
+tags:
+- Phishing

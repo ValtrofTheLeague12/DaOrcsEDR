@@ -1,0 +1,8 @@
+name: NtAdjustPrivilegesToken
+dll: Ntdll.dll
+description: NtAdjustPrivilegesToken is used to modify state of avaiable token's privileges.
+  This function is often used by malware that performs process injection often calls
+  this function to gain additional permissions.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtAdjustPrivilegesToken.html

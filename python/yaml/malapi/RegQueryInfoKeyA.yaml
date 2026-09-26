@@ -1,0 +1,7 @@
+name: RegQueryInfoKeyA
+dll: Advapi32.dll
+description: RegQueryInfoKeyA is used to retrieves information about the specified
+  registry key.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/RegQueryInfoKeyA.html

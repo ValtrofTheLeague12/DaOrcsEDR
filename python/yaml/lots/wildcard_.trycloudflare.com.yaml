@@ -1,0 +1,4 @@
+host: '*.trycloudflare.com'
+provider: Cloudflare
+tags:
+- PhishingDownload

@@ -1,0 +1,8 @@
+name: CallNextHookEx
+dll: User32.dll
+description: CallNextHookEx is used within code that is hooking an event set by SetWindowsHookEx.
+  CallNextHookEx calls the next hook in the chain. This function is commonly used
+  by keyloggers.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/CallNextHookEx.html

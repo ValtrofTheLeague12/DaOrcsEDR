@@ -1,0 +1,6 @@
+name: MapViewOfFile3
+dll: Kernel32.dll
+description: MapViewOfFile3 is used for heap allocation and manipulation.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/MapViewOfFile3.html

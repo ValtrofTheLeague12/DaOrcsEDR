@@ -1,0 +1,6 @@
+name: DecryptFileA
+dll: Advapi32.dll
+description: DecryptFileA is used to decrypt an encrypted file or directory.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/DecryptFileA.html

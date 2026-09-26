@@ -1,0 +1,6 @@
+name: CreateFileA
+dll: Kernel32.dll
+description: CreateFileA is used to create a new file or opens an existing file.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/CreateFileA.html

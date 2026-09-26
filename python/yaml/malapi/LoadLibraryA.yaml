@@ -1,0 +1,9 @@
+name: LoadLibraryA
+dll: Kernel32.dll
+description: LoadLibraryA is used to load a specified module into the address space
+  of the calling process. Malware commonly use this to load DLLs dynamically for evasion
+  purposes.
+attacks:
+- Injection
+- Evasion
+source: malapi/malapi.io/winapi/LoadLibraryA.html

@@ -1,0 +1,4 @@
+host: paste.ee
+provider: Paste.ee
+tags:
+- C&CExfiltrationDownload

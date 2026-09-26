@@ -1,0 +1,4 @@
+host: wetransfer.com
+provider: WeTransfer B.V
+tags:
+- PhishingDownloadExfiltration

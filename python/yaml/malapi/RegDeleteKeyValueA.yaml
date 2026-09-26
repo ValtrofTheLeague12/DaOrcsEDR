@@ -1,0 +1,7 @@
+name: RegDeleteKeyValueA
+dll: Advapi32.dll
+description: RegDeleteKeyValueA is used to remove the specified value from the specified
+  registry key and subkey.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegDeleteKeyValueA.html

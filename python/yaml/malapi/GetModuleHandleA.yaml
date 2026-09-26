@@ -1,0 +1,10 @@
+name: GetModuleHandleA
+dll: Kernel32.dll
+description: GetModuleHandleW is used to retrieve a module handle for the specified
+  module. The module must have been loaded by the calling process. This function is
+  often used along with GetProcAddress to dynamically retrieve the address of a function
+  for evasion purposes.
+attacks:
+- Injection
+- Evasion
+source: malapi/malapi.io/winapi/GetModuleHandleA.html

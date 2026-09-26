@@ -1,0 +1,4 @@
+host: youtube.com
+provider: Google
+tags:
+- PhishingC&C

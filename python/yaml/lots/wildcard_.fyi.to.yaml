@@ -1,0 +1,4 @@
+host: '*.fyi.to'
+provider: FYI.to
+tags:
+- Phishing

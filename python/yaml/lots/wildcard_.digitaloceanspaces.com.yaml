@@ -1,0 +1,4 @@
+host: '*.digitaloceanspaces.com'
+provider: DigitalOcean
+tags:
+- PhishingDownloadExfiltrationC&C

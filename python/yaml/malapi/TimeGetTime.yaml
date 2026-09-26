@@ -1,0 +1,7 @@
+name: TimeGetTime
+dll: Winmm.dll
+description: TimeGetTime is used to retrieve the system time, in milliseconds. The
+  system time is the time elapsed since Windows was started.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/TimeGetTime.html

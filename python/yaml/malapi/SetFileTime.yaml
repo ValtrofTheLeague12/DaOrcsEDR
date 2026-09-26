@@ -1,0 +1,8 @@
+name: SetFileTime
+dll: Kernel32.dll
+description: SetFileTime sets the date and time that the specified file or directory
+  was created, last accessed, or last modified. This function is often used by malware
+  to conceal malicious activity.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/SetFileTime.html

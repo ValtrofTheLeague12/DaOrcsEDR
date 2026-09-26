@@ -1,0 +1,4 @@
+host: '*.rf.gd'
+provider: InfinityFree
+tags:
+- PhishingC&C

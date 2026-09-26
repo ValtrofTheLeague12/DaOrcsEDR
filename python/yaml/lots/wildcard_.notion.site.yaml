@@ -1,0 +1,4 @@
+host: '*.notion.site'
+provider: Notion.so
+tags:
+- PhishingDownload

@@ -1,0 +1,4 @@
+host: docs.google.com
+provider: Google
+tags:
+- PhishingC&C

@@ -1,0 +1,4 @@
+host: '*.zendesk.com'
+provider: Zendesk
+tags:
+- PhishingDownload

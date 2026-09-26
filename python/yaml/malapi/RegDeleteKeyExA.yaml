@@ -1,0 +1,7 @@
+name: RegDeleteKeyExA
+dll: Advapi32.dll
+description: RegDeleteKeyExA is used to delete a subkey and its values from the specified
+  platform-specific view of the registry.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegDeleteKeyExA.html

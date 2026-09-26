@@ -1,0 +1,7 @@
+name: GetRawInputData
+dll: User32.dll
+description: GetRawInputData is used to retrieve the raw input data from a specified
+  device. This function is commonly used by keyloggers.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/GetRawInputData.html

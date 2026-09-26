@@ -1,0 +1,4 @@
+host: facebook.com
+provider: Facebook
+tags:
+- C&C

@@ -1,0 +1,4 @@
+host: mediafire.com
+provider: Mediafire
+tags:
+- PhishingDownloadExfiltration

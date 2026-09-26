@@ -1,0 +1,4 @@
+host: '*.webflow.io'
+provider: Webflow
+tags:
+- Phishing

@@ -1,0 +1,6 @@
+name: HttpSendRequestA
+dll: Wininet.dll
+description: HttpSendRequestA is used to send a HTTP request to a server.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/HttpSendRequestA.html

@@ -1,0 +1,7 @@
+name: GlobalAlloc
+dll: Kernel32.dll
+description: GlobalAlloc is used to allocate the specified number of bytes from the
+  heap.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/GlobalAlloc.html

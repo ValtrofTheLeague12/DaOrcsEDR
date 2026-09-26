@@ -1,0 +1,6 @@
+name: OpenServiceA
+dll: Advapi32.dll
+description: OpenServiceA is used to open an existing service.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/OpenServiceA.html

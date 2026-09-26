@@ -1,0 +1,6 @@
+name: NetShareAdd
+dll: Netapi32.dll
+description: NetShareAdd is used to share a server resource.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NetShareAdd.html

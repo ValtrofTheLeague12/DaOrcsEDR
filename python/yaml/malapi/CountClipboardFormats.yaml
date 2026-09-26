@@ -1,0 +1,8 @@
+name: CountClipboardFormats
+dll: User32.dll
+description: CountClipboardFormats is used to determine whether victim's clipboard
+  was empty. A kind of Anti-debugging technique to determine if the system could be
+  a sandbox.
+attacks:
+- Anti-Debugging
+source: malapi/malapi.io/winapi/CountClipboardFormats.html

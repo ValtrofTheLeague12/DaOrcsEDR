@@ -1,0 +1,6 @@
+name: NtShutdownSystem
+dll: Ntdll.dll
+description: NtShutdownSystem is used to shutdown the system.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtShutdownSystem.html

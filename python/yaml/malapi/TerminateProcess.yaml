@@ -1,0 +1,6 @@
+name: TerminateProcess
+dll: Kernel32.dll
+description: TerminateProcess is used to terminate a process.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/TerminateProcess.html

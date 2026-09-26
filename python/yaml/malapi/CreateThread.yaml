@@ -1,0 +1,8 @@
+name: CreateThread
+dll: Kernel32.dll
+description: CreateThread is used to create a thread to execute within the virtual
+  address space of the calling process. This function is commonly used for shellcode
+  execution.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/CreateThread.html

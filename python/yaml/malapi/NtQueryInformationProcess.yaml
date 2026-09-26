@@ -1,0 +1,8 @@
+name: NtQueryInformationProcess
+dll: Ntdll.dll
+description: NtQueryInformationProcess is used to retrieve information about a specified
+  process.
+attacks:
+- Enumeration
+- Anti-Debugging
+source: malapi/malapi.io/winapi/NtQueryInformationProcess.html

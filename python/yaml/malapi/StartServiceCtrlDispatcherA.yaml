@@ -1,0 +1,7 @@
+name: StartServiceCtrlDispatcherA
+dll: Advapi32.dll
+description: StartServiceCtrlDispatcherA is used by a service to connect the main
+  thread of the process to the service control manager.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/StartServiceCtrlDispatcherA.html

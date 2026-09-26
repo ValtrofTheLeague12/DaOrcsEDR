@@ -1,0 +1,4 @@
+host: '*.xiti.com'
+provider: Xiti
+tags:
+- PhishingDownload

@@ -1,0 +1,9 @@
+name: CryptProtectData
+dll: Crypt32.dll
+description: 'CryptProtectData can be leveraged to create a malicious artifact for
+  encrypting the file system (Ransomware), effectively evading typical detection methods.
+  More information is available: https://github.com/CarlosG13/Data-Protection-API-DPAPI-For-Impact---Ransomware'
+attacks:
+- Evasion
+- Ransomware
+source: malapi/malapi.io/winapi/CryptProtectData.html

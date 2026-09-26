@@ -1,0 +1,7 @@
+name: NtQueueApcThread
+dll: Ntdll.dll
+description: NtQueueApcThread is used to execute code for a different thread. This
+  function is commonly used as part of process injection.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtQueueApcThread.html

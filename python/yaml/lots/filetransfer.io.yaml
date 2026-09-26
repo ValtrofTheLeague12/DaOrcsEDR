@@ -1,0 +1,4 @@
+host: filetransfer.io
+provider: Filetransfer.io
+tags:
+- PhishingDownloadExfiltration

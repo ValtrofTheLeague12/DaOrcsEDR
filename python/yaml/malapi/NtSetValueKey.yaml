@@ -1,0 +1,6 @@
+name: NtSetValueKey
+dll: Ntdll.dll
+description: NtSetValueKey is used to create or replace a registry value.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtSetValueKey.html

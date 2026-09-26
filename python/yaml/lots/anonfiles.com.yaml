@@ -1,0 +1,4 @@
+host: anonfiles.com
+provider: Anonfiles
+tags:
+- PhishingExfiltrationDownload

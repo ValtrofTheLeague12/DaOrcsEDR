@@ -1,0 +1,186 @@
+@media only screen and (max-width: 480px){
+    html{
+        min-width:100%;
+    }
+
+    .body-styling{
+        padding-left:2.5%;
+        padding-right:2.5%;
+    }
+
+    .inner-container{
+        max-width:100%;
+    }
+
+    .square-box{
+        max-width:100%;
+    }
+
+    .attack-container{
+        display:block;
+    }
+
+}
+
+@media only screen and (min-width: 480px){
+    html{
+        min-width:100%;
+    }
+
+    .body-styling{
+        padding-left:2.5%;
+        padding-right:2.5%;
+    }
+
+    .inner-container{
+        max-width:100%;
+    }
+
+    .square-box{
+        max-width:100%;
+    }
+
+}
+
+@media only screen and (min-width: 817px){
+    html{
+        min-width:100%;
+    }
+
+    .body-styling{
+        padding-left:2.5%;
+        padding-right:2.5%;
+    }
+
+    .inner-container{
+        max-width:700px;
+    }
+
+    .square-box{
+        max-width:700px;
+    }
+
+}
+
+@media only screen and (min-width: 1065px){
+    html{
+        min-width:100%;
+    }
+
+    .body-styling{
+        padding-left:25%;
+        padding-right:25%;
+    }
+
+    .inner-container{
+        max-width:100%;
+    }
+
+    .square-box{
+        max-width:600px;
+    }
+
+}
+
+@media only screen and (min-width: 1240px){
+    html{
+        min-width:100%;
+    }
+
+    .body-styling{
+        padding-left:25%;
+        padding-right:25%;
+    }
+
+    .inner-container{
+        max-width:700px;
+    }
+
+    .square-box{
+        max-width:600px;
+    }
+
+
+}
+
+@media only screen and (min-width: 1598px){
+    html{
+        min-width:100%;
+    }
+
+    .body-styling{
+        padding-left:25%;
+        padding-right:25%;
+    }
+
+    .inner-container{
+        max-width:700px;
+    }
+
+    .square-box{
+        max-width:600px;
+    }
+
+}
+
+.heading{
+    font-size: 3rem;
+    color: #091353;
+}
+
+.inner-container{
+    background-color: white;
+    padding: 30px;
+    margin-bottom: 30px;
+}
+
+.content{
+    font-size: 16px;
+    color: #091353;
+}
+
+#extra-spacing{
+    margin-top:5px;
+}
+
+.flex-container{
+    display:flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: 100%;
+    word-wrap: break-word;
+}
+
+.square-box{
+    padding:15px;
+    border:1px solid #091353;
+}
+
+.attack-container{
+    border: 1px solid #091353;
+    text-align: center;
+    padding:7px;
+    margin-right:5px;
+}
+
+.detail-container{
+    margin-bottom: 15px;
+}
+
+
+/*Fix default border radius */
+.navbar{
+    border-radius:0px;
+}
+
+.icon-bar{
+    background-color: #091353;
+}
+/* End navbar fix */
+
+/* contribution page stuff */
+
+.form-spacing{
+    margin-bottom:25px;
+    max-width: 600px;
+}

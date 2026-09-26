@@ -1,0 +1,10 @@
+name: GetNativeSystemInfo
+dll: Kernel32.dll
+description: GetNativeSystemInfo is used to retrieve information about the current
+  system to an application running under WOW64. If the function is called from a 64-bit
+  application, or on a 64-bit system that does not have an Intel64 or x64 processor
+  (such as ARM64), it is equivalent to the GetSystemInfo function.
+attacks:
+- Enumeration
+- Anti-Debugging
+source: malapi/malapi.io/winapi/GetNativeSystemInfo.html

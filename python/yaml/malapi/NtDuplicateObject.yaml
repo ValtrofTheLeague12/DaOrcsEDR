@@ -1,0 +1,9 @@
+name: NtDuplicateObject
+dll: Ntdll.dll
+description: NtDuplicateObject is used to create a handle that is a duplicate of the
+  specified source handle. Malware can use this function to obtain the necessary access
+  rights to a process via duplicating its handle, and subsequently kill a process
+  or inject into it.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtDuplicateObject.html

@@ -1,0 +1,7 @@
+name: CryptBinaryToString
+dll: Crypt32.dll
+description: The CryptBinaryToString function is used to convert an array of bytes
+  into a formatted string.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptBinaryToString.html

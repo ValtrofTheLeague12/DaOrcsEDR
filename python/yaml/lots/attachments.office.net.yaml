@@ -1,0 +1,4 @@
+host: attachments.office.net
+provider: Microsoft
+tags:
+- PhishingDownloadExfiltration

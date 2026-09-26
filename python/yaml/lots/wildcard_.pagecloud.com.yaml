@@ -1,0 +1,4 @@
+host: '*.pagecloud.com'
+provider: PageCloud
+tags:
+- Phishing

@@ -1,0 +1,7 @@
+name: InternetReadFileExA
+dll: Wininet.dll
+description: InternetReadFileExA is used to read data from a handle opened by the
+  InternetOpenUrl or HttpOpenRequest function.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/InternetReadFileExA.html

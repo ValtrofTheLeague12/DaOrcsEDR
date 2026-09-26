@@ -1,0 +1,6 @@
+name: SetFocus
+dll: User32.dll
+description: SetFocus is used to set the keyboard focus to the specified window
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/SetFocus.html

@@ -1,0 +1,4 @@
+host: gitlab.com
+provider: GitLab
+tags:
+- PhishingDownload

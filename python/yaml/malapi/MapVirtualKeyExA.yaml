@@ -1,0 +1,8 @@
+name: MapVirtualKeyExA
+dll: User32.dll
+description: MapVirtualKeyExA is used to map a virtual-key code into a scan code or
+  character value, or translates a scan code into a virtual-key code. This function
+  is commonly used by spyware and keyloggers.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/MapVirtualKeyExA.html

@@ -1,0 +1,8 @@
+name: WNetEnumResourceA
+dll: Mpr.dll
+description: The WNetEnumResourceA function continues an enumeration of network resources
+  that was started by a call to the WNetOpenEnum function.
+attacks:
+- Enumeration
+- Helper
+source: malapi/malapi.io/winapi/WNetEnumResourceA.html

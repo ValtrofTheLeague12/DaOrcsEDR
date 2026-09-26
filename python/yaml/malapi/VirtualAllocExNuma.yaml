@@ -1,0 +1,7 @@
+name: VirtualAllocExNuma
+dll: Kernel32.dll
+description: VirtualAllocExNuma is used to reserve or changes the state of a region
+  of pages in the virtual address space of a specified process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/VirtualAllocExNuma.html

@@ -1,0 +1,7 @@
+name: VirtualAlloc
+dll: Kernel32.dll
+description: VirtualAlloc is often used by malware to allocate memory as part of process
+  injection.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/VirtualAlloc.html

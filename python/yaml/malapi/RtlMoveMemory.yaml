@@ -1,0 +1,8 @@
+name: RtlMoveMemory
+dll: Ntdll.dll
+description: RtlMoveMemory is used to copy the contents of a source memory block to
+  a destination memory block, and supports overlapping source and destination memory
+  blocks.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/RtlMoveMemory.html

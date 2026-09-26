@@ -1,0 +1,4 @@
+host: '*.godaddysites.com'
+provider: GoDaddy
+tags:
+- PhishingC&C

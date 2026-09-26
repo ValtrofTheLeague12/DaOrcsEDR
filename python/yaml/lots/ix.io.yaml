@@ -1,0 +1,4 @@
+host: ix.io
+provider: Ix.io
+tags:
+- C&CExfiltrationDownload

@@ -1,0 +1,4 @@
+host: pastie.org
+provider: Pastie.org
+tags:
+- ExfiltrationC&CDownload

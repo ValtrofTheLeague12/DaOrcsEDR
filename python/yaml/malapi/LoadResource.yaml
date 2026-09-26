@@ -1,0 +1,8 @@
+name: LoadResource
+dll: Kernel32.dll
+description: LoadResource is used to load a resource from a PE file into memory. Malware
+  sometimes uses resources to store strings, configuration information, or other malicious
+  files.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/LoadResource.html

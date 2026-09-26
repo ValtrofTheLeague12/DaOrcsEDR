@@ -1,0 +1,7 @@
+name: GetWindowsDirectoryA
+dll: Kernel32.dll
+description: GetWindowsDirectoryA is used to retreive the path to the Windows directory.
+  This function may be used by malware retrieve the Windows path for additional installations.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetWindowsDirectoryA.html

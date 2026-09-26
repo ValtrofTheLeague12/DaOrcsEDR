@@ -1,0 +1,7 @@
+name: WNetCloseEnum
+dll: Mpr.dll
+description: The WNetCloseEnum function ends a network resource enumeration started
+  by a call to the WNetOpenEnum function.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/WNetCloseEnum.html

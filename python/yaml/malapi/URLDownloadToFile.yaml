@@ -1,0 +1,7 @@
+name: URLDownloadToFile
+dll: Urlmon.dll
+description: URLDownloadToFile is used to download bits from the Internet and saves
+  them to a file.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/URLDownloadToFile.html

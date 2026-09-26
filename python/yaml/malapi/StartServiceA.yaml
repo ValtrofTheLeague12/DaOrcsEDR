@@ -1,0 +1,6 @@
+name: StartServiceA
+dll: Advapi32.dll
+description: StartServiceA is used to start a service.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/StartServiceA.html

@@ -1,0 +1,7 @@
+name: VirtualProtectEx
+dll: Kernel32.dll
+description: VirtualProtectEx is often used by malware to modify memory protection
+  in a remote process (often to allow write or execution).
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/VirtualProtectEx.html

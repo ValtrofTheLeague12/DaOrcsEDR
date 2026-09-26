@@ -1,0 +1,7 @@
+name: GetThreadLocale
+dll: Kernel32.dll
+description: GetThreadLocale is used to retrieve the locale identifier of the current
+  thread. Can be used alongside other language and/or locale APIs to geofence infections
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetThreadLocale.html

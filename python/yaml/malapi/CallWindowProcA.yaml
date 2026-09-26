@@ -1,0 +1,7 @@
+name: CallWindowProcA
+dll: User32.dll
+description: CallWindowProcA is used to pass message information to the specified
+  window procedure.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/CallWindowProcA.html

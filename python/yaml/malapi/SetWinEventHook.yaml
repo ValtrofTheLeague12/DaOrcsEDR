@@ -1,0 +1,7 @@
+name: SetWinEventHook
+dll: User32.dll
+description: SetWinEventHook is used to set an event hook function for a range of
+  events.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/SetWinEventHook.html

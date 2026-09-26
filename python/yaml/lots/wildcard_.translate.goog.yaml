@@ -1,0 +1,4 @@
+host: '*.translate.goog'
+provider: Google
+tags:
+- PhishingDownload

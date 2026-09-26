@@ -1,0 +1,7 @@
+name: UnhookWindowsHookEx
+dll: User32.dll
+description: UnhookWindowsHookEx is used to remove a hook procedure installed in a
+  hook chain by the SetWindowsHookEx function.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/UnhookWindowsHookEx.html

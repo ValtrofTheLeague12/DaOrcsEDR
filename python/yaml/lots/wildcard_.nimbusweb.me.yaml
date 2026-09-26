@@ -1,0 +1,4 @@
+host: '*.nimbusweb.me'
+provider: Nimbus Note
+tags:
+- Phishing

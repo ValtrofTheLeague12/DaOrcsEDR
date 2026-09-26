@@ -1,0 +1,4 @@
+host: '*.typeform.com'
+provider: Typeform
+tags:
+- Phishing

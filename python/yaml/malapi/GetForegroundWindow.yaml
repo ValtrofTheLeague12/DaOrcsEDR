@@ -1,0 +1,10 @@
+name: GetForegroundWindow
+dll: User32.dll
+description: GetForegroundWindow is used to get a handle to the foreground window
+  (the window with which the user is currently working). This function is commonly
+  used by keyloggers and spyware to determine which window is being utilized at the
+  moment by the user.
+attacks:
+- Spying
+- Anti-Debugging
+source: malapi/malapi.io/winapi/GetForegroundWindow.html

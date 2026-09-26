@@ -1,0 +1,6 @@
+name: InternetCloseHandle
+dll: Wininet.dll
+description: InternetCloseHandle is used to close an internet handle.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/InternetCloseHandle.html

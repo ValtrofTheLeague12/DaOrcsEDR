@@ -1,0 +1,4 @@
+host: graph.microsoft.com
+provider: Microsoft
+tags:
+- C&CExfiltration

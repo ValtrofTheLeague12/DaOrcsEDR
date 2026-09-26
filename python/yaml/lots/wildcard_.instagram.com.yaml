@@ -1,0 +1,4 @@
+host: '*.instagram.com'
+provider: Facebook
+tags:
+- PhishingC&C

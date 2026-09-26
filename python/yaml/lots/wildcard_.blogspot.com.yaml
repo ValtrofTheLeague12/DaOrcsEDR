@@ -1,0 +1,4 @@
+host: '*.blogspot.com'
+provider: Google
+tags:
+- PhishingC&C

@@ -1,0 +1,7 @@
+name: SetProcessDEPPolicy
+dll: Kernel32.dll
+description: SetProcessDEPPolicy is used to override the default DEP policy. Malware
+  will use this function to allow data execution.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/SetProcessDEPPolicy.html

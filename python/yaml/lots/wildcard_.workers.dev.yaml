@@ -1,0 +1,4 @@
+host: '*.workers.dev'
+provider: Cloudflare
+tags:
+- PhishingDownloadExfiltrationC&C

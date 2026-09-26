@@ -1,0 +1,8 @@
+name: SetEnvironmentVariableA
+dll: Kernel32.dll
+description: SetEnvironmentVariableA sets the contents of the specified environment
+  variable for the current process. Setting custom envrinoment variables can be used
+  for obfuscation and evasion purposes.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/SetEnvironmentVariableA.html

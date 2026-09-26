@@ -1,0 +1,6 @@
+name: ShowWindow
+dll: User32.dll
+description: ShowWindow is used to set the specified window's show state.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/ShowWindow.html

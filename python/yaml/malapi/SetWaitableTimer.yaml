@@ -1,0 +1,7 @@
+name: SetWaitableTimer
+dll: Kernel32.dll
+description: SetWaitableTimer is used to activate the specified waitable timer. This
+  function is commonly used by malware for time-based evasion.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/SetWaitableTimer.html

@@ -1,0 +1,6 @@
+name: CryptDestroyKey
+dll: Advapi32.dll
+description: CryptDestroyKey is used to destroy previously generated encryption keys.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptDestroyKey.html

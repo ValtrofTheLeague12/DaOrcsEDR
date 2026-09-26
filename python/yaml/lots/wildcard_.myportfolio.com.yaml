@@ -1,0 +1,4 @@
+host: '*.myportfolio.com'
+provider: Adobe
+tags:
+- Phishing

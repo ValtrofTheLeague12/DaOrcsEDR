@@ -1,0 +1,7 @@
+name: EnumDeviceDrivers
+dll: Kernel32.dll
+description: EnumDeviceDrivers is used to enumerate drivers in the machine. This function
+  is commonly used with kernel malware or for enumeration purposes.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/EnumDeviceDrivers.html

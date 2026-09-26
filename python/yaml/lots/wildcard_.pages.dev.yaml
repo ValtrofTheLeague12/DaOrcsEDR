@@ -1,0 +1,4 @@
+host: '*.pages.dev'
+provider: Cloudflare
+tags:
+- Phishing

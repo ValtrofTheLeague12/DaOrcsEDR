@@ -1,0 +1,7 @@
+name: RtlSetProcessIsCritical
+dll: Ntdll.dll
+description: RtlSetProcessIsCritical is used to set a process to a system critical
+  status. This function is used by malware to prevent the process from being terminated.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RtlSetProcessIsCritical.html

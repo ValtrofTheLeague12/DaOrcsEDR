@@ -1,0 +1,7 @@
+name: NtOpenThread
+dll: Ntdll.dll
+description: NtOpenThread is used to get a handle on a thread. This function is commonly
+  used as part of process injection.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtOpenThread.html

@@ -1,0 +1,7 @@
+name: RegFlushKey
+dll: Advapi32.dll
+description: RegFlushKey is used to write all the attributes of the specified open
+  registry key into the registry.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegFlushKey.html

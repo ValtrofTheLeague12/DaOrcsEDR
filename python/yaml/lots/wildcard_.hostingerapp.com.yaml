@@ -1,0 +1,4 @@
+host: '*.hostingerapp.com'
+provider: Hostinger
+tags:
+- PhishingC&CExfiltrationDownload

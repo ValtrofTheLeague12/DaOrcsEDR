@@ -1,0 +1,7 @@
+name: EnumProcessModules
+dll: Kernel32.dll
+description: EnumProcessModules is used to enumerate the loaded modules (executables
+  and DLLs) for a given process. Malware enumerates through modules when doing injection.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/EnumProcessModules.html

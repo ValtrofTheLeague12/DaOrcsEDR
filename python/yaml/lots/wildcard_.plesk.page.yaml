@@ -1,0 +1,4 @@
+host: '*.plesk.page'
+provider: Plesk
+tags:
+- PhishingC&CExfiltrationDownload

@@ -1,0 +1,6 @@
+name: ShellExecuteExA
+dll: Shell32.dll
+description: ShellExecuteExA is used to perform an operation on a specified file.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/ShellExecuteExA.html

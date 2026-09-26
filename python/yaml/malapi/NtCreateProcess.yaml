@@ -1,0 +1,6 @@
+name: NtCreateProcess
+dll: Ntdll.dll
+description: NtCreateProcess is used to create a new process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtCreateProcess.html

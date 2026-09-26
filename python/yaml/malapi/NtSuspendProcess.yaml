@@ -1,0 +1,6 @@
+name: NtSuspendProcess
+dll: ntdll.dll
+description: NtSuspendProcess is used to suspend the target process
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtSuspendProcess.html

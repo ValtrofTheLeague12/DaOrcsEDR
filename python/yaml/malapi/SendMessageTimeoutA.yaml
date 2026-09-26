@@ -1,0 +1,7 @@
+name: SendMessageTimeoutA
+dll: User32.dll
+description: SendMessageTimeoutA is used to send the specified message to a window
+  or windows.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/SendMessageTimeoutA.html

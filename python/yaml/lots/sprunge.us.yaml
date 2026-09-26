@@ -1,0 +1,4 @@
+host: sprunge.us
+provider: Sprunge
+tags:
+- C&CExfiltrationDownload

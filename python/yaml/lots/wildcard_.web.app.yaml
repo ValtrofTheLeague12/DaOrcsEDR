@@ -1,0 +1,4 @@
+host: '*.web.app'
+provider: Google
+tags:
+- Phishing

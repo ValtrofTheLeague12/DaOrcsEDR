@@ -1,0 +1,4 @@
+host: '*.azurestaticapps.net'
+provider: Microsoft
+tags:
+- PhishingC&CDownload

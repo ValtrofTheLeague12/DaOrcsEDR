@@ -1,0 +1,7 @@
+name: RegSaveKeyExA
+dll: Advapi32.dll
+description: RegSaveKeyExA is used to save the specified key and all of its subkeys
+  and values to a registry file, in the specified format.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegSaveKeyExA.html

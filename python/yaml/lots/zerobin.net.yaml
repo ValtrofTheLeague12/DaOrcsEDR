@@ -1,0 +1,4 @@
+host: zerobin.net
+provider: ZeroBin
+tags:
+- ExfiltrationC&CDownload

@@ -1,0 +1,4 @@
+host: '*.firebaseapp.com'
+provider: Google
+tags:
+- PhishingC&C

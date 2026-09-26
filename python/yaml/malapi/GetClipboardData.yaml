@@ -1,0 +1,6 @@
+name: GetClipboardData
+dll: User32.dll
+description: GetClipboardData is used to retrieve copied data residing in the clipboard.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/GetClipboardData.html

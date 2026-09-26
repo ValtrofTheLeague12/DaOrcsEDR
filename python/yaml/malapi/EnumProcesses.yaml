@@ -1,0 +1,7 @@
+name: EnumProcesses
+dll: Kernel32.dll
+description: EnumProcesses is used to enumerate processes in the machine. Process
+  enumeration is often a precursor to process injection.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/EnumProcesses.html

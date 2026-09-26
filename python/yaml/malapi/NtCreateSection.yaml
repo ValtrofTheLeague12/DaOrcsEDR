@@ -1,0 +1,6 @@
+name: NtCreateSection
+dll: Ntdll.dll
+description: NtCreateSection is used to create a new section object.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtCreateSection.html

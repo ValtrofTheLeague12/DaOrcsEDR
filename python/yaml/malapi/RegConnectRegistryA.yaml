@@ -1,0 +1,7 @@
+name: RegConnectRegistryA
+dll: Advapi32.dll
+description: RegConnectRegistryA is used to establish a connection to a predefined
+  registry key on another computer.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegConnectRegistryA.html

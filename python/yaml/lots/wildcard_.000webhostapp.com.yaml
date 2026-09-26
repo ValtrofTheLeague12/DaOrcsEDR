@@ -1,0 +1,4 @@
+host: '*.000webhostapp.com'
+provider: Hostinger
+tags:
+- PhishingC&CExfiltrationDownload

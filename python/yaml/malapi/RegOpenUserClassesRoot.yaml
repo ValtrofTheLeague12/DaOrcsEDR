@@ -1,0 +1,7 @@
+name: RegOpenUserClassesRoot
+dll: Advapi32.dll
+description: RegOpenUserClassesRoot is used to retrieve a handle to the HKEY_CLASSES_ROOT
+  key for a specified user.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegOpenUserClassesRoot.html

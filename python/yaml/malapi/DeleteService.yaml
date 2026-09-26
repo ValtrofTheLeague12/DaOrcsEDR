@@ -1,0 +1,7 @@
+name: DeleteService
+dll: Advapi32.dll
+description: DeleteService is used to mark the specified service for deletion from
+  the service control manager database.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/DeleteService.html

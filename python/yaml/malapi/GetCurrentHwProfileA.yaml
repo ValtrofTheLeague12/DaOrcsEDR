@@ -1,0 +1,8 @@
+name: GetCurrentHwProfileA
+dll: Advapi32.dll
+description: GetCurrentHwProfileA is used to retrieve information about the current
+  hardware profile for the local computer. This function is commonly used by malware
+  to anti-debugging purposes.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetCurrentHwProfileA.html

@@ -1,0 +1,7 @@
+name: SetTimer
+dll: User32.dll
+description: SetTimer is used to create a timer with the specified time-out value.
+  This function is commonly used by malware for time-based evasion
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/SetTimer.html

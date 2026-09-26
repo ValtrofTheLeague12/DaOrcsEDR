@@ -1,0 +1,6 @@
+name: MapViewOfFileEx
+dll: Kernel32.dll
+description: MapViewOfFileEx is used for heap allocation and manipulation.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/MapViewOfFileEx.html

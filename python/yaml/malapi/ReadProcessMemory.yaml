@@ -1,0 +1,7 @@
+name: ReadProcessMemory
+dll: Kernel32.dll
+description: ReadProcessMemory can be used to read the memory of a remote process.
+attacks:
+- Enumeration
+- Injection
+source: malapi/malapi.io/winapi/ReadProcessMemory.html

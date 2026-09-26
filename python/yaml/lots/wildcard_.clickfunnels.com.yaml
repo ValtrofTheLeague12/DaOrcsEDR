@@ -1,0 +1,4 @@
+host: '*.clickfunnels.com'
+provider: ClickFunnels
+tags:
+- Phishing

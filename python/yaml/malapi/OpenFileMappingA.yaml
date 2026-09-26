@@ -1,0 +1,6 @@
+name: OpenFileMappingA
+dll: Kernel32.dll
+description: OpenFileMappingA is used to open a named file mapping object.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/OpenFileMappingA.html

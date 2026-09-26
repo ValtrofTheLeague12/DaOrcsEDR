@@ -1,0 +1,7 @@
+name: PeekMessageA
+dll: User32.dll
+description: PeekMessageA is used to check for incoming sent messages, checks the
+  thread message queue for a posted message, and retrieves the message (if any exist).
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/PeekMessageA.html

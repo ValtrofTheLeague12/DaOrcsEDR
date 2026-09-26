@@ -1,0 +1,9 @@
+name: NtWaitForSingleObject
+dll: Ntdll.dll
+description: NtWaitForSingleObject is used to wait until the specified object is in
+  the signaled state or the time-out interval elapses. This function is commonly used
+  by malware for evasion purposes.
+attacks:
+- Evasion
+- Injection
+source: malapi/malapi.io/winapi/NtWaitForSingleObject.html

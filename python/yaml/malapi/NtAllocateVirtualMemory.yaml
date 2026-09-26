@@ -1,0 +1,7 @@
+name: NtAllocateVirtualMemory
+dll: Ntdll.dll
+description: NtAllocateVirtualMemoy is used to reserve, commit, or both, a region
+  of pages within the user-mode virtual address space of a specified process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtAllocateVirtualMemory.html

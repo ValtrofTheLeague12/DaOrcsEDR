@@ -1,0 +1,7 @@
+name: DrawTextExA
+dll: User32.dll
+description: DrawTextExA is used to draw formatted text in the specified rectangle.
+  This function has been used by ransomware for writing ransom notes.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/DrawTextExA.html

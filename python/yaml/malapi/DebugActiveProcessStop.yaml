@@ -1,0 +1,7 @@
+name: DebugActiveProcessStop
+dll: Kernel32.dll
+description: DebugActiveProcessStop stops the debugger from debugging the specified
+  process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/DebugActiveProcessStop.html

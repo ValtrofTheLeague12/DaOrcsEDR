@@ -1,0 +1,6 @@
+name: NtTerminateProcess
+dll: Ntdll.dll
+description: NtTerminateProcess is used to terminate a process and all its threads.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtTerminateProcess.html

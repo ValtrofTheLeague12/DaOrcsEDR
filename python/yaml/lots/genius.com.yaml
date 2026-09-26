@@ -1,0 +1,4 @@
+host: genius.com
+provider: Genius
+tags:
+- C&C

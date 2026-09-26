@@ -1,0 +1,7 @@
+name: GetMessageA
+dll: User32.dll
+description: GetMessageA is used to retrieve a message from the calling thread's message
+  queue. This function is commonly used by keyloggers.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/GetMessageA.html

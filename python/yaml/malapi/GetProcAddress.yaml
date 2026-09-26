@@ -1,0 +1,9 @@
+name: GetProcAddress
+dll: Kernel32.dll
+description: GetProcAddress is used to get the memory address of a function in a DLL.
+  This is often used by malware for obfuscation and evasion purposes to avoid having
+  to call the function directly.
+attacks:
+- Injection
+- Evasion
+source: malapi/malapi.io/winapi/GetProcAddress.html

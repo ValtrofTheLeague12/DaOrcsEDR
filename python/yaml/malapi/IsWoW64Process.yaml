@@ -1,0 +1,8 @@
+name: IsWoW64Process
+dll: Kernel32.dll
+description: IsWow64Process is used by a 32-bit process to determine if it is running
+  on a 64-bit operating system.
+attacks:
+- Enumeration
+- Helper
+source: malapi/malapi.io/winapi/IsWoW64Process.html

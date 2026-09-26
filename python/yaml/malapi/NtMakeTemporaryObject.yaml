@@ -1,0 +1,7 @@
+name: NtMakeTemporaryObject
+dll: Ntdll.dll
+description: NtMakeTemporaryObject is used to change the attributes of an object to
+  make it temporary.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtMakeTemporaryObject.html

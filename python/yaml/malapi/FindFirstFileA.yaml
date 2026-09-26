@@ -1,0 +1,7 @@
+name: FindFirstFileA
+dll: Kernel32.dll
+description: FindFirstFileA is used to search through a directory and enumerate the
+  filesystem.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/FindFirstFileA.html

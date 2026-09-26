@@ -1,0 +1,4 @@
+host: '*.wixsite.com'
+provider: Wix
+tags:
+- Phishing

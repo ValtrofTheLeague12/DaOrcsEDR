@@ -1,0 +1,4 @@
+host: spark.adobe.com
+provider: Adobe
+tags:
+- PhishingC&C

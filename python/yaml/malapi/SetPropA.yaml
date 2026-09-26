@@ -1,0 +1,8 @@
+name: SetPropA
+dll: User32.dll
+description: SetPropA is used to add a new entry or changes an existing entry in the
+  property list of the specified window. This function is commonly used by malware
+  to register a property and wait for its invocation to execute malicious commands.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/SetPropA.html

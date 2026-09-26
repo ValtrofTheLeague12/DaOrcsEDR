@@ -1,0 +1,4 @@
+host: '*.herokuapp.com'
+provider: Heroku
+tags:
+- PhishingDownloadExfiltrationC&C

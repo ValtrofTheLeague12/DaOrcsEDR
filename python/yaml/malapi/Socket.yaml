@@ -1,0 +1,7 @@
+name: Socket
+dll: Ws2_32.dll
+description: socket is used create a socket that is bound to a specific transport
+  service provider.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Socket.html

@@ -1,0 +1,8 @@
+name: CreatePipe
+dll: Kernel32.dll
+description: CreatePipe is used to create an anonymous pipe and returns handles to
+  the read and write ends of the pipe. Could be used to add a sub-process for execution
+  via cmd.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/CreatePipe.html

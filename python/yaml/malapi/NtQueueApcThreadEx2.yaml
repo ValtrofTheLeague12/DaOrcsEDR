@@ -1,0 +1,7 @@
+name: NtQueueApcThreadEx2
+dll: Ntdll.dll
+description: NtQueueApcThreadEx2 is a new system call that allows to pass both UserApcFlags
+  and MemoryReserveHandle.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtQueueApcThreadEx2.html

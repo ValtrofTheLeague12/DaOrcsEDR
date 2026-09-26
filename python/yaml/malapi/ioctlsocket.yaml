@@ -1,0 +1,6 @@
+name: ioctlsocket
+dll: Ws2_32.lib
+description: ioctlsocket takes control of the I/O mode of a socket in any state
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/ioctlsocket.html

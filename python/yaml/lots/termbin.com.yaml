@@ -1,0 +1,4 @@
+host: termbin.com
+provider: Termbin
+tags:
+- C&CExfiltrationDownload

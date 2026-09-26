@@ -1,0 +1,4 @@
+host: '*.mybluemix.net'
+provider: IBM
+tags:
+- PhishingDownloadC&C

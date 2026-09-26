@@ -1,0 +1,7 @@
+name: GetDesktopWindow
+dll: User32.dll
+description: GetDesktopWindow is used to get a handle to the desktop window that covers
+  the entire screen.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/GetDesktopWindow.html

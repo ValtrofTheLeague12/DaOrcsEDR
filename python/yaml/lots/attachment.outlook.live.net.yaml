@@ -1,0 +1,4 @@
+host: attachment.outlook.live.net
+provider: Microsoft
+tags:
+- PhishingDownloadExfiltration

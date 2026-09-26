@@ -1,0 +1,7 @@
+name: NtQuerySystemEnvironmentValueEx
+dll: Ntdll.dll
+description: NtQuerySystemEnvironmentValueEx is used to locate a specified system
+  environment variable and return its value.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/NtQuerySystemEnvironmentValueEx.html

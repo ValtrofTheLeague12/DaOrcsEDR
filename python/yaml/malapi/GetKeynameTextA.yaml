@@ -1,0 +1,7 @@
+name: GetKeynameTextA
+dll: User32.dll
+description: The GetKeynameTextA function is used to retrieve a string that represents
+  the name of a key.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/GetKeynameTextA.html

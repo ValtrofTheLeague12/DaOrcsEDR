@@ -1,0 +1,7 @@
+name: SetForegroundWindow
+dll: User32.dll
+description: SetForegroundWindow is used for bring the thread that created the specified
+  window into the foreground and activates the window
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/SetForegroundWindow.html

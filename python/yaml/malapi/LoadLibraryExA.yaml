@@ -1,0 +1,9 @@
+name: LoadLibraryExA
+dll: Kernel32.dll
+description: LoadLibraryExA is used to load a specified module into the address space
+  of the calling process. Malware commonly use this to load DLLs dynamically for evasion
+  purposes.
+attacks:
+- Injection
+- Evasion
+source: malapi/malapi.io/winapi/LoadLibraryExA.html

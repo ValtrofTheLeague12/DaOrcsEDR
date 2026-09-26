@@ -1,0 +1,8 @@
+name: GetSystemDefaultLangId
+dll: Kernel32.dll
+description: GetSystemDefaultLangId is used to retrieve the language identifier for
+  the system. This function is used by malware that wish to infect specific locales
+  or simply wish to gather statistics on areas of infection.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetSystemDefaultLangId.html

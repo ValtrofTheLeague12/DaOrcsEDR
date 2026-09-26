@@ -1,0 +1,9 @@
+name: WaitForSingleObjectEx
+dll: Kernel32.dll
+description: WaitForSingleObjectEx is used to delay the execution of an object. This
+  function is commonly used to allow time for shellcode being executed within a thread
+  to run. It is also used for time-based evasion.
+attacks:
+- Injection
+- Evasion
+source: malapi/malapi.io/winapi/WaitForSingleObjectEx.html

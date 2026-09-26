@@ -1,0 +1,6 @@
+name: CryptDecrypt
+dll: Advapi32.dll
+description: CryptDecrypt is used to decrypt data.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptDecrypt.html

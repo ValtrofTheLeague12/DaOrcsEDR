@@ -1,0 +1,7 @@
+name: RegQueryValueExA
+dll: Advapi32.dll
+description: RegQueryValueExA is used to retrieve the type and data for the specified
+  value name associated with an open registry key.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/RegQueryValueExA.html

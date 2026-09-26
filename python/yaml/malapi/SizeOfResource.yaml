@@ -1,0 +1,8 @@
+name: SizeOfResource
+dll: Kernel32.dll
+description: SizeOfResource checks and retrieves the size of given resource. Usually
+  found in droppers
+attacks:
+- Evasion
+- Helper
+source: malapi/malapi.io/winapi/SizeOfResource.html

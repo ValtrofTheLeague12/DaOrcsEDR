@@ -1,0 +1,4 @@
+host: '*.weebly.com'
+provider: Weebly
+tags:
+- PhishingC&C

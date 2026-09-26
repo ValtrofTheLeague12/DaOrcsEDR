@@ -1,0 +1,7 @@
+name: OpenSCManagerA
+dll: Advapi32.dll
+description: OpenSCManagerA is used to open a handle to the service control manager.
+  This function is commonly used when a malware intends to interact with a service.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/OpenSCManagerA.html

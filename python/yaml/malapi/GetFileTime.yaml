@@ -1,0 +1,7 @@
+name: GetFileTime
+dll: Kernel32.dll
+description: GetFileTime is used to retrieve the date and time that a file or directory
+  was created, last accessed, and last modified.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetFileTime.html

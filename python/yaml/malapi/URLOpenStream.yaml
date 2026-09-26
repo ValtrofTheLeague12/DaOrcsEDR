@@ -1,0 +1,6 @@
+name: URLOpenStream
+dll: Urlmon.dll
+description: URLOpenStream is used to create a push type stream object from a URL.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/URLOpenStream.html

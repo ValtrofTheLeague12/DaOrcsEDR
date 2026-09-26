@@ -1,0 +1,6 @@
+name: RegSetKeySecurity
+dll: Advapi32.dll
+description: RegSetKeySecurity is used to set the security of an open registry key.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegSetKeySecurity.html

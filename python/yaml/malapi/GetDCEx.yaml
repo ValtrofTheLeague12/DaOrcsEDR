@@ -1,0 +1,8 @@
+name: GetDCEx
+dll: User32.dll
+description: GetDCEx is used to retrieve a handle to a device context (DC) for the
+  client area of a specified window or for the entire screen. This function is commonly
+  used by spyware for taking screenshots.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/GetDCEx.html

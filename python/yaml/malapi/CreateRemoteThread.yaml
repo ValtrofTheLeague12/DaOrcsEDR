@@ -1,0 +1,7 @@
+name: CreateRemoteThread
+dll: Kernel32.dll
+description: CreateRemoteThread is used to create a thread that runs in the virtual
+  address space of another process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/CreateRemoteThread.html

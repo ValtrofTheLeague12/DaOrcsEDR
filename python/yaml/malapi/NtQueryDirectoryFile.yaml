@@ -1,0 +1,7 @@
+name: NtQueryDirectoryFile
+dll: Ntdll.dll
+description: NtQueryDirectoryFile is used to retrieve information about a directory.
+  This function can be used for enumeration purposes.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/NtQueryDirectoryFile.html

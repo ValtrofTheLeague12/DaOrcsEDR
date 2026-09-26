@@ -1,0 +1,7 @@
+name: RegLoadMUIStringA
+dll: Advapi32.dll
+description: RegLoadMUIStringA is used to load the specified string from the specified
+  key and subkey.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegLoadMUIStringA.html

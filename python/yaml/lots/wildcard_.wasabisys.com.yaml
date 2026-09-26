@@ -1,0 +1,4 @@
+host: '*.wasabisys.com'
+provider: Wasabi Technologies
+tags:
+- PhishingC&CExfiltrationDownload

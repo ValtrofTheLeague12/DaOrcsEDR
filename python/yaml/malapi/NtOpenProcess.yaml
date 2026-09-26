@@ -1,0 +1,7 @@
+name: NtOpenProcess
+dll: Ntdll.dll
+description: NtOpenProcess is used to get a handle on a process. This function is
+  commonly used as part of process injection.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtOpenProcess.html

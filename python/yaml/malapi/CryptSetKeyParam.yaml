@@ -1,0 +1,7 @@
+name: CryptSetKeyParam
+dll: Advapi32.dll
+description: CryptSetKeyParam is used to customize various aspects of a session key's
+  operations.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptSetKeyParam.html

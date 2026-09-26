@@ -1,0 +1,6 @@
+name: SearchPathA
+dll: Kernel32.dll
+description: SearchPathA is used to search for a specified file in a specified path.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/SearchPathA.html

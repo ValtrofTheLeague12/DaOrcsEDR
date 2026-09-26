@@ -1,0 +1,8 @@
+name: WriteProcessMemory
+dll: Kernel32.dll
+description: Writing data into a specified region of memory. This function is often
+  used by malware as part of process injection to inject malicious code into a specified
+  process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/WriteProcessMemory.html

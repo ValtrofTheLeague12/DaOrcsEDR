@@ -1,0 +1,9 @@
+name: GetDriveTypeA
+dll: Kernel32.dll
+description: GetDriveTypeA is used to determine whether a disk drive is a removable
+  / fixed / CD-ROM / RAM disk or network drive.
+attacks:
+- Enumeration
+- Ransomware
+- Helper
+source: malapi/malapi.io/winapi/GetDriveTypeA.html

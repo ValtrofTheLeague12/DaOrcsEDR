@@ -1,0 +1,4 @@
+host: '*.doubleclick.net'
+provider: Google
+tags:
+- PhishingDownload

@@ -1,0 +1,6 @@
+name: CopyFile2
+dll: Kernel32.dll
+description: CopyFile2 is used to copy an existing file to a new file.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/CopyFile2.html

@@ -1,0 +1,4 @@
+host: '*.netlify.app'
+provider: Netlify
+tags:
+- Phishing

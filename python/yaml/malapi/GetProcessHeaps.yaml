@@ -1,0 +1,7 @@
+name: GetProcessHeaps
+dll: Kernel32.dll
+description: GetProcessHeaps is used to return the number of active heaps and retrieves
+  handles to all of the active heaps for the calling process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/GetProcessHeaps.html

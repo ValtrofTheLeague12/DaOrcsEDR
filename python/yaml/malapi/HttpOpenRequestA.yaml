@@ -1,0 +1,6 @@
+name: HttpOpenRequestA
+dll: Wininet.dll
+description: HttpOpenRequestA is used to create a HTTP request.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/HttpOpenRequestA.html

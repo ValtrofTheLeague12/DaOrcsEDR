@@ -1,0 +1,6 @@
+name: lstrcatA
+dll: Kernel32.dll
+description: lstrcatA is used to append one string to another.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/lstrcatA.html

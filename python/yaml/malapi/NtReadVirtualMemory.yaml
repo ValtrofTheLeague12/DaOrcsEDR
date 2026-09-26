@@ -1,0 +1,8 @@
+name: NtReadVirtualMemory
+dll: Ntdll.dll
+description: NtReadVirtualMemory is used to copy data in the specified address range
+  from the address space of the specified process into the specified buffer of the
+  current process
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtReadVirtualMemory.html

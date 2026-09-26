@@ -1,0 +1,7 @@
+name: Gethostbyname
+dll: Ws2_32.dll
+description: gethostbyname is used to retrieve host information corresponding to a
+  host name from a host database.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Gethostbyname.html

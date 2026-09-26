@@ -1,0 +1,4 @@
+host: '*.azurefd.net'
+provider: Microsoft
+tags:
+- PhishingC&C

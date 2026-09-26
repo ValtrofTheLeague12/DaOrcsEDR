@@ -1,0 +1,6 @@
+name: NetShareSetInfo
+dll: Netapi32.dll
+description: NetShareSetInfo is used to set the parameters of a shared resource.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NetShareSetInfo.html

@@ -1,0 +1,6 @@
+name: CreateFile2
+dll: Kernel32.dll
+description: CreateFile2 is used to create a new file or opens an existing file.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/CreateFile2.html

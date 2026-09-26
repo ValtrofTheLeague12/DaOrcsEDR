@@ -1,0 +1,7 @@
+name: SetFileAttributesA
+dll: Kernel32.dll
+description: SetFileAttributesA is used to set attributes of a file or directory.
+  This function is commonly used by malware to make a file or directory hidden.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/SetFileAttributesA.html

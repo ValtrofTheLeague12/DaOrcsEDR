@@ -1,0 +1,7 @@
+name: DeleteFileA
+dll: Kernel32.dll
+description: DeleteFileA is used to delete an existing file. This function is used
+  by malware to hide its tracks or tamper with an application.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/DeleteFileA.html

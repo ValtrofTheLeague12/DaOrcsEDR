@@ -1,0 +1,4 @@
+host: notion.so
+provider: Notion.so
+tags:
+- PhishingC&CExfiltrationDownload

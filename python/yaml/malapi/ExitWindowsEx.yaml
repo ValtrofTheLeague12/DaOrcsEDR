@@ -1,0 +1,8 @@
+name: ExitWindowsEx
+dll: User32.dll
+description: ExitWindowsEx is used to log off an interactive user, shuts down the
+  system, or shuts down and restarts the system. This function is commonly used by
+  malware as an anti-debugging technique.
+attacks:
+- Anti-Debugging
+source: malapi/malapi.io/winapi/ExitWindowsEx.html

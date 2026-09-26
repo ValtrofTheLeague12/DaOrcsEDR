@@ -1,0 +1,7 @@
+name: EnumDesktopWindows
+dll: User32.dll
+description: EnumDesktopWindows is used to enumerate all top-level windows associated
+  with the specified desktop. This function is commonly used for enumeration purposes.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/EnumDesktopWindows.html

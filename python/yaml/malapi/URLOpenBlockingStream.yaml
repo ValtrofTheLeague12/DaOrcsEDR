@@ -1,0 +1,7 @@
+name: URLOpenBlockingStream
+dll: Urlmon.dll
+description: URLOpenBlockingStream is used to create a blocking type stream object
+  from a URL and downloads the data from the Internet.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/URLOpenBlockingStream.html

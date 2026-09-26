@@ -1,0 +1,7 @@
+name: RegOpenKeyTransactedA
+dll: Advapi32.dll
+description: RegOpenKeyTransactedA is used to open the specified registry key and
+  associates it with a transaction
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegOpenKeyTransactedA.html

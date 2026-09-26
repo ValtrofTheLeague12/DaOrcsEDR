@@ -1,0 +1,8 @@
+name: GetSystemTimeAsFileTime
+dll: Kernel32.dll
+description: Retrieves the current system date and time. The information is in Coordinated
+  Universal Time (UTC) format. This function is commonly used by malware for anti-debugging.
+attacks:
+- Enumeration
+- Anti-Debugging
+source: malapi/malapi.io/winapi/GetSystemTimeAsFileTime.html

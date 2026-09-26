@@ -1,0 +1,7 @@
+name: MoveFileA
+dll: Kernel32.dll
+description: MoveFileA is used to move an existing file or a directory, including
+  its children.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/MoveFileA.html

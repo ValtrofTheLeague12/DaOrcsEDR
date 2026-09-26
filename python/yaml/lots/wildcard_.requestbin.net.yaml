@@ -1,0 +1,4 @@
+host: '*.requestbin.net'
+provider: RequestBin
+tags:
+- C&C

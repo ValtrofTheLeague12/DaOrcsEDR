@@ -1,0 +1,9 @@
+name: IcmpSendEcho
+dll: Iphlpapi.dll
+description: IcmpSendEcho is used to send an IPv4 ICMP echo request and returns any
+  echo response replies. The call returns when the time-out has expired or the reply
+  buffer is filled. This function is used by malware for time-evasion purposes by
+  specifying a large timeout value.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/IcmpSendEcho.html

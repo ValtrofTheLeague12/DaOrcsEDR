@@ -1,0 +1,7 @@
+name: NtWriteVirtualMemory
+dll: Ntdll.dll
+description: NtWriteVirtualMemory is used to copy the specified address range from
+  the current process into the specified address range of the specified process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtWriteVirtualMemory.html

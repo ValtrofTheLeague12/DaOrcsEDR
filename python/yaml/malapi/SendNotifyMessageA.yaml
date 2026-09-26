@@ -1,0 +1,7 @@
+name: SendNotifyMessageA
+dll: User32.dll
+description: SendNotifyMessageA is used to send the specified message to a window
+  or windows.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/SendNotifyMessageA.html

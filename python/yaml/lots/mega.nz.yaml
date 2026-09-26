@@ -1,0 +1,4 @@
+host: mega.nz
+provider: Mega Limited
+tags:
+- PhishingDownloadExfiltration

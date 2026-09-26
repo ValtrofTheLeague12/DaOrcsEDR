@@ -1,0 +1,7 @@
+name: Module32Next
+dll: Kernel32.dll
+description: Module32Next is used as part of CreateToolHelp32Snapshot for enumeration
+  purposes.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/Module32Next.html

@@ -1,0 +1,4 @@
+host: '*.atlassian.net'
+provider: Atlassian
+tags:
+- PhishingC&C

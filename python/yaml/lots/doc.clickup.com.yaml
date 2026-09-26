@@ -1,0 +1,4 @@
+host: doc.clickup.com
+provider: ClickUp
+tags:
+- Phishing

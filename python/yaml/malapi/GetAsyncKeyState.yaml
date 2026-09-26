@@ -1,0 +1,7 @@
+name: GetAsyncKeyState
+dll: User32.dll
+description: GetAsyncKeyState is used to determine when a specific key is pressed.
+  This function is commonly used by keyloggers.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/GetAsyncKeyState.html

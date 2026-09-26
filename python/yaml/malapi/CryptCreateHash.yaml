@@ -1,0 +1,6 @@
+name: CryptCreateHash
+dll: Advapi32.dll
+description: CryptCreateHash is used to create a hash.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptCreateHash.html

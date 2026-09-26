@@ -1,0 +1,7 @@
+name: CryptGenRandom
+dll: Advapi32.dll
+description: CryptGenRandom is used to fill a buffer with cryptographically random
+  bytes.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptGenRandom.html

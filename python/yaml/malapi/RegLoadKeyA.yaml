@@ -1,0 +1,7 @@
+name: RegLoadKeyA
+dll: Advapi32.dll
+description: RegLoadKeyA is used to create a subkey under HKEY_USERS or HKEY_LOCAL_MACHINE
+  and loads the data from the specified registry hive into that subkey.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegLoadKeyA.html

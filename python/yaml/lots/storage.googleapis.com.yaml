@@ -1,0 +1,4 @@
+host: storage.googleapis.com
+provider: Google
+tags:
+- PhishingDownloadExfiltrationC&C

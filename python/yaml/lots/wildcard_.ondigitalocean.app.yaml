@@ -1,0 +1,4 @@
+host: '*.ondigitalocean.app'
+provider: DigitalOcean
+tags:
+- PhishingC&C

@@ -1,0 +1,7 @@
+name: VirtualProtectFromApp
+dll: Kernel32.dll
+description: VirtualProtectFromApp is used to change the protection on a region of
+  committed pages in the virtual address space of the calling process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/VirtualProtectFromApp.html

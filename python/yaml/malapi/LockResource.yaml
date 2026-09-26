@@ -1,0 +1,8 @@
+name: LockResource
+dll: Kernel32.dll
+description: LockResource is used with FindResource(), LoadResource() and SizeOfResource()
+  usually to work with embedded executables into the .rsrc section (droppers)
+attacks:
+- Evasion
+- Helper
+source: malapi/malapi.io/winapi/LockResource.html

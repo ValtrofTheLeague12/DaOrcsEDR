@@ -1,0 +1,6 @@
+name: GetCurrentThread
+dll: Kernel32.dll
+description: GetCurrentThread is used to retrieve a handle for the calling thread.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetCurrentThread.html

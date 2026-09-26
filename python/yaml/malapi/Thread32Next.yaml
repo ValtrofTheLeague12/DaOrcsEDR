@@ -1,0 +1,8 @@
+name: Thread32Next
+dll: Kernel32.dll
+description: Thread32Next is used as part of CreateToolhelp32Snapshot for enumeration
+  purposes.
+attacks:
+- Enumeration
+- Injection
+source: malapi/malapi.io/winapi/Thread32Next.html

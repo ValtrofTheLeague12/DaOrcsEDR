@@ -1,0 +1,4 @@
+host: drive.google.com
+provider: Google
+tags:
+- PhishingDownloadExfiltration

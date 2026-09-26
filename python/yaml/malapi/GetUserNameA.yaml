@@ -1,0 +1,8 @@
+name: GetUserNameA
+dll: Advapi32.dll
+description: GetUserNameA is used to retrieve the username associated with the current
+  thread. This function is used by malware for anti-debugging purposes.
+attacks:
+- Enumeration
+- Anti-Debugging
+source: malapi/malapi.io/winapi/GetUserNameA.html

@@ -1,0 +1,6 @@
+name: WinExec
+dll: Kernel32.dll
+description: WinExec is used to allow the execution of an application.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/WinExec.html

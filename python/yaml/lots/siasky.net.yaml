@@ -1,0 +1,4 @@
+host: siasky.net
+provider: Siasky
+tags:
+- PhishingExfiltrationDownload

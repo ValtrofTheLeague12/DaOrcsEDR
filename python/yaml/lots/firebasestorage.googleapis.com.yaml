@@ -1,0 +1,4 @@
+host: firebasestorage.googleapis.com
+provider: Google
+tags:
+- PhishingExfiltrationC&CDownload

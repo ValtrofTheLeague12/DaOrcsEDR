@@ -1,0 +1,4 @@
+host: www.uplooder.net
+provider: Uplooder
+tags:
+- PhishingDownloadExfiltration

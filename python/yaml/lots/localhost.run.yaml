@@ -1,0 +1,4 @@
+host: localhost.run
+provider: Localhost.run
+tags:
+- C&C

@@ -1,0 +1,4 @@
+host: bitbucket.io
+provider: Atlassian
+tags:
+- Phishing

@@ -1,0 +1,6 @@
+name: NtTerminateThread
+dll: Ntdll.dll
+description: NtTerminateThread is used to terminate a thread.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtTerminateThread.html

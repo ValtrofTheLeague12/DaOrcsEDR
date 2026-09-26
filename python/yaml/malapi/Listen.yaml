@@ -1,0 +1,7 @@
+name: Listen
+dll: Ws2_32.dll
+description: Listen is used to place a socket in a state in which it is listening
+  for an incoming connection.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Listen.html

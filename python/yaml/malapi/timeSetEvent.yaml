@@ -1,0 +1,7 @@
+name: timeSetEvent
+dll: Winmm.dll
+description: timeSetEvent is used to start a specified timer event. This function
+  is obselete but is still used by malware for time-based evasion.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/timeSetEvent.html

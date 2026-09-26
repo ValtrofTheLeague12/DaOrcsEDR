@@ -1,0 +1,4 @@
+host: rentry.co
+provider: Rentry.co
+tags:
+- ExfiltrationC&CDownload

@@ -1,0 +1,8 @@
+name: AdjustTokenPrivileges
+dll: Advapi32.dll
+description: AdjustTokenPrivileges is used to enable or disable specific access privileges.
+  Malware that performs process injection often calls this function to gain additional
+  permissions.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/AdjustTokenPrivileges.html

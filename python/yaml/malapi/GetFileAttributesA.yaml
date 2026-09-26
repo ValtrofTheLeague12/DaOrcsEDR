@@ -1,0 +1,7 @@
+name: GetFileAttributesA
+dll: Kernel32.dll
+description: GetFileAttributesA is used to retrieve file system attributes for a specified
+  file or directory.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetFileAttributesA.html

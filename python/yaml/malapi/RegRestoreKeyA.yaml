@@ -1,0 +1,7 @@
+name: RegRestoreKeyA
+dll: Advapi32.dll
+description: RegRestoreKeyA is used to read the registry information in a specified
+  file and copies it over the specified key.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegRestoreKeyA.html

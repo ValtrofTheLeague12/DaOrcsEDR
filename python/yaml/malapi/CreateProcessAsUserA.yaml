@@ -1,0 +1,7 @@
+name: CreateProcessAsUserA
+dll: Advapi32.dll
+description: CreateProcessAsUserA is used to create a new process and its primary
+  thread.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/CreateProcessAsUserA.html

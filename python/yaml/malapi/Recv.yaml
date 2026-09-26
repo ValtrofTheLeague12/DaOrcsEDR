@@ -1,0 +1,7 @@
+name: Recv
+dll: Ws2_32.dll
+description: Recv is used to receive data from a connected socket or a bound connectionless
+  socket.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Recv.html

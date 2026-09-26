@@ -1,0 +1,8 @@
+name: ConnectNamedPipe
+dll: Kernel32.dll
+description: ConnectNamedPipe is used to create a server pipe for interprocess communication
+  that will wait for a client pipe to connect. This function can be used to simplify
+  connectivity to a C2 server.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/ConnectNamedPipe.html

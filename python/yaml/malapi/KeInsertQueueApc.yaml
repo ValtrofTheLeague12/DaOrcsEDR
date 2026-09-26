@@ -1,0 +1,7 @@
+name: KeInsertQueueApc
+dll: Kernel32.dll
+description: KeInsertQueueApc is responsible for attaching an initialized APC to the
+  APC queue of its target thread
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/KeInsertQueueApc.html

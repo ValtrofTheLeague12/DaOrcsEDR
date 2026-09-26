@@ -1,0 +1,4 @@
+host: '*.cloudapp.net'
+provider: Microsoft
+tags:
+- PhishingDownloadExfiltrationC&C

@@ -1,0 +1,4 @@
+host: onenoteonlinesync.onenote.com
+provider: Microsoft
+tags:
+- PhishingDownloadExfiltration

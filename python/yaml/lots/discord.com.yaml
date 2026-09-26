@@ -1,0 +1,4 @@
+host: discord.com
+provider: Discord
+tags:
+- C&CExfiltration

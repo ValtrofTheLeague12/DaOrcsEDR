@@ -1,0 +1,6 @@
+name: GetCurrentProcess
+dll: Kernel32.dll
+description: GetCurrentProcess is used to retrieve a handle for the current process.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetCurrentProcess.html

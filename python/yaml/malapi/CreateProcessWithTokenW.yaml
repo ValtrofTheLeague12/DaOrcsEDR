@@ -1,0 +1,7 @@
+name: CreateProcessWithTokenW
+dll: Advapi32.dll
+description: CreateProcessWithTokenW is used to create a new process and its primary
+  thread.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/CreateProcessWithTokenW.html

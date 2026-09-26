@@ -1,0 +1,8 @@
+name: RtlGetVersion
+dll: NtosKrnl.lib
+description: RtlGetVersion is used to enumerate OS basic information properties such
+  Windows and build versions.
+attacks:
+- Enumeration
+- Anti-Debugging
+source: malapi/malapi.io/winapi/RtlGetVersion.html

@@ -1,0 +1,6 @@
+name: NtSetInformationThread
+dll: Ntdll.dll
+description: NtSetInformationThread is used to set the priority of a thread.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtSetInformationThread.html

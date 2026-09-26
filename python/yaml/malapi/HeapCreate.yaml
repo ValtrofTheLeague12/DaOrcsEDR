@@ -1,0 +1,7 @@
+name: HeapCreate
+dll: Kernel32.dll
+description: HeapCreate is used to allocate heap memory that can be used by the calling
+  process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/HeapCreate.html

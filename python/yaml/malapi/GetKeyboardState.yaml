@@ -1,0 +1,7 @@
+name: GetKeyboardState
+dll: User32.dll
+description: GetKeyboardState is used to copy the status of the 256 virtual keys to
+  the specified buffer. This function is commonly used by keyloggers.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/GetKeyboardState.html

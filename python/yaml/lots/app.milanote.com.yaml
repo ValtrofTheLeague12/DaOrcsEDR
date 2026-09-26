@@ -1,0 +1,4 @@
+host: app.milanote.com
+provider: Milanote
+tags:
+- Phishing

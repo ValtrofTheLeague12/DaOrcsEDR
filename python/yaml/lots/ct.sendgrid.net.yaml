@@ -1,0 +1,4 @@
+host: ct.sendgrid.net
+provider: SendGrid
+tags:
+- PhishingDownload

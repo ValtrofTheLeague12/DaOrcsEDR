@@ -1,0 +1,7 @@
+name: SetWindowsHookExA
+dll: User32.dll
+description: SetWindowsHookExA is used to install an application-defined hook procedure
+  into a hook chain. This function is commonly used by keyloggers.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/SetWindowsHookExA.html

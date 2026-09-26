@@ -1,0 +1,4 @@
+host: '*.backblazeb2.com'
+provider: BackBlaze
+tags:
+- PhishingDownloadExfiltration

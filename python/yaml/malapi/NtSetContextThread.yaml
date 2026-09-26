@@ -1,0 +1,7 @@
+name: NtSetContextThread
+dll: Ntdll.dll
+description: NtSetContextThread is used to set the usermode context of the specified
+  thread.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtSetContextThread.html

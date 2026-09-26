@@ -1,0 +1,6 @@
+name: WSAStartup
+dll: Ws2_32.dll
+description: WSAStartup is used to initiate use of the Winsock DLL by a process.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/WSAStartup.html

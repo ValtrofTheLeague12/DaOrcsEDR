@@ -1,0 +1,6 @@
+name: RegSetValueExA
+dll: Advapi32.dll
+description: RegSetValueExA is used to set a value and type for a given registry key.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegSetValueExA.html

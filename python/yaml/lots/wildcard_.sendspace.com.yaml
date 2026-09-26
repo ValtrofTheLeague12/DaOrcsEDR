@@ -1,0 +1,4 @@
+host: '*.sendspace.com'
+provider: Sendspace
+tags:
+- PhishingDownloadExfiltration

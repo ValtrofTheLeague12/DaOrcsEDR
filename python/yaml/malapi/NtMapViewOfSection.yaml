@@ -1,0 +1,8 @@
+name: NtMapViewOfSection
+dll: Ntdll.dll
+description: NtMapViewOfSection is used to map a view of a section into the virtual
+  address space of a subject process. This function is used by malware as part of
+  process injection.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtMapViewOfSection.html

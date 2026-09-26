@@ -1,0 +1,7 @@
+name: NetShareEnum
+dll: Netapi32.dll
+description: NetShareEnum is used to retrieve information about each shared resource
+  on a server.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/NetShareEnum.html

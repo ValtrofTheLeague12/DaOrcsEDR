@@ -1,0 +1,7 @@
+name: DnsQueryEx
+dll: Dnsapi.dll
+description: DnsQueryEx is used to send a DNS query. This may be used for communications
+  over a DNS tunnel.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/DnsQueryEx.html

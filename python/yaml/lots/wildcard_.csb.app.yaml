@@ -1,0 +1,4 @@
+host: '*.csb.app'
+provider: CodeSandbox
+tags:
+- Phishing

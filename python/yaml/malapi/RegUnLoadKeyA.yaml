@@ -1,0 +1,7 @@
+name: RegUnLoadKeyA
+dll: Advapi32.dll
+description: RegUnLoadKeyA is used to unload the specified registry key and its subkeys
+  from the registry.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegUnLoadKeyA.html

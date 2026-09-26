@@ -1,0 +1,6 @@
+name: RegSetKeyValueA
+dll: Advapi32.dll
+description: RegSetKeyValueA is used to set a value for a given registry key.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegSetKeyValueA.html

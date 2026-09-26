@@ -1,0 +1,4 @@
+host: '*.appspot.com'
+provider: Google
+tags:
+- PhishingDownloadC&C

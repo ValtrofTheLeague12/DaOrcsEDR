@@ -1,0 +1,4 @@
+host: '*.googleusercontent.com'
+provider: Google
+tags:
+- PhishingC&C

@@ -1,0 +1,4 @@
+host: icloud.com
+provider: Apple
+tags:
+- PhishingDownloadExfiltration

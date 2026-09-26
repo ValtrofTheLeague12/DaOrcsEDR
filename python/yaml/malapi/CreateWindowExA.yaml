@@ -1,0 +1,8 @@
+name: CreateWindowExA
+dll: User32.dll
+description: CreateWindowExA is used to create an overlapped, pop-up, or child window
+  with an extended window style. This function is commonly used by malware to create
+  invisible windows or for evasion purposes.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/CreateWindowExA.html

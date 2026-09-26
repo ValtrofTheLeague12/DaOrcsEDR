@@ -1,0 +1,7 @@
+name: GetModuleBaseNameA
+dll: Kernel32.dll
+description: GetModuleBaseNameA is used to retrieve the base name of a specified module.
+attacks:
+- Enumeration
+- Helper
+source: malapi/malapi.io/winapi/GetModuleBaseNameA.html

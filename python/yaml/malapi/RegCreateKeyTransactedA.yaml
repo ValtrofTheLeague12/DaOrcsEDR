@@ -1,0 +1,8 @@
+name: RegCreateKeyTransactedA
+dll: Advapi32.dll
+description: RegCreateKeyTransactedA is used to create the specified registry key
+  and associates it with a transaction. If the key already exists, the function opens
+  it.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/RegCreateKeyTransactedA.html

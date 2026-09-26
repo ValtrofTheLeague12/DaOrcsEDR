@@ -1,0 +1,8 @@
+name: DuplicateToken
+dll: Advapi32.dll
+description: The DuplicateToken function creates a new access token that duplicates
+  one already in existence.
+attacks:
+- Injection
+- Evasion
+source: malapi/malapi.io/winapi/DuplicateToken.html

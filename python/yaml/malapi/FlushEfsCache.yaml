@@ -1,0 +1,7 @@
+name: FlushEfsCache
+dll: Advapi32.dll
+description: FlushEfsCache is used to flush EFS data from memory. This is used by
+  EFS ransomware post-encryption to cause the files and folder to become unreadable.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/FlushEfsCache.html

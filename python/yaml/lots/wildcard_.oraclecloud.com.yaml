@@ -1,0 +1,4 @@
+host: '*.oraclecloud.com'
+provider: Oracle
+tags:
+- PhishingExfiltrationDownloadC&C

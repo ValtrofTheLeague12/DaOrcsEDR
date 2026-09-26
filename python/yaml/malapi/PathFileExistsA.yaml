@@ -1,0 +1,8 @@
+name: PathFileExistsA
+dll: Shlwapi.dll
+description: PathFileExistsA is used to determine whether a path to a file system
+  object such as a file or folder is valid. This function is used by malware to enumerate
+  files and installed programs (e.g. AV solutions).
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/PathFileExistsA.html

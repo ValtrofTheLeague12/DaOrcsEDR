@@ -1,0 +1,4 @@
+host: slack-files.com
+provider: Slack
+tags:
+- Phishing

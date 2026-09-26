@@ -1,0 +1,7 @@
+name: RegQueryMultipleValuesA
+dll: Advapi32.dll
+description: RegQueryMultipleValuesA is used to retrieve the type and data for a list
+  of value names associated with an open registry key.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/RegQueryMultipleValuesA.html

@@ -1,0 +1,9 @@
+name: WaitForMultipleObjects
+dll: Kernel32.dll
+description: WaitForMultipleObjects is used to wait until one or all of the specified
+  objects are in the signaled state or the time-out interval elapses. This function
+  is commonly used to allow time for shellcode to execute or for time-based evasion.
+attacks:
+- Injection
+- Evasion
+source: malapi/malapi.io/winapi/WaitForMultipleObjects.html

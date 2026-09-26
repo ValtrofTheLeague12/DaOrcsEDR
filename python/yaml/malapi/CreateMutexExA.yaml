@@ -1,0 +1,8 @@
+name: CreateMutexExA
+dll: Kernel32.dll
+description: CreateMutexExA is used to create a new mutex object. Mutexs are often
+  used by malware to prevent the reinfection of a system with the same or different
+  malware variant.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/CreateMutexExA.html

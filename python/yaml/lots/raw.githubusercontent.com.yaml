@@ -1,0 +1,4 @@
+host: raw.githubusercontent.com
+provider: Github
+tags:
+- PhishingC&CDownload

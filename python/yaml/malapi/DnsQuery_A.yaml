@@ -1,0 +1,7 @@
+name: DnsQuery_A
+dll: Dnsapi.dll
+description: DnsQuery_A is used to send a DNS query. This may be used for communications
+  over a DNS tunnel.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/DnsQuery_A.html

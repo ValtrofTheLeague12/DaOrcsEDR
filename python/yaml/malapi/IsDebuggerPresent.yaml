@@ -1,0 +1,7 @@
+name: IsDebuggerPresent
+dll: Kernel32.dll
+description: IsDebuggerPresent is used to determine whether the calling process is
+  being debugged by a user-mode debugger.
+attacks:
+- Anti-Debugging
+source: malapi/malapi.io/winapi/IsDebuggerPresent.html

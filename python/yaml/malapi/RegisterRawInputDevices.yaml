@@ -1,0 +1,7 @@
+name: RegisterRawInputDevices
+dll: User32.dll
+description: RegisterRawInputDevices is used to register the devices that supply raw
+  input.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/RegisterRawInputDevices.html

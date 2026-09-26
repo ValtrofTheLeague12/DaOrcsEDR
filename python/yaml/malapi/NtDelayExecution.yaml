@@ -1,0 +1,7 @@
+name: NtDelayExecution
+dll: Ntdll.dll
+description: NtDelayExecution is used to suspend execution, similiar to the Sleep()
+  API function. This function can be used by malware for evasion purposes.
+attacks:
+- Evasion
+source: malapi/malapi.io/winapi/NtDelayExecution.html

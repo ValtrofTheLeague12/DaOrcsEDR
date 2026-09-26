@@ -1,0 +1,6 @@
+name: NtProtectVirtualMemory
+dll: Ntdll.dll
+description: NtProtectVirtualMemory is used to interact with and modify memory regions.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtProtectVirtualMemory.html

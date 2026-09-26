@@ -1,0 +1,8 @@
+name: FindFirstUrlCacheEntryA
+dll: Wininet.dll
+description: FindFirstUrlCacheEntryA is used to begin the enumeration of the Internet
+  cache.
+attacks:
+- Enumeration
+- Internet
+source: malapi/malapi.io/winapi/FindFirstUrlCacheEntryA.html

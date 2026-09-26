@@ -1,0 +1,6 @@
+name: CopyFileA
+dll: Kernel32.dll
+description: CopyFileA is used to copy an existing file to a new file.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/CopyFileA.html

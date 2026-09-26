@@ -1,0 +1,6 @@
+name: SetWindowLongPtrA
+dll: User32.dll
+description: SetWindowLongPtrA is used to changes an attribute of a specified window.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/SetWindowLongPtrA.html

@@ -1,0 +1,7 @@
+name: InternetConnectA
+dll: Wininet.dll
+description: InternetConnectA is used to open a File Transfer Protocol (FTP) or HTTP
+  session for a given site.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/InternetConnectA.html

@@ -1,0 +1,6 @@
+name: InternetSetOptionA
+dll: Wininet.dll
+description: InternetSetOptionA is used to set an Internet option.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/InternetSetOptionA.html

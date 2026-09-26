@@ -1,0 +1,9 @@
+name: GetLogicalProcessorInformationEx
+dll: Kernel32.dll
+description: GetLogicalProcessorInformationEx is used to retrieve information about
+  logical processors and related hardware. The function is used by malware for anti-debugging
+  purposes.
+attacks:
+- Enumeration
+- Anti-Debugging
+source: malapi/malapi.io/winapi/GetLogicalProcessorInformationEx.html

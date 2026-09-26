@@ -1,0 +1,7 @@
+name: GetThreadId
+dll: Kernel32.dll
+description: GetThreadId is used to retrieve the thread identifier of the specified
+  thread.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetThreadId.html

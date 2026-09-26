@@ -1,0 +1,7 @@
+name: Gethostname
+dll: Ws2_32.dll
+description: gethostname is used to retrieve the standard host name for the local
+  computer.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Gethostname.html

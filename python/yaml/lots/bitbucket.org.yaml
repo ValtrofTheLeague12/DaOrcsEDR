@@ -1,0 +1,4 @@
+host: bitbucket.org
+provider: Atlassian
+tags:
+- PhishingDownloadExfiltrationC&C

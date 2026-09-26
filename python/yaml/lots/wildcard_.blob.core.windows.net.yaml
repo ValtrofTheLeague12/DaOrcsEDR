@@ -1,0 +1,4 @@
+host: '*.blob.core.windows.net'
+provider: Microsoft
+tags:
+- PhishingDownloadExfiltration

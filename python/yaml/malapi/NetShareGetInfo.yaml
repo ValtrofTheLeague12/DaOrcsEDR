@@ -1,0 +1,7 @@
+name: NetShareGetInfo
+dll: Netapi32.dll
+description: NetShareGetInfo is used to retrieves information about a particular shared
+  resource on a server.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/NetShareGetInfo.html

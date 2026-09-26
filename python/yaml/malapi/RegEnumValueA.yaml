@@ -1,0 +1,8 @@
+name: RegEnumValueA
+dll: Advapi32.dll
+description: RegEnumValueA is used to enumerate the values for the specified open
+  registry key
+attacks:
+- Enumeration
+- Helper
+source: malapi/malapi.io/winapi/RegEnumValueA.html

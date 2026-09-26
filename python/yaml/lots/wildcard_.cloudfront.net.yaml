@@ -1,0 +1,4 @@
+host: '*.cloudfront.net'
+provider: Amazon Web Services
+tags:
+- PhishingC&CDownload

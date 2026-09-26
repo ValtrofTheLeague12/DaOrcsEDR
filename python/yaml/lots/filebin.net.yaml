@@ -1,0 +1,4 @@
+host: filebin.net
+provider: Filebin
+tags:
+- PhishingExfiltrationDownload

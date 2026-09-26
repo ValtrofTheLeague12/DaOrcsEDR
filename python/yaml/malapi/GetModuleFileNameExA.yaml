@@ -1,0 +1,8 @@
+name: GetModuleFileNameExA
+dll: Kernel32.dll
+description: GetModuleFileNameExA is used to return the filename of a module that
+  is loaded in the current process. Malware can use this function to modify or copy
+  files in the currently running process.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/GetModuleFileNameExA.html

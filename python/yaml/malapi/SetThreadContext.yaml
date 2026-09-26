@@ -1,0 +1,7 @@
+name: SetThreadContext
+dll: Kernel32.dll
+description: SetThreadContext is used to modify a thread's context. This is often
+  used as part of process injection techniques.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/SetThreadContext.html

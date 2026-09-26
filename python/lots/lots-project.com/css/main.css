@@ -1,0 +1,301 @@
+@media only screen and (max-width: 480px){
+    html{
+        min-width:600px;
+    }
+
+    .body-styling{
+        padding-left:5%;
+        padding-right:5%;
+    }
+
+    .main-title{
+        font-size:24px;
+        font-weight: bold;
+    }
+
+}
+
+@media only screen and (min-width: 480px){
+    html{
+        min-width:600px;
+    }
+
+    .body-styling{
+        padding-left:5%;
+        padding-right:5%;
+    }
+
+    .main-title{
+        font-size:24px;
+        font-weight: bold;
+    }
+
+}
+
+@media only screen and (min-width: 817px){
+    html{
+        min-width:100%;
+    }
+
+    .body-styling{
+        padding-left:10%;
+        padding-right:10%;
+    }
+
+    .main-title{
+        font-size:28px;
+        font-weight: bold;
+    }
+
+}
+
+@media only screen and (min-width: 1065px){
+    html{
+        min-width:100%;
+    }
+
+    .body-styling{
+        padding-left:15%;
+        padding-right:15%;
+    }
+
+    .main-title{
+        font-size:28px;
+        font-weight: bold;
+    }
+
+
+}
+
+@media only screen and (min-width: 1240px){
+    html{
+        min-width:100%;
+    }
+
+    .body-styling{
+        padding-left:20%;
+        padding-right:20%;
+    }
+
+    .main-title{
+        font-size:28px;
+        font-weight: bold;
+    }
+
+
+}
+
+@media only screen and (min-width: 1598px){
+    html{
+        min-width:100%;
+    }
+
+    .body-styling{
+        padding-left:25%;
+        padding-right:25%;
+    }
+
+    .main-title{
+        font-size:32px;
+        font-weight: bold;
+    }
+
+}
+
+html,body {
+	font-family: 'Courier Prime', monospace;
+    background-color: #E6E6E6;
+    min-height:100%;
+}
+
+
+th{
+    font-size: 20px;
+    font-weight: bold;
+    color:#fff;
+    background-color: #4a5ad4;
+    text-align:center;
+    height: 60px;
+}
+
+
+th,td{
+    text-align:left;
+    padding: 10px 0px;
+    padding-left:10px;
+    word-wrap: break-word;
+}
+
+.tr-class{
+    margin-top:5px;
+    margin-bottom: 5px;
+    background-color: #fff;
+    border-bottom: 1px solid #c1c2cc;
+}
+
+.tr-class:hover{
+    background-color:#a9afdf;
+}
+
+table{
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    border-spacing: 5px 0;
+    margin-bottom: 100px;
+}
+
+.heading-section{
+    text-align: center;
+}
+
+.search-bar{
+    margin-top: 30px;
+}
+
+#input{
+    height:40px;
+    border-color: #091353;
+}
+
+.link{
+    color:#091353;
+    text-decoration: underline;
+}
+
+.link:visited {
+    color:#091353
+  }
+
+.link:hover{
+    text-decoration: none;
+    color:#091353;
+}
+
+.link:active {
+    color:#091353;
+    text-decoration: none;
+  }
+
+.link:focus{
+    color:#091353;
+    text-decoration: none;
+}
+
+.functions{
+    color:#091353;
+    display: inline-block;
+    font-size:14px;
+    border: 1px solid #091353;
+    padding: 0.25em 0.5em;
+    margin-top: 10px;
+}
+
+.function-list-margin{
+    margin-left:10px;
+    margin-bottom:10px;
+}
+
+.function-table-margin{
+    margin: 0.2em 0;
+}
+
+.navbar-brand{
+    color:#091353;
+}
+
+.navbar-nav>li>a{
+    font-size:16px;
+    color:#091353;
+}
+
+.navbar-nav>li>a:visited, .navbar-brand:visited{
+    color:#091353;
+}
+
+.navbar-nav>li>a:hover, .navbar-brand:hover{
+    background-color: #a3a6bd;
+    color:#091353;
+}
+
+.navbar-nav>li>a:active, .navbar-brand:active{
+    color:#091353;
+    text-decoration: none;
+}
+
+.navbar-nav>li>a:focus, .navbar-brand:focus{
+    color:#091353;
+    text-decoration: none;
+}
+
+.nav .open>a, .nav .open>a:focus, .nav .open>a:hover{
+    background-color: #a3a6bd;
+    border-color:#a3a6bd;
+}
+
+.vertical-spacing{
+    margin-bottom:5px;
+}
+
+.description{
+    margin-top:20px;
+}
+
+.default-text{
+    font-size:16px;
+}
+
+.form-spacing{
+    margin-bottom: 25px;
+}
+
+.main-img-container{
+    width:165px;
+    height: 165px;
+    background: url(images/bg.svg);
+    background-repeat: no-repeat;
+    background-size: cover;
+    border: 5px solid #000;
+    border-radius: 50%;
+    margin: 5px auto;
+}
+
+.social-media-text{
+    font-size: 18px;
+    padding-left:2px;
+    color:#337ab7;
+    margin-right:20px;
+}
+
+.generic-text{
+    color: #091353;
+}
+
+.main-banner{
+    color: #091353;
+    border: solid #091353 1px;
+    margin-top: 30px;
+    margin-bottom: 30px;
+}
+
+.main-banner-header{
+    font-size: 24px;
+}
+
+.main-banner-text{
+    font-size: 14px;
+}
+
+/*Fix default border radius */
+.navbar{
+    border-radius:0px;
+}
+
+.icon-bar{
+    background-color: #091353;
+}
+/* End navbar fix */
+
+#sortBtn::before{
+    cursor:pointer;
+}

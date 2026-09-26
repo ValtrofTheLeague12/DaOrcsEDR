@@ -1,0 +1,9 @@
+name: QueryPerformanceFrequency
+dll: Kernel32.dll
+description: QueryPerformanceFrequency is used to retrieve the frequency of the performance
+  counter. This function is commonly used by malware for anti-debugging purposes.
+  The malware will measure the time before and after an operation, if the time exceeds
+  taken expected time, the malware will terminate or activate a benign function.
+attacks:
+- Anti-Debugging
+source: malapi/malapi.io/winapi/QueryPerformanceFrequency.html

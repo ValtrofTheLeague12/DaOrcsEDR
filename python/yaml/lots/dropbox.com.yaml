@@ -1,0 +1,4 @@
+host: dropbox.com
+provider: Dropbox
+tags:
+- PhishingDownloadExfiltrationC&C

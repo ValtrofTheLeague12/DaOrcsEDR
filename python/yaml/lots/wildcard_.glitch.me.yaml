@@ -1,0 +1,4 @@
+host: '*.glitch.me'
+provider: Glitch
+tags:
+- PhishingDownload

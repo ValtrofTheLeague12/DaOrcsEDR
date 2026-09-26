@@ -1,0 +1,9 @@
+name: FindResourceExA
+dll: Kernel32.dll
+description: FindResourceExA is used to find a resource in an executable or loaded
+  DLL. Malware sometimes uses resources to store strings, configuration information,
+  or other malicious files. If you see this function used, check for a .rsrc section
+  in the malware’s PE header.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/FindResourceExA.html

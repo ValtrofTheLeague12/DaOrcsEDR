@@ -1,0 +1,7 @@
+name: GetCurrentProcessId
+dll: Kernel32.dll
+description: GetCurrentProcessId is used to retrieve the process identifier of the
+  calling process.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetCurrentProcessId.html

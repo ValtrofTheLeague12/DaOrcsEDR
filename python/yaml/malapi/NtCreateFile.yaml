@@ -1,0 +1,7 @@
+name: NtCreateFile
+dll: Ntdll.dll
+description: NtCreateFile is used to create a new file or directory, or opens an existing
+  file, device, directory, or volume.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/NtCreateFile.html

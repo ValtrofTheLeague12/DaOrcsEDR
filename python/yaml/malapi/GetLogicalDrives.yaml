@@ -1,0 +1,10 @@
+name: GetLogicalDrives
+dll: Kernel32.dll
+description: GetLogicalDrives is used to retrieve a bitmask representing the currently
+  available disk drives. This function can be used to emumerate all drives / mounted
+  drives.
+attacks:
+- Enumeration
+- Ransomware
+- Helper
+source: malapi/malapi.io/winapi/GetLogicalDrives.html

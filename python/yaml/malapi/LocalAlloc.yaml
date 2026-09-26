@@ -1,0 +1,6 @@
+name: LocalAlloc
+dll: Kernel32.dll
+description: LocalAlloc is used for heap allocation and manipulation.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/LocalAlloc.html

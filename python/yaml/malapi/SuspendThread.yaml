@@ -1,0 +1,7 @@
+name: SuspendThread
+dll: Kernel32.dll
+description: SuspendThread is used to suspend a specified thread often times as part
+  of process injection or to tamper with a legitimate application.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/SuspendThread.html

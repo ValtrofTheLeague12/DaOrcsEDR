@@ -1,0 +1,7 @@
+name: VirtualProtect
+dll: Kernel32.dll
+description: VirtualProtect is often used by malware to modify memory protection (often
+  to allow write or execution).
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/VirtualProtect.html

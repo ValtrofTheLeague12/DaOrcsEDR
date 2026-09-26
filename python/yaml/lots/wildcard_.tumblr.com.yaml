@@ -1,0 +1,4 @@
+host: '*.tumblr.com'
+provider: Tumblr
+tags:
+- PhishingC&C

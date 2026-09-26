@@ -1,0 +1,4 @@
+host: '*.wordpress.com'
+provider: Wordpress Foundation
+tags:
+- PhishingDownloadC&CExfiltration

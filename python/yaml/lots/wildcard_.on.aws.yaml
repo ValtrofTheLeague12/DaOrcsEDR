@@ -1,0 +1,4 @@
+host: '*.on.aws'
+provider: Amazon
+tags:
+- C&C

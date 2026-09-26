@@ -1,0 +1,6 @@
+name: SetWindowLongA
+dll: User32.dll
+description: SetWindowLongA is used to changes an attribute of a specified window.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/SetWindowLongA.html

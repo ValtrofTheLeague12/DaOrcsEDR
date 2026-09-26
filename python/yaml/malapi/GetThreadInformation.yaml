@@ -1,0 +1,7 @@
+name: GetThreadInformation
+dll: Kernel32.dll
+description: GetThreadInformation is used to retrieve information about the specified
+  thread.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetThreadInformation.html

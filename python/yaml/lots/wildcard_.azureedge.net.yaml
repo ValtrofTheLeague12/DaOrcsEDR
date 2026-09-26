@@ -1,0 +1,4 @@
+host: '*.azureedge.net'
+provider: Microsoft
+tags:
+- PhishingC&C

@@ -1,0 +1,6 @@
+name: GetSystemDirectoryA
+dll: Kernel32.dll
+description: GetSystemDirectoryA retrieve the path of the system directory.
+attacks:
+- Enumeration
+source: malapi/malapi.io/winapi/GetSystemDirectoryA.html

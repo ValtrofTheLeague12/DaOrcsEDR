@@ -1,0 +1,8 @@
+name: CryptDestroyHash
+dll: Crypt32.dll
+description: The CryptDestroyHash function destroys the hash object referenced by
+  the hHash parameter. After a hash object has been destroyed, it can no longer be
+  used.
+attacks:
+- Ransomware
+source: malapi/malapi.io/winapi/CryptDestroyHash.html

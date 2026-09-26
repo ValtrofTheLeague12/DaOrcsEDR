@@ -1,0 +1,4 @@
+host: '*.codesandbox.io'
+provider: CodeSandbox
+tags:
+- Phishing

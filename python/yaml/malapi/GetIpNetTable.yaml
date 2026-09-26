@@ -1,0 +1,8 @@
+name: GetIpNetTable
+dll: Iphlpapi.dll
+description: The GetIpNetTable function retrieves the IPv4 to physical address mapping
+  table. Could be used to identify hosts & mounted drives tracking ARP entries.
+attacks:
+- Enumeration
+- Helper
+source: malapi/malapi.io/winapi/GetIpNetTable.html

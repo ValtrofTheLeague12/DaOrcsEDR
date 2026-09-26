@@ -1,0 +1,7 @@
+name: GetKeyState
+dll: User32.dll
+description: GetKeyState is used to retrieve the status of the specified virtual key.
+  This function is commonly used by keyloggers.
+attacks:
+- Spying
+source: malapi/malapi.io/winapi/GetKeyState.html

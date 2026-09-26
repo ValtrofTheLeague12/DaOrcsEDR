@@ -1,0 +1,7 @@
+name: PeekNamedPipe
+dll: Kernel32.dll
+description: Used to copy data from a named pipe without removing data from the pipe.
+  This function has been used by exploits targeting SMB vulnerabilities.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/PeekNamedPipe.html

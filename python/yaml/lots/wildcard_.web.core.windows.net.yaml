@@ -1,0 +1,4 @@
+host: '*.web.core.windows.net'
+provider: Microsoft
+tags:
+- PhishingDownloadExfiltrationC&C

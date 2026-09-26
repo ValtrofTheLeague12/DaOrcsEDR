@@ -1,0 +1,7 @@
+name: UnmapViewOfFile
+dll: Kernel32.dll
+description: UnmapViewOfFile is used to unmap a mapped view of a file from the calling
+  process's address space.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/UnmapViewOfFile.html

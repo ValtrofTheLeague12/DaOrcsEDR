@@ -1,0 +1,7 @@
+name: Inet_addr
+dll: Ws2_32.dll
+description: inet_addr is used to convert a string containing an IPv4 dotted-decimal
+  address into a proper address for the IN_ADDR structure.
+attacks:
+- Internet
+source: malapi/malapi.io/winapi/Inet_addr.html

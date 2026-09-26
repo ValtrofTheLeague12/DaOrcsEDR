@@ -1,0 +1,6 @@
+name: HeapReAlloc
+dll: Kernel32.dll
+description: HeapReAlloc is used to reallocate a block of memory from a heap.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/HeapReAlloc.html

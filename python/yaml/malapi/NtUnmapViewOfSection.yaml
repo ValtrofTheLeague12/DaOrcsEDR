@@ -1,0 +1,7 @@
+name: NtUnmapViewOfSection
+dll: Ntdll.dll
+description: NtUnmapViewOfSection is used to unmap a view of a section from the virtual
+  address space of a subject process.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/NtUnmapViewOfSection.html

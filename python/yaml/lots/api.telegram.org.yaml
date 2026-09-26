@@ -1,0 +1,4 @@
+host: api.telegram.org
+provider: Telegram
+tags:
+- C&CExfiltration

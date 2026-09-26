@@ -1,0 +1,7 @@
+name: CreateProcessA
+dll: Kernel32.dll
+description: CreateProcessA is used to create a process. This function is used by
+  malware in several process injection attacks such as process hollowing.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/CreateProcessA.html

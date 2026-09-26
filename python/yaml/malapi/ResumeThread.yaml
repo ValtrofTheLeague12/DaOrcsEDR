@@ -1,0 +1,7 @@
+name: ResumeThread
+dll: Kernel32.dll
+description: ResumeThread is used to resume a specified thread often times as part
+  of process injection.
+attacks:
+- Injection
+source: malapi/malapi.io/winapi/ResumeThread.html

@@ -1,0 +1,2 @@
+date	size'/'remotesize	flags(request:Update,Range state:File response:Modified,Chunked,gZipped)	statuscode	status ('servermsg')	MIME	Etag|Date	URL	localfile	(from URL)
+03:09:02	183394/183394	U--MCZ	200	updated ('OK')	text/html	date:Mon,%2021%20Sep%202026%2001:09:01%20GMT	https://lots-project.com/	/mnt/c/Users/The4thReich/Desktop/IAProject/python/lots/lots-project.com/index.html	(from )

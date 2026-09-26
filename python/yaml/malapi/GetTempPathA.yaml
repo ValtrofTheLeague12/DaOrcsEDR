@@ -1,0 +1,8 @@
+name: GetTempPathA
+dll: Kernel32.dll
+description: GetTempPathA is used to retrieve the path of the directory designated
+  for temporary files. This is often used by malware when it requires a location for
+  additional installations.
+attacks:
+- Helper
+source: malapi/malapi.io/winapi/GetTempPathA.html
