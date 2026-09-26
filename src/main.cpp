@@ -1796,8 +1796,12 @@ int main(int argc, char** argv) {
         print_xxd_line(line);
         ++shown;
       }
-      if (shown < std::count_if(xxd.output.begin(), xxd.output.end(),
-                                 [](char c) { return c == '\n'; })) {
+      // count_if returns a signed difference_type; shown is unsigned, so the
+      // comparison needs an explicit cast.
+      const std::size_t xxd_total = static_cast<std::size_t>(std::count_if(
+          xxd.output.begin(), xxd.output.end(),
+          [](char c) { return c == '\n'; }));
+      if (shown < xxd_total) {
         print_bullet("... more dump lines follow "
                      "(the full dump is in the extraction JSON)",
                      console::grey);

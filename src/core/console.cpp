@@ -3,7 +3,9 @@
 #include "logging.hpp"
 
 #include <cstdio>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 
 #ifdef _WIN32
   #include <windows.h>
@@ -50,11 +52,17 @@ void print_magic_header(const analyzer::file_info_t& info) {
 void print_magic_offset(const analyzer::file_info_t& info) {
   if (info.binary_magic.empty()) return;
 
-  std::printf("    Header bytes (%zu): ", info.binary_magic.size());
+  // Built with a stream and emitted through std::cout, not std::printf. The
+  // curses results browser captures output by swapping std::cout's rdbuf, so
+  // anything written with printf bypasses the capture entirely and leaks to the
+  // real terminal, out of order with the rest of the report.
+  std::ostringstream line;
+  line << "    Header bytes (" << info.binary_magic.size() << "): ";
   for (std::size_t i = 0; i < info.binary_magic.size(); ++i) {
-    std::printf("%02x ", static_cast<unsigned>(info.binary_magic[i]));
+    line << std::hex << std::setw(2) << std::setfill('0')
+         << static_cast<unsigned>(info.binary_magic[i]) << ' ';
   }
-  std::printf("\n");
+  std::cout << line.str() << '\n';
 }
 
 void print_available_fields(const analyzer::file_info_t& file_info) {
