@@ -903,6 +903,146 @@ void print_cminer_raw(const std::string& output) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// YARA report
+// ---------------------------------------------------------------------------
+// The rule scan runs inside the extraction pipeline, so these results were only
+// ever reaching the extraction JSON and the dashboard. The terminal and the
+// PDCurses results browser showed nothing at all, which made the single most
+// security-relevant finding invisible in the primary UI.
+void print_yara_report(const yara_scanner::result_t& r) {
+  print_section("YARA");
+  if (!r.attempted) {
+    console::info("YARA was not attempted for this file");
+    return;
+  }
+  if (!r.available) {
+    print_warn("YARA unavailable: libyara or the rules directory could not be used");
+    if (!r.rules_directory.empty()) print_kv("Rules dir", r.rules_directory);
+    for (const auto& message : r.errors) print_bullet(message, console::red);
+    return;
+  }
+
+  std::ostringstream load;
+  load << r.rule_files_loaded << " / " << r.rule_files_found;
+  print_kv_colored("Rules loaded", load.str(),
+                   r.rule_files_failed == 0 ? console::green : console::yellow);
+  if (r.rule_files_failed > 0) {
+    print_kv_colored("Rule files failed", std::to_string(r.rule_files_failed),
+                     console::red);
+  }
+  print_kv("Workers", std::to_string(r.worker_threads));
+  if (!r.rules_directory.empty()) print_kv("Rules dir", r.rules_directory);
+  std::ostringstream scan;
+  scan << "exit=" << r.exit_code << "  seconds=" << std::fixed
+       << std::setprecision(3) << r.seconds;
+  print_kv_colored("Scan", scan.str(), r.scan_ok ? console::green : console::yellow);
+  for (const auto& message : r.errors) print_bullet(message, console::yellow);
+
+  if (r.matches.empty()) {
+    print_section("Matches");
+    console::info("no rules matched");
+    return;
+  }
+
+  print_kv_colored("Rules matched", std::to_string(r.rules_matched), console::red);
+  // Some rule packs match hundreds of rules on a packed binary; the full set is
+  // in the extraction JSON.
+  constexpr std::size_t kMaxRules = 60;
+  std::size_t shown = 0;
+  for (const auto& match : r.matches) {
+    if (shown >= kMaxRules) {
+      print_bullet("... more rules matched (full list is in the extraction JSON)",
+                   console::grey);
+      break;
+    }
+    print_section("Rule: " + (match.identifier.empty() ? "(unnamed)" : match.identifier));
+    if (!match.tags.empty()) {
+      std::istringstream tag_stream(match.tags);
+      std::string tag;
+      while (tag_stream >> tag) print_bullet("tag: " + tag, console::cyan);
+    }
+    for (const auto& s : match.strings) {
+      std::ostringstream offsets;
+      std::size_t emitted = 0;
+      for (const auto off : s.offsets) {
+        if (emitted >= 12) { offsets << " ..."; break; }
+        if (emitted) offsets << ", ";
+        offsets << "0x" << std::hex << off << std::dec;
+        ++emitted;
+      }
+      print_kv(s.identifier, offsets.str());
+    }
+    ++shown;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PE export address table report
+// ---------------------------------------------------------------------------
+// The EAT is parsed by the extraction pipeline and serialized into the
+// extraction JSON (raw.pe.export_table), and the dashboard renders it, but the
+// terminal and PDCurses never mentioned it: there were no references to
+// export_table anywhere in the reporting code.
+void print_export_report(const extractor::pe_export_table_t& r) {
+  print_section("Export table");
+  if (!r.present) {
+    console::info("no export address table (expected for a plain executable)");
+    return;
+  }
+
+  print_kv("Name", r.name.empty() ? "(unnamed)" : r.name);
+  std::ostringstream ts;
+  ts << "0x" << std::hex << std::setw(8) << std::setfill('0') << r.timestamp
+     << std::dec << std::setfill(' ');
+  print_kv("Timestamp", ts.str());
+  print_kv("Version",
+           std::to_string(r.major_version) + "." + std::to_string(r.minor_version));
+  print_kv("Ordinal base", std::to_string(r.ordinal_base));
+
+  std::ostringstream at;
+  at << hex_rva(r.export_addr_table_rva) << "  " << r.export_addr_table_count
+     << " entries";
+  print_kv("Address table", at.str());
+  std::ostringstream nt;
+  nt << hex_rva(r.names_addr_table_rva) << "  " << r.names_addr_table_count
+     << " entries";
+  print_kv("Name table", nt.str());
+  print_kv("Ordinal table", hex_rva(r.ordinal_addr_table_rva));
+
+  std::ostringstream counts;
+  counts << r.named_count << " named  |  " << r.forwarded_count << " forwarded"
+         << "  |  " << r.external_count << " external";
+  print_kv_colored("Entries", counts.str(), console::green);
+  print_kv("Total entries", std::to_string(r.entries.size()));
+  if (r.entries.empty()) return;
+
+  print_section("Exported symbols");
+  // Kept in step with the dashboard's 2000-entry preview cap.
+  constexpr std::size_t kMaxExports = 2000;
+  std::size_t shown = 0;
+  for (const auto& e : r.entries) {
+    if (shown >= kMaxExports) {
+      print_bullet("... more exports (full list is in the extraction JSON)",
+                   console::grey);
+      break;
+    }
+    std::ostringstream line;
+    line << std::left << std::setw(6) << e.ordinal << "  " << hex_rva(e.rva)
+         << "  " << (e.name.empty() ? "(ordinal only)" : e.name);
+    std::string_view color = console::white;
+    if (e.is_forwarded) {
+      line << "  -> " << e.forwarder_library;
+      if (!e.forwarder_function.empty()) line << "." << e.forwarder_function;
+      color = console::yellow;
+    } else if (e.is_extern) {
+      color = console::red;
+    }
+    print_bullet(line.str(), color);
+    ++shown;
+  }
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -919,7 +1059,7 @@ int main(int argc, char** argv) {
 
   const std::string path = argc > 1 ? argv[1] : "a.exe";
   // Pre-detection placeholder; rescaled by set_total() once the format is known.
-  constexpr int kAllPhases = 22;
+  constexpr int kAllPhases = 24;
   curses_ui::session curses_session;
   g_curses_session = &curses_session;
   const bool curses_started = curses_session.begin(
@@ -1013,10 +1153,11 @@ int main(int argc, char** argv) {
   //
   //   PE / ELF / Mach-O : phase 1 renders the format-specific section table, so
   //                       the generic LIEF view (phase 2) is a duplicate.
-  //   PE                : import table (4) and MalAPI (5).
+  //   PE                : import table (4), MalAPI (5), the export address
+  //                       table and the YARA rule scan.
   //   ELF / Mach-O      : GOT / PLT (6).
   const int kSkippedGenericSections = (is_pe || is_elf || is_macho) ? 1 : 0;
-  const int kSkippedPeOnly = is_pe ? 0 : 2;                 // IAT + MalAPI
+  const int kSkippedPeOnly = is_pe ? 0 : 4;                 // IAT, MalAPI, EAT, YARA
   const int kSkippedGotOnly = (is_elf || is_macho) ? 0 : 1;  // GOT / PLT
   const int kTotalPhases = kAllPhases - kSkippedGenericSections
                          - kSkippedPeOnly - kSkippedGotOnly;
@@ -1603,6 +1744,26 @@ int main(int argc, char** argv) {
   // -------- Full pipeline --------
   extractor::extraction_result_t full{};
   extractor::analyze(full, info);
+
+  // -------- Export Address Table (PE) --------
+  // Reported here rather than next to the other PE phases because the EAT is
+  // only populated by analyze(); there is no standalone extract_export_table().
+  phase(is_pe, "export table (PE)");
+  {
+    const auto started = clock::now();
+    if (is_pe) print_export_report(full.pe.export_table);
+    print_duration(elapsed_ms(started));
+  }
+
+  // -------- YARA rules --------
+  // Likewise produced by analyze(); previously surfaced only in the exported
+  // JSON and the dashboard, never in the terminal or PDCurses.
+  phase(is_pe, "YARA rule scan");
+  {
+    const auto started = clock::now();
+    if (is_pe) print_yara_report(full.yara);
+    print_duration(elapsed_ms(started));
+  }
 
   // -------- Phase 16: xxd hex dump --------
   // The extractor already runs `wsl xxd` and stores the output; surface it as a
