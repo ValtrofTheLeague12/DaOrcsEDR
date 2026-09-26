@@ -13,6 +13,7 @@
 #include "radare2_runner.hpp"
 #include "local_api.hpp"
 #include "visualizer.hpp"
+#include "secret_store.hpp"
 
 #include <cctype>
 #include <chrono>
@@ -75,6 +76,11 @@ constexpr std::size_t kRuleWidth = 72;
 constexpr int         kLabelPad  = 22;
 
 curses_ui::session* g_curses_session = nullptr;
+
+// Name of the environment variable holding a credential fetched from `bw serve`,
+// so it can be unset once the CTI phase is done. Empty when no vault fetch
+// happened. The value itself is never stored here.
+std::string g_cti_vault_key_target;
 
 void print_banner(const std::string& title) {
   std::cout << '\n'
@@ -1891,7 +1897,8 @@ int main(int argc, char** argv) {
 
     // Keys come from environment (no header configuration / no CLI flags).
     // Providers without a key are skipped and listed in the report warnings.
-    const auto cti_cfg = cti::config::from_environment();
+    // Read after the optional vault fetch below, so a key pulled from
+    // `bw serve` is picked up exactly like a hand-set variable.
 
     // Allow the smoke / CI run (no keys, no network) to skip this phase
     // without hanging: the phase is a no-op when CTI_SKIP is set.
@@ -1903,7 +1910,44 @@ int main(int argc, char** argv) {
     if (cti_skip) {
       console::info("CTI phase skipped (CTI_SKIP=1) — API keys not wired in this environment");
     } else {
-      cti::pipeline pipe(cti_cfg);
+      // Optional: pull one credential from a running `bw serve` so the key never
+      // rests on disk. Opt-in via CTI_KEY_NAME + CTI_KEY_TARGET, e.g.
+      //   CTI_KEY_NAME="VirusTotal"  CTI_KEY_TARGET=VIRUSTOTAL_API_KEY
+      // The value lives in this scope only: never logged, never placed in a
+      // structure that reaches the exporter, and unset before the phase ends.
+      {
+        const char* key_name = std::getenv("CTI_KEY_NAME");
+        const char* key_target = std::getenv("CTI_KEY_TARGET");
+        if (key_name != nullptr && *key_name != '\0' &&
+            key_target != nullptr && *key_target != '\0') {
+          const char* base_env = std::getenv("CTI_BW_SERVE_URL");
+          const std::string base = (base_env != nullptr && *base_env != '\0')
+                                       ? base_env : "http://127.0.0.1:8087";
+          print_section("CTI credential");
+          print_kv("Source", "Bitwarden `bw serve` (in-memory, never written to disk)");
+          print_kv("Vault item", key_name);
+          print_kv("Target variable", key_target);
+
+          secret_store::result_t fetched = secret_store::fetch_from_bw_serve(key_name, base);
+          if (fetched.ok) {
+            const bool applied = _putenv_s(key_target, fetched.value.c_str()) == 0;
+            fetched.value.assign(fetched.value.size(), '\0');
+            fetched.value.clear();
+            if (applied) {
+              g_cti_vault_key_target = key_target;
+              console::info("credential loaded into " + std::string(key_target) +
+                            " for this process only");
+            } else {
+              print_warn("could not set " + std::string(key_target) +
+                         " in the process environment");
+            }
+          } else {
+            print_warn("credential unavailable: " + fetched.error);
+          }
+        }
+      }
+
+      cti::pipeline pipe(cti::config::from_environment());
       if (!pipe.network_available()) {
         console::info("No internet connection found — skipping CTI phase.");
       } else {
@@ -1968,6 +2012,14 @@ int main(int argc, char** argv) {
                                    " verdict categories");
       else       console::info("CTI: no artifacts collected for this sample");
       }
+    }
+
+    // Drop the vault-sourced credential from the process environment as soon as
+    // the phase is over, so it cannot leak into a later phase (or a child
+    // process) that happens to read it.
+    if (!g_cti_vault_key_target.empty()) {
+      _putenv_s(g_cti_vault_key_target.c_str(), "");
+      g_cti_vault_key_target.clear();
     }
 
     print_duration(elapsed_ms(started));
