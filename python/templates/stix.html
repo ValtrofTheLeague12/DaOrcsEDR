@@ -204,6 +204,17 @@ const DATA = /*__PAYLOAD__*/;
     return hit ? hit.name : String(short || "").replace(/-/g, " ");
   };
 
+  /* Opening of a long ATT&CK string for a hover title: <title> is plain text and
+     the whole paragraph is a wall, so cut at a sentence boundary when one falls
+     near the limit. */
+  const snippet = (text, limit) => {
+    const s = String(text || "").replace(/\s+/g, " ").trim();
+    if (s.length <= limit) return s;
+    const cut = s.slice(0, limit);
+    const stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("; "));
+    return stop > limit * 0.5 ? cut.slice(0, stop + 1) : cut.replace(/\s+\S*$/, "") + "…";
+  };
+
   document.getElementById("title").textContent = META.name || "STIX Viewer";
   document.getElementById("cObjects").textContent = G.stats.objects;
   document.getElementById("cTech").textContent = G.stats.techniques;
@@ -287,6 +298,10 @@ const DATA = /*__PAYLOAD__*/;
     if (d.confidence != null) facts.push(["Confidence", d.confidence]);
     if (d.identity_class) facts.push(["Class", d.identity_class]);
     if (d.report_types) facts.push(["Report type", d.report_types.join(", ")]);
+    if (node.type === "x-mitre-tactic") {
+      const n = node.techniques || 0;
+      facts.push(["Techniques", n + " in this bundle"]);
+    }
     sec("Details");
     facts.forEach(f => kv(f[0], f[1]));
     kv("Object ID", id);
@@ -461,10 +476,25 @@ const DATA = /*__PAYLOAD__*/;
     node.append("text")
       .attr("x", d => radius(d.type) + 4)
       .attr("y", 3.5)
-      .text(d => (d.label || "").slice(0, 34));
+      .text(d => {
+        let t = d.label || "";
+        if (d.type === "x-mitre-tactic" && d.techniques > 0) t += " (" + d.techniques + ")";
+        return t.slice(0, 34);
+      });
 
-    node.append("title").text(d => (d.technique_id ? d.technique_id + " · " : "") +
-                                   (d.label || d.id));
+    /* Hover says what the node is, not just what it is called. */
+    node.append("title").text(d => {
+      const body = G.details[d.id] || {};
+      const bits = [d.technique_id ? d.technique_id + " · " + (d.label || d.id)
+                                   : (d.label || d.id)];
+      if (d.type === "x-mitre-tactic") {
+        const n = d.techniques || 0;
+        bits.push(n + " technique" + (n === 1 ? "" : "s") + " in this bundle");
+      }
+      if ((d.tactics || []).length) bits.push("Tactics: " + d.tactics.map(TACTIC_NAME).join(", "));
+      if (body.description) bits.push("", snippet(body.description, 320));
+      return bits.join("\n");
+    });
 
     node.call(d3.drag()
       .on("start", function (ev, d) {

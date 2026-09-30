@@ -3186,6 +3186,25 @@ function sxTacticName(short) {
   return hit ? hit.name : String(short || "").replace(/-/g, " ");
 }
 
+/* The opening of a long ATT&CK string, for a hover title.  <title> is plain
+   text and the full paragraph is an unreadable wall, so this cuts at a sentence
+   boundary when there is one near the limit. */
+function sxSnippet(text, limit) {
+  const s = String(text || "").replace(/\s+/g, " ").trim();
+  if (s.length <= limit) return s;
+  const cut = s.slice(0, limit);
+  const stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("; "));
+  return stop > limit * 0.5 ? cut.slice(0, stop + 1) : cut.replace(/\s+\S*$/, "") + "…";
+}
+
+/* Tactic labels carry their technique count: a bare "Execution" says nothing
+   about how much of the sample sits under it. */
+function sxNodeText(d) {
+  let t = d.label || "";
+  if (d.type === "x-mitre-tactic" && d.techniques > 0) t += " (" + d.techniques + ")";
+  return t.slice(0, 30);
+}
+
 function sxShow(id) {
   const S = DATA.stix, node = (S.graph.nodes || []).find(n => n.id === id) || {};
   const body = (S.graph.details || {})[id] || {};
@@ -3217,6 +3236,10 @@ function sxShow(id) {
   if (body.pattern) facts.push(row("Pattern", esc(body.pattern)));
   if (body.confidence != null) facts.push(row("Confidence", esc(body.confidence)));
   if (body.identity_class) facts.push(row("Class", esc(body.identity_class)));
+  if (node.type === "x-mitre-tactic") {
+    const n = node.techniques || 0;
+    facts.push(row("Techniques", esc(n) + " in this bundle"));
+  }
   if (node.sub) facts.push(row("Ref", esc(node.sub)));
   facts.push(row("Object ID", esc(id)));
   html += sect("Details") + facts.join("");
@@ -3393,8 +3416,22 @@ function sxDrawGraph() {
   node.append("circle").attr("r", d => sxR(d.type)).attr("fill", d => sxColor(d.type))
     .on("click", (ev, d) => sxShow(d.id));
   node.append("text").attr("x", d => sxR(d.type) + 4).attr("y", 3.5)
-    .text(d => (d.label || "").slice(0, 30));
-  node.append("title").text(d => (d.technique_id ? d.technique_id + " · " : "") + (d.label || d.id));
+    .text(sxNodeText);
+  /* Hover carries what the node is, not only what it is called: the technique
+     ID, the tactic's technique count, its tactics, and the opening of the prose
+     the detail panel gives in full. */
+  node.append("title").text(d => {
+    const body = (S.graph.details || {})[d.id] || {};
+    const bits = [d.technique_id ? d.technique_id + " · " + (d.label || d.id)
+                                 : (d.label || d.id)];
+    if (d.type === "x-mitre-tactic") {
+      const n = d.techniques || 0;
+      bits.push(n + " technique" + (n === 1 ? "" : "s") + " in this bundle");
+    }
+    if ((d.tactics || []).length) bits.push("Tactics: " + d.tactics.map(sxTacticName).join(", "));
+    if (body.description) bits.push("", sxSnippet(body.description, 320));
+    return bits.join("\n");
+  });
 
   node.call(d3.drag()
     .on("start", (ev, d) => { if (!ev.active) sim.alphaTarget(0.28).restart(); d.fx = d.x; d.fy = d.y; })

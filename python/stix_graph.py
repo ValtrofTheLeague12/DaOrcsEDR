@@ -314,6 +314,56 @@ def load_attack_knowledge(path=None, want: set[str] | None = None) -> dict[str, 
     return index
 
 
+def load_tactic_knowledge(path=None) -> dict[str, dict]:
+    """Index a MITRE ATT&CK bundle's tactics by shortname.
+
+    Returns ``{shortname: {name, description, external_references, url}}``.
+
+    Deliberately not folded into load_attack_knowledge(): the ``want`` filter
+    there is a set of technique IDs, which no tactic shortname is ever in, and
+    a tactic carries what a technique does not - ATT&CK's prose for the tactic
+    itself and its TA00xx reference.  A bundle holds ~15 tactics, so this is
+    read whole rather than filtered, and it is what lets a tactic node answer
+    "what is Execution?" instead of being a bare label.
+    """
+    p = Path(path) if path else DEFAULT_ATTACK_CACHE
+    try:
+        if not p.is_file():
+            return {}
+        with p.open("r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except Exception:
+        return {}
+    objs = doc.get("objects") if isinstance(doc, dict) else doc
+    if not isinstance(objs, list):
+        return {}
+
+    index: dict[str, dict] = {}
+    for obj in objs:
+        if not isinstance(obj, dict) or obj.get("type") != "x-mitre-tactic":
+            continue
+        short = normalise_tactic(obj.get("x_mitre_shortname"))
+        if not short or short in index:
+            continue
+        info: dict = {"name": str(obj.get("name") or TACTIC_NAMES.get(short, short))}
+        desc = obj.get("description")
+        if isinstance(desc, str) and desc.strip():
+            info["description"] = desc.strip()[:MAX_DETAIL_STRING]
+        # Only the entries that name or link somewhere; MITRE also ships
+        # stix/marking refs here that mean nothing to a reader.
+        refs = obj.get("external_references")
+        if isinstance(refs, list):
+            keep = [r for r in refs
+                    if isinstance(r, dict) and (r.get("external_id") or r.get("url"))]
+            if keep:
+                info["external_references"] = keep[:4]
+        url = _ref_url(obj)
+        if url:
+            info["url"] = url
+        index[short] = info
+    return index
+
+
 def enrich_objects(objects: list[dict], knowledge: dict[str, dict]) -> int:
     """Fill name / description / tactics on attack-patterns from ATT&CK knowledge.
 
@@ -360,6 +410,46 @@ def enrich_objects(objects: list[dict], knowledge: dict[str, dict]) -> int:
                 if isinstance(ref, dict) and ref.get("source_name") == "mitre-attack":
                     ref["url"] = info["url"]
                     break
+
+        if touched:
+            filled += 1
+    return filled
+
+
+def enrich_tactics(objects: list[dict], tactics: dict[str, dict]) -> int:
+    """Fill description / ATT&CK reference on x-mitre-tactic objects.
+
+    Mirrors enrich_objects(): only *missing* fields are written, so a bundle
+    that already carries MITRE's own tactic objects is left exactly as it came
+    in.  Without this a synthesized tactic is a bare label and its detail panel
+    has nothing to say about the tactic itself, which is the one thing a reader
+    clicking it is asking for.  Returns the number of objects touched.
+    """
+    if not tactics:
+        return 0
+    filled = 0
+    for obj in objects:
+        if not isinstance(obj, dict) or obj.get("type") != "x-mitre-tactic":
+            continue
+        short = normalise_tactic(obj.get("x_mitre_shortname"))
+        info = tactics.get(short)
+        if not info:
+            continue
+        touched = False
+
+        name = obj.get("name")
+        # A shortname or display name parked in `name` is not a name - the same
+        # rule enrich_objects() applies to a technique ID.
+        if (not isinstance(name, str) or not name.strip()
+                or normalise_tactic(name) == short):
+            obj["name"] = info.get("name") or TACTIC_NAMES.get(short, short)
+            touched = True
+        if not obj.get("description") and info.get("description"):
+            obj["description"] = info["description"]
+            touched = True
+        if not obj.get("external_references") and info.get("external_references"):
+            obj["external_references"] = info["external_references"]
+            touched = True
 
         if touched:
             filled += 1
@@ -451,13 +541,18 @@ def _detail_of(obj: dict) -> dict:
 # Graph
 # ---------------------------------------------------------------------------
 
-def build_graph(objects: list[dict], max_nodes: int = 3000) -> dict:
+def build_graph(objects: list[dict], max_nodes: int = 3000,
+                tactics: dict[str, dict] | None = None) -> dict:
     """objects -> {nodes, edges, details, stats}.
 
     ``max_nodes`` bounds the embedded payload: the full MITRE enterprise
     bundle is ~25k objects and would otherwise produce an unusable page.
     The cap keeps the types that carry meaning for an analysis (techniques,
     tactics, malware, indicators) ahead of the long tail.
+
+    ``tactics`` is the load_tactic_knowledge() index.  It is consulted only for
+    a tactic the bundle does not carry at all (the synthetic branch below); a
+    real x-mitre-tactic object is already enriched in place by enrich_tactics().
     """
     nodes: list[dict] = []
     details: dict[str, dict] = {}
@@ -561,10 +656,12 @@ def build_graph(objects: list[dict], max_nodes: int = 3000) -> dict:
     # have no edges at all for a technique-only bundle - which is exactly what
     # `_extract_stix.py` and the analyzer's own bundle look like.
     synthetic = 0
+    tactic_techniques: dict[str, int] = {}   # shortname -> techniques mapped in
     for node in nodes:
         if node["type"] != "attack-pattern":
             continue
         for short in node.get("tactics") or []:
+            tactic_techniques[short] = tactic_techniques.get(short, 0) + 1
             target = tactic_nodes.get(short)
             if target is None:
                 target = f"x-tactic:{short}"
@@ -575,8 +672,17 @@ def build_graph(objects: list[dict], max_nodes: int = 3000) -> dict:
                                   "label": TACTIC_NAMES.get(short, short),
                                   "sub": short, "tactic": short,
                                   "synthetic": True})
-                    details[target] = {"note": "tactic inferred from kill_chain_phases",
-                                       "x_mitre_shortname": short}
+                    # The bundle carries no tactic object, but the ATT&CK cache
+                    # can still describe it - without that the node is a dead
+                    # end whose panel only says "inferred".
+                    info = (tactics or {}).get(short) or {}
+                    detail: dict = {"note": "tactic inferred from kill_chain_phases",
+                                    "x_mitre_shortname": short}
+                    if info.get("description"):
+                        detail["description"] = info["description"]
+                    if info.get("external_references"):
+                        detail["external_references"] = info["external_references"]
+                    details[target] = detail
                     by_type["x-mitre-tactic"] = by_type.get("x-mitre-tactic", 0) + 1
                     synthetic += 1
                 tactic_nodes[short] = target
@@ -585,6 +691,13 @@ def build_graph(objects: list[dict], max_nodes: int = 3000) -> dict:
                 seen_edges.add(key)
                 edges.append({"source": node["id"], "target": target,
                               "label": "kill-chain-phase"})
+
+    # How many techniques in *this* bundle map to each tactic.  ATT&CK does not
+    # put this on the tactic object, and it is the number that makes a tactic
+    # node worth reading - "Execution, 4 techniques" beats a bare label.
+    for node in nodes:
+        if node["type"] == "x-mitre-tactic":
+            node["techniques"] = tactic_techniques.get(node.get("tactic") or "", 0)
 
     techniques = sum(1 for n in nodes if n["type"] == "attack-pattern")
     return {
@@ -860,8 +973,9 @@ def graph_from_capa(capa: dict) -> list[dict]:
 # Payload + HTML
 # ---------------------------------------------------------------------------
 
-def build_payload(objects: list[dict], meta: dict | None = None) -> dict:
-    graph = build_graph(objects)
+def build_payload(objects: list[dict], meta: dict | None = None,
+                  tactics: dict | None = None) -> dict:
+    graph = build_graph(objects, tactics=tactics)
     layer, layer_note = to_navigator_layer(
         objects,
         name=(meta or {}).get("name") or "static_analyzer",

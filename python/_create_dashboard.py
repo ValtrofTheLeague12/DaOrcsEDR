@@ -535,6 +535,15 @@ def build_stix_section(args, capa: dict, cti_summary: dict) -> dict:
                 print(f"[*] stix: enriched {filled} technique(s) from the ATT&CK cache",
                       file=sys.stderr)
 
+    # Tactics are looked up unfiltered: there are ~15 of them, and without this
+    # a tactic node has no prose to show, only its own name.
+    tactic_knowledge = stix_graph.load_tactic_knowledge()
+    if tactic_knowledge:
+        filled_tactics = stix_graph.enrich_tactics(objects, tactic_knowledge)
+        if filled_tactics:
+            print(f"[*] stix: enriched {filled_tactics} tactic(s) from the ATT&CK cache",
+                  file=sys.stderr)
+
     meta = {
         "name": Path(args.stix).name if args.stix else (args.out_name or "sample"),
         "source": args.stix or "",
@@ -542,7 +551,7 @@ def build_stix_section(args, capa: dict, cti_summary: dict) -> dict:
         "attack_version": str((cti_summary.get("versions") or {}).get("mitre_attack") or ""),
         "synthesized_from": "capa" if synthesized else "",
     }
-    section = stix_graph.build_payload(objects, meta)
+    section = stix_graph.build_payload(objects, meta, tactic_knowledge)
     section["available"] = True
     section["source"] = source
     section["synthesized"] = synthesized

@@ -104,6 +104,7 @@ def main() -> int:
     stem = args.out_name or src.stem.replace(".stix21", "") or "stix"
     out_dir = Path(args.out_dir)
 
+    tactic_knowledge: dict = {}
     if not args.no_enrich:
         want = {t for obj in objects for t in stix_graph.technique_ids(obj)}
         if want:
@@ -113,13 +114,22 @@ def main() -> int:
                 print(f"[*] enriched {filled} technique(s) from the ATT&CK cache",
                       file=sys.stderr)
 
+        # Read unfiltered: a bundle holds ~15 tactics, and a tactic has to show
+        # ATT&CK's prose for the tactic itself, which a technique lookup never
+        # supplies.
+        tactic_knowledge = stix_graph.load_tactic_knowledge(args.attack_cache or None)
+        if tactic_knowledge:
+            filled_tactics = stix_graph.enrich_tactics(objects, tactic_knowledge)
+            print(f"[*] enriched {filled_tactics} tactic(s) from the ATT&CK cache",
+                  file=sys.stderr)
+
     meta = {
         "name": src.name,
         "source": str(src),
         "stem": stem,
         "attack_version": args.attack_version,
     }
-    payload = stix_graph.build_payload(objects, meta)
+    payload = stix_graph.build_payload(objects, meta, tactic_knowledge)
     stats = payload["graph"]["stats"]
 
     print(f"[*] {src.name}: {stats['objects']} object(s), {stats['nodes']} node(s), "
