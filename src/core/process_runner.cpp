@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>      // ADDED
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -51,7 +52,55 @@ double seconds_since(clock_type::time_point start) {
   return std::chrono::duration<double>(clock_type::now() - start).count();
 }
 
-}  
+// Names declared secret by protect_env_var(), stored lower-cased. Guarded by a
+// mutex: children are launched from worker threads (capa, radare2 bulk runs),
+// and a reallocation of the vector while another thread reads it is a crash.
+std::mutex g_protected_env_mtx;
+std::vector<std::string> g_protected_env;
+
+// True when the "NAME=VALUE" entry's NAME was declared secret by
+// protect_env_var(). Takes the whole entry so both the Windows and the POSIX
+// environment walk can use it without converting twice.
+bool is_protected_env(const char* entry, std::size_t name_length) {
+  std::string name(entry, name_length);
+  std::transform(name.begin(), name.end(), name.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  std::lock_guard<std::mutex> lock(g_protected_env_mtx);
+  return std::find(g_protected_env.begin(), g_protected_env.end(), name) != g_protected_env.end();
+}
+
+#if defined(_WIN32)
+// Wide overload: the Windows environment block is UTF-16, so the name has to
+// be narrowed before the (byte-wise, case-folded) lookup above.
+bool is_protected_env(const wchar_t* entry, std::size_t name_length) {
+  if (const int n = WideCharToMultiByte(CP_UTF8, 0, entry, static_cast<int>(name_length),
+                                        nullptr, 0, nullptr, nullptr);
+      n > 0) {
+    std::string narrow(static_cast<std::size_t>(n), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, entry, static_cast<int>(name_length), narrow.data(), n,
+                        nullptr, nullptr);
+    return is_protected_env(narrow.c_str(), narrow.size());
+  }
+  return false;
+}
+#endif
+
+}  // namespace
+
+void protect_env_var(const std::string& name) {
+  if (name.empty()) return;
+  std::string lowered = name;
+  std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  std::lock_guard<std::mutex> lock(g_protected_env_mtx);
+  if (std::find(g_protected_env.begin(), g_protected_env.end(), lowered) != g_protected_env.end()) {
+    return;   // already protected; keeps a second call a no-op, not an error
+  }
+  g_protected_env.push_back(std::move(lowered));
+  LOG_DEBUG("proc: environment variable '{}' marked secret (never passed to children)",
+            name);
+}
+
 #if defined(_WIN32)
 
 namespace {
@@ -111,7 +160,16 @@ void append_quoted(std::wstring& cmd, const std::wstring& arg) {
 std::wstring build_environment(const std::vector<std::string>& extra) {
   std::vector<std::wstring> entries;
   if (LPWCH block = GetEnvironmentStringsW()) {
-    for (const wchar_t* p = block; *p != L'\0'; p += wcslen(p) + 1) entries.emplace_back(p);
+    for (const wchar_t* p = block; *p != L'\0'; p += wcslen(p) + 1) {
+      const std::size_t len = wcslen(p);
+      const std::size_t eq = wcschr(p, L'=') - p;
+      // Drop anything a caller declared secret. This is the only place a child
+      // environment is assembled, so filtering here keeps the secret out of
+      // every tool we spawn. Entries without '=' (Windows treats that as the
+      // value) are kept as-is.
+      if (eq != std::size_t(-1) && is_protected_env(p, eq)) continue;
+      entries.emplace_back(p, len);
+    }
     FreeEnvironmentStringsW(block);
   }
   for (const std::string& item : extra) {
@@ -348,12 +406,12 @@ run_result run(const std::string& program, const std::vector<std::string>& args,
   if (have_attr_list) flags |= EXTENDED_STARTUPINFO_PRESENT;
   if (options.low_priority) flags |= BELOW_NORMAL_PRIORITY_CLASS;
 
-  std::wstring environment;
-  LPVOID environment_ptr = nullptr;
-  if (!options.extra_env.empty()) {
-    environment = build_environment(options.extra_env);
-    environment_ptr = &environment[0];
-  }
+  // Always hand over an explicit environment block, never inherit implicitly.
+  // A null `environment` makes CreateProcess copy our whole environment into the
+  // child, which is precisely how a protected variable would escape: the filter
+  // in build_environment() only runs on the block we build ourselves.
+  const std::wstring environment = build_environment(options.extra_env);
+  LPVOID environment_ptr = const_cast<LPVOID>(static_cast<LPCVOID>(environment.c_str()));
   const std::wstring working_dir = widen(options.working_dir);
 
   PROCESS_INFORMATION info{};
@@ -497,7 +555,12 @@ void kill_group(pid_t pid) {
 
 std::vector<std::string> build_environment(const std::vector<std::string>& extra) {
   std::vector<std::string> entries;
-  for (char** e = environ; e != nullptr && *e != nullptr; ++e) entries.emplace_back(*e);
+  for (char** e = environ; e != nullptr && *e != nullptr; ++e) {
+    // Drop anything a caller declared secret (see protect_env_var).
+    const char* eq = std::strchr(*e, '=');
+    if (eq != nullptr && is_protected_env(*e, static_cast<std::size_t>(eq - *e))) continue;
+    entries.emplace_back(*e);
+  }
   for (const std::string& item : extra) {
     const std::size_t eq = item.find('=');
     if (eq == std::string::npos || eq == 0) continue;
@@ -905,12 +968,10 @@ struct child::impl {
     if (have_attr_list) flags |= EXTENDED_STARTUPINFO_PRESENT;
     if (options.low_priority) flags |= BELOW_NORMAL_PRIORITY_CLASS;
 
-    std::wstring environment;
-    LPVOID environment_ptr = nullptr;
-    if (!options.extra_env.empty()) {
-      environment = build_environment(options.extra_env);
-      environment_ptr = &environment[0];
-    }
+    // Always hand over an explicit environment block (see run() above): a null
+    // pointer would let the child inherit every protected variable.
+    const std::wstring environment = build_environment(options.extra_env);
+    LPVOID environment_ptr = const_cast<LPVOID>(static_cast<LPCVOID>(environment.c_str()));
     const std::wstring working_dir = widen(options.working_dir);
 
     PROCESS_INFORMATION info{};

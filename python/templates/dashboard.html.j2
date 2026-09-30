@@ -206,6 +206,37 @@ svg.graph:active{cursor:grabbing}
 .legend .li{display:flex;align-items:center;gap:6px}
 .legend .ld{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 
+/* ═══ ATT&CK / STIX section ═══ */
+.sx-matrix{display:grid;gap:9px;grid-auto-flow:column;grid-auto-columns:minmax(178px,1fr);overflow-x:auto;padding-bottom:6px}
+.sx-tac{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px}
+.sx-tac h4{font-size:11.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--dim);margin-bottom:7px;display:flex;justify-content:space-between;gap:6px}
+.sx-tac h4 b{color:var(--accent)}
+.sx-tech{display:block;width:100%;text-align:left;margin-bottom:4px;padding:5px 7px;font-size:12px;cursor:pointer;
+  background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.32);border-radius:6px;color:var(--fg);font-family:var(--mono);transition:var(--tr)}
+.sx-tech:hover{background:rgba(255,159,67,.2);border-color:var(--orange)}
+.sx-tech code{color:var(--orange);font-weight:700;margin-right:4px}
+.sx-tech.dim{opacity:.4}
+.sx-graph{background:var(--panel2);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.sx-graph svg{display:block;width:100%;height:620px;cursor:grab}
+.sx-graph svg:active{cursor:grabbing}
+.sx-node circle{stroke:var(--bg);stroke-width:1.5px;cursor:pointer}
+.sx-node text{font-size:10.5px;fill:var(--fg);pointer-events:none}
+.sx-node.dim{opacity:.15}
+.sx-node.hit circle{stroke:var(--yellow);stroke-width:2.5px}
+.sx-link{stroke:var(--line2);stroke-width:1.1px;fill:none}
+.sx-linklabel{font-size:9.5px;fill:var(--dim);text-anchor:middle;pointer-events:none;
+  font-family:var(--mono);text-shadow:0 0 4px var(--panel2),0 0 4px var(--panel2),0 0 4px var(--panel2)}
+.sx-toolbar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+/* Own tab class, not .mtab: the map-view handler binds every .mtab on the page
+   to drawThreat(), which would fire for these too. */
+.sxtab{background:var(--panel);border:1px solid var(--line);color:var(--dim);padding:7px 15px;border-radius:8px;cursor:pointer;font-size:15px;font-family:var(--mono);transition:var(--tr)}
+.sxtab:hover{color:var(--fg);border-color:var(--line2)}
+.sxtab.on{background:rgba(34,211,238,.09);border-color:var(--cyan);color:var(--cyan)}
+.sx-toolbar input{font-family:var(--mono);font-size:13px;background:var(--panel);color:var(--fg);
+  border:1px solid var(--line2);border-radius:6px;padding:6px 10px;min-width:200px}
+.sx-toolbar input:focus{outline:none;border-color:var(--accent)}
+.sx-note{color:var(--dim);font-size:11.5px;margin-top:9px;line-height:1.6}
+
 .copy-btn{background:none;border:1px solid var(--line);color:var(--dim);padding:3px 8px;border-radius:5px;cursor:pointer;font-size:13px;font-family:var(--mono);transition:var(--tr);margin-left:8px}
 .copy-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(77,141,255,.06)}
 .copy-btn.copied{border-color:var(--green);color:var(--green)}
@@ -366,6 +397,37 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
 .t-nop{color:#5b6b83}
 .t-trap,.t-int{color:var(--red);font-weight:600}
 
+/* ── assembly viewer: controls ─────────────────────────────────── */
+.asm-lbl{font-size:11.5px;color:var(--dim);font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase}
+.asm-cats,.asm-blknav{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.asm-cats .fbtn,.asm-blknav .fbtn{padding:4px 11px;font-size:12px;border-radius:12px}
+.asm-empty{padding:26px 18px;text-align:center;color:var(--dim);font-family:var(--mono);font-size:13px}
+.asm-empty b{color:var(--fg)}
+.asm-empty code{color:var(--yellow)}
+.tree-empty{padding:12px 4px;color:var(--dim);font-family:var(--mono);font-size:12px}
+
+/* ── assembly viewer: instruction rows ─────────────────────────── */
+/* The mnemonic carries the weight; operands are tinted by role so a glance
+   down the operand column reads as immediates / registers / symbols. */
+.mn{overflow:hidden;text-overflow:ellipsis}
+.op-mn{font-weight:600}
+.op-reg{color:#8fb3e0}
+.op-imm{color:var(--yellow)}
+.op-num{color:#f0b46b}
+.op-sym{color:var(--green)}
+.op-sz{color:#7d8fa8}
+.op-brk{color:#5d6f8c}
+.mn mark{background:rgba(255,209,102,.28);color:#fff2cc;border-radius:2px;padding:0 1px}
+.asmrow.hit{background:rgba(255,209,102,.07)}
+.asmrow.dim{opacity:.34}
+.asmrow .adr{white-space:nowrap}
+/* Sticky block banners: within a scrolling function the current basic block
+   stays labelled without stealing a whole row from the listing. */
+.asmrow.blk{position:sticky;top:0;z-index:2;backdrop-filter:blur(4px);
+  border-top:1px solid rgba(167,139,250,.18);border-bottom:1px solid rgba(167,139,250,.12)}
+.asmrow.blk b{color:#cbb6ff;font-weight:600}
+.asmrow.blk em{color:var(--dim);font-style:normal;font-size:12px}
+
 @media(max-width:768px){
 
 
@@ -404,6 +466,7 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
 <nav>
   <button class="on" data-t="overview">Overview</button>
   <button data-t="threat">Threat Map</button>
+  <button data-t="stix">ATT&amp;CK / STIX</button>
   <button data-t="sections">Sections</button>
   <button data-t="imports">Imports</button>
   <button data-t="exports">Exports</button>
@@ -671,6 +734,41 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
   </div>
 </section>
 
+<section id="stix">
+  <div class="pi">Section <span>ATT&amp;CK / STIX</span></div>
+
+  {% if not payload.stix.available %}
+  <div class="card">
+    <p style="color:var(--dim)">No ATT&amp;CK techniques to show — {{ payload.stix.reason or 'no STIX bundle for this run' }}.</p>
+  </div>
+  {% else %}
+  <div class="stats-row" id="stixStats"></div>
+
+  <div class="map-tabs">
+    <button class="sxtab on" data-sview="coverage">ATT&amp;CK Coverage</button>
+    <button class="sxtab" data-sview="graph">STIX Object Graph</button>
+  </div>
+
+  <div id="stixCoverage">
+    <div class="card"><div class="sx-matrix" id="stixMatrix"></div></div>
+  </div>
+
+  <div id="stixGraph" style="display:none">
+    <div class="sx-toolbar">
+      <input id="sxSearch" placeholder="Filter nodes by name or technique ID…">
+      <span id="sxTypes" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+      <span style="flex:1"></span>
+      <button class="fbtn" id="sxFit">Reset view</button>
+      <button class="fbtn" id="sxNav">⬇ Navigator layer (sample)</button>
+      <button class="fbtn" id="sxFullNav">⬇ Full ATT&CK Matrix</button>
+    </div>
+    <div class="sx-graph"><svg id="stixSvg"></svg></div>
+    <div class="legend" id="stixLegend"></div>
+    <p class="sx-note" id="stixNote"></p>
+  </div>
+  {% endif %}
+</section>
+
 <section id="sections">
   <div class="pi">Section <span>Sections</span></div>
   <div class="card">
@@ -843,28 +941,40 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
   {% endif %}
   <div class="asmbar">
     <div class="fwrap">
-      <input id="fnSearch" class="fsrch" type="text" placeholder="filter functions…">
-      <select id="fnSel"></select>
+      <label class="asm-lbl" for="fnSearch">Function</label>
+      <input id="fnSearch" class="fsrch" type="text" placeholder="filter functions… (name or address)">
+      <select id="fnSel" title="Jump to a function"></select>
     </div>
     <span class="mono" id="asmInfo" style="color:var(--dim)"></span>
-    <button class="copy-btn" id="copyAsm" style="margin-left:auto">Copy All</button>
+    <button class="copy-btn" id="copyAsm" style="margin-left:auto" title="Copy the instructions currently listed">Copy listing</button>
   </div>
   <div class="asmbar">
-    <input id="asmSearch" type="text" placeholder="search instructions…">
+    <input id="asmSearch" type="text" placeholder="search instructions, symbols, bytes…">
     <input id="asmAddr" type="text" placeholder="go to 0x…" style="width:120px">
-    <button class="fbtn active" data-cat="all">All</button>
-    <button class="fbtn" data-cat="ctrl">Control flow</button>
-    <button class="fbtn" data-cat="call">Calls</button>
-    <button class="fbtn" data-cat="data">Data</button>
-    <button class="fbtn" data-cat="arith">Arithmetic</button>
-    <button class="fbtn" data-cat="stack">Stack</button>
-    <button class="fbtn" data-cat="cmp">Compare</button>
+    <span class="asm-cats" id="asmCats">
+      <button class="fbtn active" data-cats="all">All</button>
+      <button class="fbtn" data-cats="ctrl ret">Control flow</button>
+      <button class="fbtn" data-cats="call">Calls</button>
+      <button class="fbtn" data-cats="data">Data</button>
+      <button class="fbtn" data-cats="arith">Arithmetic</button>
+      <button class="fbtn" data-cats="cmp">Compare</button>
+      <button class="fbtn" data-cats="stack">Stack</button>
+      <button class="fbtn" data-cats="simd">SIMD</button>
+      <button class="fbtn" data-cats="nop">NOP</button>
+      <button class="fbtn" data-cats="misc">Other</button>
+    </span>
+    <span class="asm-blknav">
+      <button class="fbtn" id="asmPrevBlk" title="Previous basic block">↑ block</button>
+      <button class="fbtn" id="asmNextBlk" title="Next basic block">↓ block</button>
+    </span>
+    <button class="fbtn" id="asmClear" title="Clear the search box and reset the category filter">Clear</button>
   </div>
   <div class="asm-stats" id="asmStats"></div>
+  <div class="asm-legend" id="asmLegend"></div>
   <div class="asm-mn" id="asmMnemonics"></div>
   <div class="asm-flex">
     <div id="asm"></div>
-    <div class="asm-mapwrap" id="asmMap" title="Control-flow mini map — click to jump"><div class="asm-win" id="asmWin"></div></div>
+    <div class="asm-mapwrap" id="asmMap" title="Control-flow mini map — click or drag to jump"><div class="asm-win" id="asmWin"></div></div>
   </div>
 </section>
 
@@ -884,9 +994,9 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
     <label><input id="cgNoOrphan" type="checkbox"> hide unreachable</label>
     <span class="sep"></span>
     <button class="fbtn" id="cgFit">Fit</button>
-    <button class="fbtn" id="cgResetFocus">Clear focus</button>
+    <button class="fbtn" id="cgResetFocus">Reset filters</button>
     <button class="fbtn" id="cgCompact">Top 60</button>
-    <button class="fbtn active" id="cgAll">All (220)</button>
+    <button class="fbtn active" id="cgAll">All</button>
   </div>
   <div class="stats-row" id="cgStats"></div>
   <div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">
@@ -900,8 +1010,8 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
     <div style="padding:16px 20px 0"><h3>Section CFG ({{ payload.graphs.section.nodes|length }} nodes)</h3></div>
     <svg class="graph" id="secsvg" style="height:520px"></svg>
   </div>
-  <p style="margin-top:10px;font-size:11.5px;color:var(--dim)">Hover a node to isolate its callers/callees · click to focus a neighbourhood · double-click to
-    re-root the tree at that function · drag to move · scroll to zoom.</p>
+  <p style="margin-top:10px;font-size:11.5px;color:var(--dim)">Hover a node to isolate its callers and callees ·
+    scroll to zoom, drag to pan, <b>Fit</b> to return · every control above rebuilds the graph and the counts under it.</p>
 </section>
 
 <section id="charts">
@@ -968,6 +1078,9 @@ document.querySelectorAll("nav button").forEach(b => {
     if (sec) sec.classList.add("on");
     if (b.dataset.t === "threat") {
       try { drawThreat(); } catch (err) { console.error("Threat view failed", err); }
+    }
+    if (b.dataset.t === "stix") {
+      try { drawStix(); } catch (err) { console.error("STIX view failed", err); }
     }
     if (b.dataset.t === "charts") {
       try { drawAllCharts(); } catch (err) { console.error("Charts failed", err); }
@@ -1149,6 +1262,10 @@ function showDetail(title, body, meta) {
     html += sect("Connections") + kv("Edges", meta.connections) + kv("Node ID", meta.id || "");
   if (typeof body === "string") {
     html += sect("Details") + '<pre style="white-space:pre-wrap;font-family:var(--mono);font-size:13px;margin:0">' + esc(body) + '</pre>';
+  } else if (body && typeof body === "object" && typeof body.html === "string") {
+    /* The caller built the whole panel (a STIX object, say) and only wants
+       the drawer's chrome around it. */
+    html += body.html;
   } else if (Array.isArray(body)) {
     html += renderResults(body);
   } else if (body && typeof body === "object") {
@@ -1775,265 +1892,962 @@ function byIdType(gd, id) {
   return n ? n.type : null;
 }
 
-/* ═══ Import search ═══ */
-const impSearch = document.getElementById("impSearch");
-const eatSearch = document.getElementById("eatSearch");
-if (impSearch) impSearch.oninput = () => {
-  const q = impSearch.value.toLowerCase();
-  document.querySelectorAll("#impTree .imp").forEach(el => {
-    el.style.display = el.dataset.n.toLowerCase().includes(q) ? "" : "none";
-  });
-};
-if (eatSearch) eatSearch.oninput = () => {
-  const q = eatSearch.value.toLowerCase();
-  document.querySelectorAll("#eatTree .imp").forEach(el => {
-    el.style.display = (el.dataset.n || "").toLowerCase().includes(q) ? "" : "none";
-  });
-};
+/* ═══ Import / export filtering ═══
+   A group header survives only if one of its rows does, and matching groups are
+   opened automatically — otherwise a hit can sit inside a collapsed header
+   while an empty header sits above it, which reads as "the filter did nothing". */
+function wireNameFilter(inputId, treeId) {
+  const input = document.getElementById(inputId);
+  const tree = document.getElementById(treeId);
+  if (!input || !tree) return;
 
-/* ═══ Assembly Viewer ═══ */
+  const groups = Array.from(tree.querySelectorAll("details")).map(d => {
+    const sum = d.querySelector("summary");
+    const chip = sum ? (sum.querySelector(".chip") || document.createElement("span")) : null;
+    if (chip && !chip.classList.contains("chip")) {
+      chip.className = "chip";
+      sum.appendChild(chip);
+    }
+    return {el: d, rows: Array.from(d.querySelectorAll(".imp")), chip: chip, wasOpen: d.open};
+  });
+
+  /* A flat tree (exports, for example) has no headers to hide: its rows filter
+     on their own, so it is treated as one implicit group. */
+  if (!groups.length) {
+    const rows = Array.from(tree.children).filter(el => el.classList.contains("imp"));
+    if (rows.length) groups.push({el: null, rows: rows, chip: null, wasOpen: true});
+  }
+
+  const none = document.createElement("div");
+  none.className = "tree-empty";
+  none.style.display = "none";
+  tree.appendChild(none);
+
+  input.oninput = () => {
+    const q = input.value.trim().toLowerCase();
+    let total = 0, hits = 0;
+
+    groups.forEach(g => {
+      let n = 0;
+      g.rows.forEach(el => {
+        const m = !q || (el.dataset.n || "").toLowerCase().includes(q);
+        el.style.display = m ? "" : "none";
+        if (m) n++;
+      });
+      total += g.rows.length;
+      hits += n;
+      if (g.el) {
+        g.el.style.display = n ? "" : "none";
+        /* Re-clicking an open <details> would undo the auto-open, so the
+           filter only drives its own state while a query is present. */
+        g.el.open = q ? n > 0 : g.wasOpen;
+      }
+      if (g.chip) g.chip.textContent = q ? n + " / " + g.rows.length : String(g.rows.length);
+    });
+
+    if (q) {
+      none.textContent = hits ? "" :
+        "No entry matches “" + input.value.trim() + "” (" + total + " in total).";
+      none.style.display = hits ? "none" : "";
+    } else {
+      none.style.display = "none";
+    }
+  };
+}
+wireNameFilter("impSearch", "impTree");
+wireNameFilter("eatSearch", "eatTree");
+
+/* ═══ Assembly Viewer ═══
+   The listing is virtualised — only the visible slice is ever in the DOM — so
+   every filter works on the row model and re-renders. Nothing is ever read
+   back out of the DOM: `rows` is the whole current function, `filtered` is
+   what the category chips and the search box leave behind. */
 const asmEl = document.getElementById("asm");
 const fnSel = document.getElementById("fnSel");
 const ROW = 28;
-let rows = [], filtered = [], curFn = null, asmCategory = "all";
+let rows = [], filtered = [], curFn = null;
+let fnOptions = [];   /* [{value, text}] — the unfiltered function list */
 
-/* Instruction categories drive the colour rail, the filter chips and the
-   control-flow mini map. Kept deliberately coarse — analysts read the rail
-   shape, not the individual hues. */
-const ASM_CATS = ["ctrl","call","ret","data","arith","cmp","stack","simd","nop","misc"];
-const T_CTRL  = {jmp:1,cjmp:1,ujmp:1,rjmp:1,rcjmp:1,swi:1,trap:1,ill:1,int:1};
+/* Category metadata drives the colour rail, the chips, the legend and the mini
+   map, so all four can never disagree about what a colour means. */
+const ASM_CAT_DEF = [
+  {key: "ctrl",  label: "Control flow", hint: "branches and jumps"},
+  {key: "call",  label: "Calls",        hint: "call sites"},
+  {key: "ret",   label: "Returns",      hint: "function returns"},
+  {key: "data",  label: "Data",         hint: "moves, loads, stores"},
+  {key: "arith", label: "Arithmetic",   hint: "integer and bitwise maths"},
+  {key: "cmp",   label: "Compare",      hint: "cmp / test"},
+  {key: "stack", label: "Stack",        hint: "push / pop / frame setup"},
+  {key: "simd",  label: "SIMD",         hint: "SSE / AVX vector ops"},
+  {key: "nop",   label: "NOP",          hint: "padding and alignment"},
+  {key: "misc",  label: "Other",        hint: "everything else"},
+];
+const ASM_CAT_LABEL = {};
+ASM_CAT_DEF.forEach(c => { ASM_CAT_LABEL[c.key] = c.label; });
+
+const T_CTRL  = {jmp:1,cjmp:1,ujmp:1,rjmp:1,rcjmp:1,swi:1,trap:1,ill:1,int:1,hlt:1};
 const T_CALL  = {call:1,ucall:1,rcall:1,icall:1,acall:1};
-const T_RET   = {ret:1,iret:1};
-const T_DATA  = {mov:1,movzx:1,movsx:1,lea:1,xchg:1};
+const T_RET   = {ret:1,iret:1,retf:1};
+const T_DATA  = {mov:1,movzx:1,movsx:1,movsxd:1,lea:1,xchg:1};
 const T_ARITH = {add:1,sub:1,mul:1,imul:1,div:1,idiv:1,inc:1,dec:1,neg:1,not:1,and:1,
-                 or:1,xor:1,shl:1,shr:1,sar:1,sal:1,rol:1,ror:1,adc:1,sbb:1};
+                 or:1,xor:1,shl:1,shr:1,sar:1,sal:1,rol:1,ror:1,adc:1,sbb:1,bt:1,bts:1,btr:1};
 const T_CMP   = {cmp:1,test:1};
 const T_STACK = {push:1,pop:1,leave:1,enter:1};
-const T_NOP   = {nop:1,fnop:1};
-const ASM_END = {ret:1,jmp:1,ujmp:1,rjmp:1,trap:1,ill:1,swi:1};
+const T_NOP   = {nop:1,fnop:1,pause:1};
+/* A basic block ends at an unconditional transfer, a conditional branch (its
+   fall-through is the next block's entry), or a halt. Leaving `cjmp` out would
+   glue the taken and not-taken paths into one block and undercount the CFG. */
+const ASM_END = {ret:1,retf:1,iret:1,jmp:1,ujmp:1,rjmp:1,cjmp:1,rcjmp:1,
+                 trap:1,ill:1,swi:1,hlt:1};
+/* Fallback for r2 builds that leave `type` empty: almost every mnemonic
+   starting with `j` is a branch. */
+const ASM_BRANCH_MN = /^j[a-z]{1,5}$/;
+
+/* SSE/AVX mnemonics: a scalar/vector suffix on a familiar opcode stem. */
+const SIMD_SUFFIX = /(ss|sd|ps|pd|dq|epi\d*|pi)$/;
+const SIMD_STEM   = /^(cvt|mov|add|sub|mul|div|sqrt|rsqrt|rcp|max|min|and|or|xor|shuf|unpck|pack|punpck|blend|insert|extract|round|comi|ucomi|hadd|hsub|p)/;
 
 function asmCat(type, mnem) {
-  const t = String(type || "").toLowerCase(), m = String(mnem || "").toLowerCase();
+  const t = String(type || "").toLowerCase();
+  const m = String(mnem || "").toLowerCase();
   if (T_RET[t] || T_RET[m]) return "ret";
   if (T_CALL[t] || T_CALL[m]) return "call";
-  if (T_CTRL[t] || T_CTRL[m]) return "ctrl";
+  if (T_CTRL[t] || T_CTRL[m] || ASM_BRANCH_MN.test(m)) return "ctrl";
   if (T_CMP[t] || T_CMP[m]) return "cmp";
   if (T_STACK[t] || T_STACK[m]) return "stack";
   if (T_NOP[t] || T_NOP[m]) return "nop";
   if (/^(mov[au]ps|movdqa|movdqu|lddqu|pxor|p(add|sub|and|or|xor|unpck|cmp|min|max))/i.test(m) ||
       /^v[a-z]{2,}/i.test(m)) return "simd";
-  if (T_DATA[t] || T_DATA[m] || /^mov/i.test(m)) return "data";
+  if (SIMD_STEM.test(m) && SIMD_SUFFIX.test(m)) return "simd";
+  if (T_DATA[t] || T_DATA[m] || /^(mov|lea|set)/i.test(m)) return "data";
   if (T_ARITH[t] || T_ARITH[m]) return "arith";
   return "misc";
 }
 
+/* ── operand colouring ──────────────────────────────────────────────
+   A small operand tokeniser: the mnemonic is token 0; hex and decimal
+   immediates, registers, size keywords and symbol names each get their own
+   class. Escaping happens per token, so nothing derived from the sample
+   reaches the DOM unescaped. */
+const REG_RE   = /^(r[a-z0-9]{1,3}|e[a-z]{2}|[abcd][lh]|[er]?(ax|bx|cx|dx|si|di|sp|bp|ip)|xmm\d+|ymm\d+|zmm\d+|mm\d+|st\d*|k\d+|cr\d+|dr\d+|cs|ds|es|fs|gs|ss)$/i;
+const SIZE_RE  = /^(byte|word|dword|qword|xword|oword|tbyte|fword|ptr|near|far|short)$/i;
+const TOKEN_RE = /(0x[0-9a-fA-F]+|\b\d+\b|[A-Za-z_.$?][\w.$@?]*|.)/g;
+
+function hlAsm(disasm, q) {
+  let out = "", idx = 0, m;
+  TOKEN_RE.lastIndex = 0;
+  while ((m = TOKEN_RE.exec(disasm)) !== null) {
+    const tk = m[0];
+    let cls;
+    if (idx === 0)                        cls = "op-mn";
+    else if (/^0x[0-9a-fA-F]+$/.test(tk)) cls = "op-imm";
+    else if (/^\d+$/.test(tk))            cls = "op-num";
+    else if (REG_RE.test(tk))             cls = "op-reg";
+    else if (SIZE_RE.test(tk))            cls = "op-sz";
+    else if (/^[\[\]{}()+\-*,:]$/.test(tk)) cls = "op-brk";
+    else if (/^[A-Za-z_.$?]/.test(tk))    cls = "op-sym";
+    else                                  cls = null;
+    let body = esc(tk);
+    if (q && tk.length > 1 && tk.toLowerCase().includes(q)) body = "<mark>" + body + "</mark>";
+    out += cls ? '<span class="' + cls + '">' + body + "</span>" : body;
+    idx++;
+  }
+  return out;
+}
+
 function buildRows(fn) {
-  const r = [];
+  const ins = [];
   const ops = fn.ops || [];
   const base = fn.offset || 0, size = fn.size || 0;
-  /* branch targets inside this function start a new basic block */
+
+  /* Branch targets inside this function start a new basic block. */
   const targets = {};
   for (const o of ops) {
     const t = o.target || 0;
     if (t && t > base && (!size || t < base + size)) targets[t] = 1;
   }
-  r.push({head: true, text: (fn.name || "?") + "  @ " + HEX(base) + "  size=" + size +
-                              "  instr=" + (fn.n_instr || ops.length) +
-                              (fn.truncated ? "  [TRUNCATED]" : "")});
+
   let block = 0, term = true;
   for (const o of ops) {
     const off = o.offset || 0;
-    if (term || targets[off]) {
-      block++;
-      r.push({blk: true, text: "block " + block + "  @ " + HEX(off)});
-      term = false;
-    }
+    if (term || targets[off]) { block++; term = false; }
     const disasm = o.disasm || "";
-    const mnem = disasm.split(/\s+/)[0] || "";
+    const mnem = (disasm.split(/\s+/)[0] || "").toLowerCase();
     const type = String(o.type || "").toLowerCase();
-    r.push({adr: HEX(off), bytes: o.bytes || "", disasm: disasm, mnem: mnem, type: type,
-            cat: asmCat(type, mnem),
-            len: (o.bytes || "").split(/\s+/).filter(Boolean).length,
-            block: block, target: o.target, label: o.target_label, isImport: !!o.import});
-    if (ASM_END[type] || ASM_END[mnem.toLowerCase()]) term = true;
+    const nbytes = (o.bytes || "").replace(/[^0-9a-fA-F]/g, "").length / 2;
+    ins.push({
+      adr: HEX(off), off: off, bytes: o.bytes || "", disasm: disasm, mnem: mnem, type: type,
+      cat: asmCat(type, mnem), len: nbytes,
+      block: block, target: o.target || 0, label: o.target_label || "",
+      section: o.section || "", isImport: !!o.import,
+    });
+    if (ASM_END[type] || ASM_END[mnem] || ASM_BRANCH_MN.test(mnem)) term = true;
   }
+
+  const blocks = new Map();
+  for (const i of ins) {
+    if (!blocks.has(i.block)) blocks.set(i.block, []);
+    blocks.get(i.block).push(i);
+  }
+
+  const r = [{head: true, text: (fn.name || "?") + "  @ " + HEX(base) + "  size=" + size +
+                                "  instr=" + (fn.n_instr || ops.length) +
+                                (fn.truncated ? "  [TRUNCATED — disassembly was cut short]" : "")}];
+  blocks.forEach((items, b) => {
+    r.push({blk: true, block: b, count: items.length,
+            bytes: items.reduce((n, i) => n + i.len, 0),
+            text: "block " + b + "  @ " + HEX(items[0].off)});
+    for (const i of items) r.push(i);
+  });
   return r;
 }
 
+/* ── filtering ────────────────────────────────────────────────────── */
+function asmChips() { return Array.from(document.querySelectorAll("#asmCats .fbtn")); }
+function activeCats() {
+  const on = asmChips().find(b => b.classList.contains("active"));
+  const spec = (on && on.dataset.cats) || "all";
+  return spec === "all" ? null : spec.split(/\s+/).filter(Boolean);
+}
+function setActiveCat(key) {
+  asmChips().forEach(b => b.classList.toggle("active", (b.dataset.cats || "all") === key));
+}
+function rowMatches(r, q, cats) {
+  if (cats && cats.indexOf(r.cat) === -1) return false;
+  if (!q) return true;
+  return (r.disasm || "").toLowerCase().includes(q) ||
+         (r.label || "").toLowerCase().includes(q) ||
+         (r.bytes || "").toLowerCase().includes(q) ||
+         (r.section || "").toLowerCase().includes(q);
+}
+
+/* Rebuild `filtered` from `rows`. A block banner survives only when at least
+   one of its instructions does, so a search matching nothing inside a block
+   never leaves a dangling "block 7" header with no body under it. */
+function applyAsmFilter() {
+  const qEl = document.getElementById("asmSearch");
+  const q = (qEl ? qEl.value : "").trim().toLowerCase();
+  const cats = activeCats();
+
+  const out = [];
+  let pending = null;
+  for (const r of rows) {
+    if (r.head) { out.push(r); pending = null; continue; }
+    if (r.blk)  { pending = r; continue; }
+    if (rowMatches(r, q, cats)) {
+      if (pending) { out.push(pending); pending = null; }
+      out.push(r);
+    }
+  }
+  filtered = out;
+  asmEl.scrollTop = 0;
+  renderAsm();
+  renderAsmStats();
+}
+
+/* ── rendering ────────────────────────────────────────────────────── */
 function renderAsm() {
-  const sc = asmEl.scrollTop;
-  const first = Math.max(0, Math.floor(sc / ROW) - 2);
+  const qEl = document.getElementById("asmSearch");
+  const q = (qEl ? qEl.value : "").trim().toLowerCase();
+  const first = Math.max(0, Math.floor(asmEl.scrollTop / ROW) - 2);
   const count = Math.ceil((asmEl.clientHeight || 420) / ROW) + 4;
   const slice = filtered.slice(first, first + count);
   const padTop = first * ROW;
   const padBot = Math.max(0, (filtered.length - first - slice.length) * ROW);
+
   let html = '<div style="height:' + padTop + 'px"></div>';
   for (const r of slice) {
     if (r.head) { html += '<div class="asmrow head">' + esc(r.text) + '</div>'; continue; }
-    if (r.blk)  { html += '<div class="asmrow blk">' + esc(r.text) + '</div>'; continue; }
-    let mn = esc(r.disasm);
-    mn = mn.replace(/\b(0x[0-9a-fA-F]+)\b/g, '<span class="op-imm">$1</span>');
+    if (r.blk) {
+      html += '<div class="asmrow blk">' + esc(r.text) +
+              '  <em>' + r.count + ' instr · ' + r.bytes + ' bytes</em></div>';
+      continue;
+    }
+
     const tclass = "t-" + (r.type || "misc");
-    let tgt = "";
-    if (r.label) tgt = ' <span class="tgt" data-a="' + r.target + '">' + esc(r.label) + '</span>';
-    else if (r.target) tgt = ' <span class="tgt" data-a="' + r.target + '">' + HEX(r.target) + '</span>';
     const imp = r.isImport ? " imp-call" : "";
-    const lenpct = Math.max(8, Math.min(100, (r.len || 1) * 14));
-    html += '<div class="asmrow">' +
-      '<span class="catbar c-' + r.cat + '" title="' + r.cat + '"></span>' +
+    let tgt = "";
+    if (r.label) {
+      tgt = ' <span class="tgt" data-a="' + r.target + '" title="jump to ' + esc(r.label) + '">→ ' + esc(r.label) + '</span>';
+    } else if (r.target) {
+      tgt = ' <span class="tgt" data-a="' + r.target + '">→ ' + HEX(r.target) + '</span>';
+    }
+    const lenpct = Math.max(4, Math.min(100, (r.len || 1) * 12));
+    const title = [r.section, ASM_CAT_LABEL[r.cat] || r.cat, (r.len || 0) + " bytes"]
+      .filter(Boolean).join(" · ");
+
+    html += '<div class="asmrow" title="' + esc(title) + '">' +
+      '<span class="catbar c-' + r.cat + '" title="' + esc(ASM_CAT_LABEL[r.cat] || r.cat) + '"></span>' +
       '<span class="adr">' + r.adr + '</span>' +
       '<span class="byt">' + esc(r.bytes) + '</span>' +
       '<span class="blkcol">B' + r.block + '</span>' +
-      '<span class="mn ' + tclass + imp + '">' + mn + tgt + '</span>' +
+      '<span class="mn ' + tclass + imp + '">' + hlAsm(r.disasm, q) + tgt + '</span>' +
       '<span class="lenbar" title="' + (r.len || 0) + ' bytes"><i style="width:' + lenpct + '%"></i></span>' +
       '</div>';
   }
+
+  if (!filtered.some(r => !r.head && !r.blk)) {
+    const cats = activeCats();
+    html += '<div class="asm-empty">No instructions match' +
+      (q ? ' <b>' + esc(q) + '</b>' : '') +
+      (cats ? ' in <b>' + esc(cats.map(c => ASM_CAT_LABEL[c] || c).join(" / ")) + '</b>' : '') +
+      '.<br>Use <code>Clear</code> to reset the filters.</div>';
+  }
+
   html += '<div style="height:' + padBot + 'px"></div>';
   asmEl.innerHTML = html;
   asmEl.querySelectorAll(".tgt").forEach(el => { el.onclick = () => gotoAddr(el.dataset.a); });
   asmMapViewport();
 }
 
-function gotoAddr(a) {
-  const addr = parseInt(a, 10);
+/* Built from the row model, not the DOM — the DOM only ever holds the slice
+   that happens to be scrolled into view. */
+function asmText() {
+  const out = [];
+  for (const r of filtered) {
+    if (r.head || r.blk) { out.push(";; " + r.text); continue; }
+    out.push(r.adr + "  " + (r.bytes || "").padEnd(18) + "  " + r.disasm +
+             (r.label ? "  ; -> " + r.label : ""));
+  }
+  return out.join("\n");
+}
+
+function parseAddr(s) {
+  s = String(s == null ? "" : s).trim();
+  if (!s) return 0;
+  const v = /^0x/i.test(s) ? parseInt(s.slice(2), 16) : parseInt(s, 10);
+  return Number.isFinite(v) ? v : 0;
+}
+
+function scrollToAddr(addr) {
   if (!addr) return;
-  for (const fn of (DATA.asm||[])) {
-    const off = fn.offset||0, size = fn.size||0;
-    if (addr >= off && (size===0 || addr < off+size)) {
-      if (fnSel) fnSel.value = String(off);
-      loadFn(fn);
-      const idx = filtered.findIndex(r=>!r.head && parseInt(r.adr,16)>=addr);
-      asmEl.scrollTop = Math.max(0,(idx<0?0:idx)*ROW-80);
-      renderAsm();
+  const isIns = r => !r.head && !r.blk;
+  let idx = filtered.findIndex(r => isIns(r) && r.off >= addr);
+  if (idx < 0) {
+    /* Filtered out of view — drop the filters so a jump always lands. */
+    const qEl = document.getElementById("asmSearch");
+    if (qEl) qEl.value = "";
+    setActiveCat("all");
+    applyAsmFilter();
+    idx = filtered.findIndex(r => isIns(r) && r.off >= addr);
+  }
+  if (idx < 0) return;
+  asmEl.scrollTop = Math.max(0, idx * ROW - ROW * 3);
+  renderAsm();
+}
+
+function gotoAddr(a) {
+  const addr = parseAddr(a);
+  if (!addr) return;
+  for (const fn of (DATA.asm || [])) {
+    const off = fn.offset || 0, size = fn.size || 0;
+    if (addr >= off && (size === 0 || addr < off + size)) {
+      if (curFn !== fn) {
+        if (fnSel) fnSel.value = String(off);
+        loadFn(fn, true);
+      }
+      scrollToAddr(addr);
       return;
     }
   }
 }
 
-function loadFn(fn) {
+function loadFn(fn, keepFilters) {
+  curFn = fn;
   rows = buildRows(fn);
-  filtered = rows;
-  document.getElementById("asmInfo").textContent = (fn.ops||[]).length+" instructions";
-  renderAsm();
-  renderAsmStats();
+  if (!keepFilters) {
+    const qEl = document.getElementById("asmSearch");
+    if (qEl) qEl.value = "";
+    setActiveCat("all");
+  }
+  applyAsmFilter();
+  updateAsmInfo();
 }
 
+function updateAsmInfo() {
+  const el = document.getElementById("asmInfo");
+  if (!el) return;
+  const nIns = rows.filter(r => !r.head && !r.blk).length;
+  const nBlk = rows.filter(r => r.blk).length;
+  const pos = fnOptions.findIndex(o => o.value === String((curFn || {}).offset || 0));
+  el.textContent = nIns + " instructions · " + nBlk + " blocks" +
+                   (pos >= 0 ? " · function " + (pos + 1) + " of " + fnOptions.length : "");
+}
+
+/* Boot. The controls are wired even with no assembly embedded, so the section
+   explains why it is empty instead of looking inert. */
+renderAsmLegend();
 if (fnSel && DATA.asm && DATA.asm.length) {
-  DATA.asm.forEach((fn,i) => {
-    const o = document.createElement("option");
-    o.value = String(fn.offset||i);
-    o.textContent = (fn.name||"?")+" @ "+HEX(fn.offset||0)+" ("+(fn.ops||[]).length+")";
-    fnSel.appendChild(o);
-  });
+  fnOptions = DATA.asm.map((fn, i) => ({
+    value: String(fn.offset || i),
+    text: (fn.name || "?") + " @ " + HEX(fn.offset || 0) + " (" + (fn.ops || []).length + ")",
+  }));
+  fillFnSelect("");
   fnSel.onchange = () => {
-    const fn = DATA.asm.find((f,i)=>String(f.offset||i)===fnSel.value);
+    const fn = DATA.asm.find((f, i) => String(f.offset || i) === fnSel.value);
     if (fn) loadFn(fn);
   };
   loadFn(DATA.asm[0]);
   asmEl.onscroll = renderAsm;
-  const as = document.getElementById("asmSearch");
-  if (as) as.oninput = applyAsmFilter;
   wireAssemblyControls();
   const copyBtn = document.getElementById("copyAsm");
   if (copyBtn) copyBtn.onclick = () => {
-    const text = Array.from(document.querySelectorAll("#asm .asmrow")).map(r=>r.textContent).join("\n");
-    navigator.clipboard.writeText(text).then(()=>{
-      copyBtn.classList.add("copied"); copyBtn.textContent="\u2713 Copied";
-      setTimeout(()=>{copyBtn.classList.remove("copied");copyBtn.textContent="Copy All";},1500);
+    const n = filtered.filter(r => !r.head && !r.blk).length;
+    navigator.clipboard.writeText(asmText()).then(() => {
+      copyBtn.classList.add("copied");
+      copyBtn.textContent = "\u2713 " + n + " lines";
+      setTimeout(() => { copyBtn.classList.remove("copied"); copyBtn.textContent = "Copy listing"; }, 1500);
     });
   };
+} else {
+  wireAssemblyControls();
+  const info = document.getElementById("asmInfo");
+  if (info) info.textContent = "";
+  if (asmEl) asmEl.innerHTML = '<div class="asm-empty">No enriched assembly was embedded for this sample.</div>';
 }
 
-/* Assembly filtering, statistics, and control-flow minimap. */
-function asmVisibleRows() {
-  return filtered;
-}
-function applyAsmFilter() {
-  const q = (document.getElementById("asmSearch")?.value || "").toLowerCase();
-  const cat = document.querySelector(".fbtn[data-cat].active")?.dataset.cat || "all";
-  filtered = rows.filter(r => r.head || r.blk || ((!q || (r.disasm || "").toLowerCase().includes(q) || (r.label || "").toLowerCase().includes(q)) && (cat === "all" || r.cat === cat)));
-  asmEl.scrollTop = 0;
-  renderAsm();
-  renderAsmStats();
-}
+/* ── statistics, legend, minimap ──────────────────────────────────── */
+/* Byte counts come from the row model, and the header reads "N of M" whenever
+   a filter is hiding part of the listing, so the numbers never silently
+   contradict what is on screen. */
 function renderAsmStats() {
-  const el = document.getElementById("asmStats"), mn = document.getElementById("asmMnemonics");
+  const el = document.getElementById("asmStats");
+  const mn = document.getElementById("asmMnemonics");
+  const isIns = r => !r.head && !r.blk;
+  const ins = filtered.filter(isIns);
+  const all = rows.filter(isIns);
+
   if (el) {
-    const ins = filtered.filter(r => !r.head && !r.blk), blocks = new Set(ins.map(r => r.block));
+    const blocks = new Set(ins.map(r => r.block));
     const bytes = ins.reduce((n, r) => n + (r.len || 0), 0);
-    const cats = {}; ins.forEach(r => cats[r.cat] = (cats[r.cat] || 0) + 1);
-    const stack = Object.keys(cats).map(k => `<i title="${k}: ${cats[k]}" style="width:${(cats[k] * 100 / Math.max(1, ins.length)).toFixed(2)}%;background:var(--c-${k},#6b7f9e)"></i>`).join("");
-    el.innerHTML = `<span><b>${ins.length}</b> visible instructions</span><span><b>${blocks.size}</b> basic blocks</span><span><b>${bytes}</b> bytes</span><span class="asm-stack">${stack}</span>`;
+    const cats = {};
+    ins.forEach(r => { cats[r.cat] = (cats[r.cat] || 0) + 1; });
+    const stack = ASM_CAT_DEF.filter(c => cats[c.key]).map(c =>
+      '<i title="' + esc(c.label) + ': ' + cats[c.key] + '" style="width:' +
+      (cats[c.key] * 100 / Math.max(1, ins.length)).toFixed(2) +
+      '%;background:var(--c-' + c.key + ',#6b7f9e)"></i>').join("");
+    const shown = ins.length < all.length
+      ? "<b>" + ins.length + "</b> of <b>" + all.length + "</b> instructions"
+      : "<b>" + ins.length + "</b> instructions";
+    el.innerHTML = "<span>" + shown + "</span>" +
+                   "<span><b>" + blocks.size + "</b> basic blocks</span>" +
+                   "<span><b>" + bytes + "</b> bytes</span>" +
+                   '<span class="asm-stack">' + stack + "</span>";
   }
+
   if (mn) {
-    const counts = {}; filtered.filter(r => !r.head && !r.blk).forEach(r => counts[r.mnem] = (counts[r.mnem] || 0) + 1);
-    const top = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,10);
-    mn.innerHTML = top.map(([k,v]) => `<div><span class="b" style="width:${Math.max(8, v * 70 / Math.max(1, top[0][1]))}px"></span>${esc(k)} <b>${v}</b></div>`).join("");
+    const counts = {};
+    ins.forEach(r => { counts[r.mnem] = (counts[r.mnem] || 0) + 1; });
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const peak = top.length ? top[0][1] : 1;
+    mn.innerHTML = top.map(([k, v]) =>
+      '<div><span class="b" style="width:' + Math.max(8, v * 70 / peak) + 'px"></span>' +
+      esc(k) + " <b>" + v + "</b></div>").join("");
   }
+}
+
+/* The colour rail is the only thing telling two rows apart at a glance, so the
+   legend is generated from the same table the colouring uses. */
+function renderAsmLegend() {
+  const el = document.getElementById("asmLegend");
+  if (!el) return;
+  el.innerHTML = ASM_CAT_DEF.map(c =>
+    '<span title="' + esc(c.hint) + '"><b style="background:var(--c-' + c.key +
+    ',#6b7f9e)"></b>' + esc(c.label) + "</span>").join("");
 }
 function asmMapViewport() {
   const map = document.getElementById("asmMap"), win = document.getElementById("asmWin");
   if (!map) return;
   map.querySelectorAll("i").forEach(x => x.remove());
-  const ins = filtered.filter(r => !r.head && !r.blk), max = Math.max(1, ins.length), h = map.clientHeight || 1;
-  ins.forEach((r, i) => { const bar = document.createElement("i"); bar.title = `${r.cat} · ${r.disasm}`; bar.style.top = (i * h / max) + "px"; bar.style.height = Math.max(2, h / max - 1) + "px"; bar.style.background = `var(--c-${r.cat},#35507f)`; map.appendChild(bar); });
-  if (win) { const top = asmEl.scrollTop / Math.max(1, filtered.length * ROW - asmEl.clientHeight); win.style.top = (top * h) + "px"; win.style.height = Math.max(10, h / Math.max(1, filtered.length)) + "px"; }
+
+  const ins = filtered.filter(r => !r.head && !r.blk);
+  const max = Math.max(1, ins.length);
+  const h = map.clientHeight || 1;
+  const qEl = document.getElementById("asmSearch");
+  const q = (qEl ? qEl.value : "").trim().toLowerCase();
+  const rowH = Math.max(1.5, h / max - 1);
+
+  ins.forEach((r, i) => {
+    const bar = document.createElement("i");
+    bar.title = (ASM_CAT_LABEL[r.cat] || r.cat) + " · " + r.disasm;
+    bar.style.top = (i * h / max) + "px";
+    bar.style.height = rowH + "px";
+    bar.style.background = "var(--c-" + r.cat + ",#35507f)";
+    /* Fade what the search rejected, so the surviving hits read as a pattern. */
+    if (q) bar.style.opacity = rowMatches(r, q, null) ? "1" : ".22";
+    map.appendChild(bar);
+  });
+
+  if (!win) return;
+  const totalH = Math.max(1, filtered.length * ROW);
+  const viewH = asmEl.clientHeight || 1;
+  const winH = Math.max(10, h * Math.min(1, viewH / totalH));
+  const frac = asmEl.scrollTop / Math.max(1, totalH - viewH);
+  win.style.height = winH + "px";
+  win.style.top = (Math.max(0, Math.min(1, frac)) * Math.max(0, h - winH)) + "px";
 }
+
+/* ── control wiring ───────────────────────────────────────────────── */
+/* The list is rebuilt rather than hidden: an option marked `hidden` still shows
+   in the closed select on several browsers, which made the box look dead. */
+function fillFnSelect(needle) {
+  if (!fnSel) return;
+  const q = String(needle || "").trim().toLowerCase();
+  const prev = fnSel.value;
+  const list = fnOptions.filter(o => !q || o.text.toLowerCase().includes(q));
+
+  fnSel.innerHTML = "";
+  if (!list.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.disabled = true;
+    opt.textContent = "no function matches";
+    fnSel.appendChild(opt);
+    return;
+  }
+  for (const o of list) {
+    const opt = document.createElement("option");
+    opt.value = o.value;
+    opt.textContent = o.text;
+    fnSel.appendChild(opt);
+  }
+  /* Keep the analyst's place when it survives the filter, else follow curFn. */
+  if (list.some(o => o.value === prev)) fnSel.value = prev;
+  else if (curFn) fnSel.value = String(curFn.offset || 0);
+}
+
+function jumpBlock(dir) {
+  const starts = [];
+  filtered.forEach((r, i) => { if (r.blk) starts.push(i); });
+  if (!starts.length) return;
+  const cur = asmEl.scrollTop / ROW;
+  const next = dir > 0
+    ? starts.find(i => i > cur + 1)
+    : starts.slice().reverse().find(i => i < cur - 1);
+  const target = next == null ? (dir > 0 ? starts[0] : starts[starts.length - 1]) : next;
+  asmEl.scrollTop = Math.max(0, target * ROW);
+  renderAsm();
+}
+
 function wireAssemblyControls() {
-  const q = document.getElementById("asmSearch"); if (q) q.oninput = applyAsmFilter;
-  document.querySelectorAll(".fbtn[data-cat]").forEach(b => b.onclick = () => { document.querySelectorAll(".fbtn[data-cat]").forEach(x => x.classList.remove("active")); b.classList.add("active"); applyAsmFilter(); });
-  const addr = document.getElementById("asmAddr"); if (addr) addr.onkeydown = e => { if (e.key === "Enter") gotoAddr(addr.value.trim()); };
-  const fs = document.getElementById("fnSearch"); if (fs) fs.oninput = () => { const needle = fs.value.toLowerCase(); Array.from(fnSel.options).forEach(o => o.hidden = needle && !o.textContent.toLowerCase().includes(needle)); };
-  const map = document.getElementById("asmMap"); if (map) map.onclick = e => { const r = map.getBoundingClientRect(), frac = Math.max(0, Math.min(1, (e.clientY-r.top)/r.height)), idx = Math.floor(frac * filtered.length); asmEl.scrollTop = Math.max(0, idx * ROW - 80); renderAsm(); };
+  const qEl = document.getElementById("asmSearch");
+  if (qEl) {
+    qEl.oninput = applyAsmFilter;
+    /* Enter walks the matches — typing alone only dims them. */
+    qEl.onkeydown = e => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const q = qEl.value.trim().toLowerCase();
+      if (!q) return;
+      const hits = [];
+      filtered.forEach((r, i) => {
+        if (!r.head && !r.blk && rowMatches(r, q, null)) hits.push(i);
+      });
+      if (!hits.length) return;
+      const from = Math.floor(asmEl.scrollTop / ROW) + 2;
+      const nxt = e.shiftKey
+        ? hits.slice().reverse().find(i => i < from - 1)
+        : hits.find(i => i > from);
+      const target = nxt == null ? (e.shiftKey ? hits[hits.length - 1] : hits[0]) : nxt;
+      asmEl.scrollTop = Math.max(0, target * ROW - ROW * 3);
+      renderAsm();
+    };
+  }
+
+  asmChips().forEach(b => {
+    b.onclick = () => { setActiveCat(b.dataset.cats || "all"); applyAsmFilter(); };
+  });
+
+  const clear = document.getElementById("asmClear");
+  if (clear) clear.onclick = () => {
+    if (qEl) qEl.value = "";
+    setActiveCat("all");
+    applyAsmFilter();
+  };
+
+  const addr = document.getElementById("asmAddr");
+  if (addr) addr.onkeydown = e => { if (e.key === "Enter") gotoAddr(addr.value.trim()); };
+
+  const fs = document.getElementById("fnSearch");
+  if (fs) fs.oninput = () => fillFnSelect(fs.value);
+
+  const prevBlk = document.getElementById("asmPrevBlk");
+  const nextBlk = document.getElementById("asmNextBlk");
+  if (prevBlk) prevBlk.onclick = () => jumpBlock(-1);
+  if (nextBlk) nextBlk.onclick = () => jumpBlock(1);
+
+  const map = document.getElementById("asmMap");
+  if (map) {
+    const seek = e => {
+      const r = map.getBoundingClientRect();
+      const frac = Math.max(0, Math.min(1, (e.clientY - r.top) / Math.max(1, r.height)));
+      asmEl.scrollTop = frac * Math.max(0, filtered.length * ROW - (asmEl.clientHeight || 0));
+      renderAsm();
+    };
+    let dragging = false;
+    map.addEventListener("mousedown", e => { dragging = true; seek(e); e.preventDefault(); });
+    window.addEventListener("mousemove", e => { if (dragging) seek(e); });
+    window.addEventListener("mouseup", () => { dragging = false; });
+  }
+
+  /* The visible row count is derived from the container height, so a resize
+     needs a re-render or the listing keeps a stale window until the next
+     scroll. */
+  let rt = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(rt);
+    rt = setTimeout(() => { if (rows.length) renderAsm(); }, 120);
+  });
+
+  renderAsmLegend();
   renderAsmStats();
 }
 
-/* Deterministic ranked call graph: avoids the old 220-node force simulation. */
-function renderRankedGraph(svgId, graph, maxNodes, compact) {
-  const svgEl = document.getElementById(svgId); if (!svgEl) return;
-  const W = svgEl.clientWidth || 900, H = svgEl.clientHeight || 520;
-  const svg = d3.select(svgEl); svg.selectAll("g.graph-content").remove(); svg.attr("viewBox", `0 0 ${W} ${H}`);
-  const all = (graph.nodes || []).map(n => ({...n})), byId = new Map(all.map(n => [n.id, n]));
-  const allEdges = (graph.edges || []).filter(e => byId.has(e[0]) && byId.has(e[1]) && e[0] !== e[1]);
-  const deg = new Map(), indegree = new Map(); for (const n of all) indegree.set(n.id, 0);
-  for (const e of allEdges) { deg.set(e[0], (deg.get(e[0]) || 0) + 1); deg.set(e[1], (deg.get(e[1]) || 0) + 1); indegree.set(e[1], (indegree.get(e[1]) || 0) + 1); }
-  const roots = all.filter(n => !indegree.get(n.id)).map(n => n.id);
-  let keep = new Set(compact ? all.slice().sort((a,b) => (deg.get(b.id)||0)-(deg.get(a.id)||0)).slice(0,60).map(n=>n.id) : all.map(n=>n.id));
-  roots.forEach(r => keep.add(r));
-  const nodes = all.filter(n => keep.has(n.id)).slice(0,maxNodes), ids = new Set(nodes.map(n=>n.id));
-  const edges = allEdges.filter(e => ids.has(e[0]) && ids.has(e[1]));
-  const out = new Map(nodes.map(n=>[n.id,[]])), indeg = new Map(nodes.map(n=>[n.id,0]));
-  edges.forEach(e=>{out.get(e[0]).push(e[1]); indeg.set(e[1],indeg.get(e[1])+1);});
-  const rank = new Map(), queue = roots.filter(r=>ids.has(r)).map(id=>({id,d:0})); queue.forEach(x=>rank.set(x.id,0));
-  for (let p=0;p<queue.length;p++){const x=queue[p];for(const y of out.get(x.id)){if(!rank.has(y)){rank.set(y,x.d+1);queue.push({id:y,d:x.d+1});}}}
-  const reachableMax = Math.max(0, ...rank.values());
-  nodes.forEach(n => { if (!rank.has(n.id)) rank.set(n.id, reachableMax + 1); });
-  const groups = new Map(); nodes.forEach(n=>{const d=rank.get(n.id)||0;if(!groups.has(d))groups.set(d,[]);groups.get(d).push(n);});
-  const pos=new Map(), maxRank=Math.max(1,...groups.keys()), colW=(W-84)/Math.min(maxRank,9);
-  groups.forEach((items,d)=>items.forEach((n,i)=>{const h=items.length,y=h===1?H/2:30+i*(H-60)/Math.max(1,h-1);pos.set(n.id,{x:42+d*colW,y});}));
-  const g=svg.append("g").attr("class","graph-content"), zoom=d3.zoom().scaleExtent([.25,3.5]).on("zoom",ev=>g.attr("transform",ev.transform)); svg.call(zoom);
-  const line=g.append("g").selectAll("path").data(edges).join("path").attr("class","cg-line").attr("d",e=>{const a=pos.get(e[0]),b=pos.get(e[1]);if(!a||!b)return "";const q=Math.max(18,Math.abs(b.x-a.x)*.18);return `M${a.x},${a.y} C${a.x+q},${a.y} ${b.x-q},${b.y} ${b.x},${b.y}`;}).attr("marker-end","url(#arrow)");
-  const node=g.append("g").selectAll("g").data(nodes).join("g").attr("class",d=>"cg-node"+(roots.includes(d.id)?" entry":"")).attr("transform",d=>{const p=pos.get(d.id);return `translate(${p.x},${p.y})`;});
-  node.append("rect").attr("x",-7).attr("y",-13).attr("width",d=>Math.max(34,Math.min(190,String(d.label||d.id).length*5.7+16))).attr("height",26);
-  node.append("text").attr("x",0).attr("y",4).text(d=>{const s=String(d.label||d.id);return s.length>30?s.slice(0,29)+"…":s;}); node.append("title").text(d=>`${d.label||d.id} · ${deg.get(d.id)||0} call edge(s)`);
-  node.on("mouseenter",function(ev,d){const near=new Set([d.id]);edges.forEach(e=>{if(e[0]===d.id)near.add(e[1]);if(e[1]===d.id)near.add(e[0]);});node.classed("dim",n=>!near.has(n.id));line.classed("dim",e=>e[0]!==d.id&&e[1]!==d.id).classed("hot",e=>e[0]===d.id||e[1]===d.id);}).on("mouseleave",()=>{node.classed("dim",false);line.classed("dim",false).classed("hot",false);});
-  const note=document.getElementById(svgId==="cfgsvg"?"cgNote":"");if(note)note.textContent=`${nodes.length} nodes · ${edges.length} edges · ranked by reachability from entry roots; hover to isolate callers/callees`;
-}
-function renderGraphs() {
-  const compact = document.getElementById("cgCompact") && document.getElementById("cgCompact").classList.contains("active");
-  renderRankedGraph("cfgsvg", DATA.graphs.callgraph, 220, compact); renderRankedGraph("secsvg", DATA.graphs.section, 180, true);
-  const st=document.getElementById("cgStats");if(st)st.innerHTML=[["Functions",DATA.graphs.callgraph.nodes.length],["Call edges",DATA.graphs.callgraph.edges.length],["Section nodes",DATA.graphs.section.nodes.length]].map(x=>`<div class="stat-card"><div class="sv">${x[1]}</div><div class="sl">${x[0]}</div></div>`).join("");
-  const search = document.getElementById("cgSearch");
-  if (search && search.value.trim()) { const q=search.value.toLowerCase(); d3.select("#cfgsvg .cg-node").classed("hit",d=>String(d.label||d.id).toLowerCase().includes(q)).classed("dim",d=>!String(d.label||d.id).toLowerCase().includes(q)); }
-}
-document.getElementById("cgFit")?.addEventListener("click",()=>{const s=d3.select("#cfgsvg");s.transition().duration(250).call(d3.zoom().transform,d3.zoomIdentity);});
-document.getElementById("cgResetFocus")?.addEventListener("click",()=>{const x=document.getElementById("cgSearch");if(x)x.value="";renderGraphs();});
-["cgLayout","cgSearch","cgMinDeg","cgNoLeaf","cgNoOrphan","cgFit","cgResetFocus","cgCompact","cgAll"].forEach(id => { const el=document.getElementById(id); if (!el) return; el.oninput = el.onchange = () => { if (id === "cgCompact") { el.classList.toggle("active"); document.getElementById("cgAll").classList.remove("active"); } if (id === "cgAll") { document.getElementById("cgCompact").classList.remove("active"); } renderGraphs(); }; });
-window.addEventListener("load", () => { renderGraphs(); });
+/* ═══ Call graph / CFG ═══
+   One pipeline: filter (degree · leaf · unreachable · top-N) → rank by
+   reachability from entry roots → lay out (layered | radial | force) → draw.
+   Every control in the panel feeds an option here, and the panel's own labels
+   are refreshed from the same pass so they can never drift out of sync. */
 
-/* ═══ D3 Call Graph / CFG ═══ */
-function renderDot(svgId, graph, maxNodes) { return renderRankedGraph(svgId, graph, maxNodes, false); }
-function enableSvgPan() { /* D3 zoom handles pan */ }
+/* Reads the whole control panel into one options object. */
+function cgControls() {
+  const v = id => { const el = document.getElementById(id); return el ? el.value : ""; };
+  const on = id => !!(document.getElementById(id) || {}).checked;
+  const isActive = id => {
+    const el = document.getElementById(id); return !!(el && el.classList.contains("active"));
+  };
+  return {
+    layout:     v("cgLayout") || "layered",
+    search:     (v("cgSearch") || "").trim().toLowerCase(),
+    minDeg:     Math.max(0, parseInt(v("cgMinDeg") || "0", 10) || 0),
+    hideLeaf:   on("cgNoLeaf"),
+    hideOrphan: on("cgNoOrphan"),
+    compact:    isActive("cgCompact"),
+  };
+}
+
+function renderRankedGraph(svgId, graph, opts) {
+  const o = opts || {};
+  const svgEl = document.getElementById(svgId);
+  if (!svgEl) return null;
+  /* The layout is allowed to grow the canvas, so the height has to come from
+     the markup's declared style, not from whatever the last render left
+     behind - otherwise every re-render would ratchet the graph taller.  The
+     declared style also survives a render while the section is still hidden,
+     where clientHeight would read 0. */
+  if (!svgEl.dataset.baseH) {
+    const declared = parseFloat(svgEl.style.height);
+    svgEl.dataset.baseH = String(declared > 0 ? declared : (svgEl.clientHeight || 520));
+  }
+  const W = svgEl.clientWidth || 900, H = parseInt(svgEl.dataset.baseH, 10) || 520;
+  const svg = d3.select(svgEl);
+  svg.selectAll("g.graph-content").remove();
+  svg.attr("viewBox", `0 0 ${W} ${H}`);
+
+  const all = (graph.nodes || []).map(n => ({...n}));
+  const byId = new Map(all.map(n => [n.id, n]));
+  const allEdges = (graph.edges || []).filter(e => byId.has(e[0]) && byId.has(e[1]) && e[0] !== e[1]);
+
+  const outDeg = new Map(), inDeg = new Map();
+  for (const n of all) { outDeg.set(n.id, 0); inDeg.set(n.id, 0); }
+  for (const e of allEdges) { outDeg.set(e[0], outDeg.get(e[0]) + 1); inDeg.set(e[1], inDeg.get(e[1]) + 1); }
+  const degree = n => (outDeg.get(n.id) || 0) + (inDeg.get(n.id) || 0);
+
+  /* Entry points: nothing calls them. They anchor every layout, so they are
+     exempt from the count-based filters below. */
+  const roots = all.filter(n => (inDeg.get(n.id) || 0) === 0).map(n => n.id);
+  const rootSet = new Set(roots);
+
+  /* ── filter ───────────────────────────────────────────────────────── */
+  const live = new Set(all.map(n => n.id));
+  const drop = id => live.delete(id);
+
+  if (o.compact) {
+    const top = new Set(all.slice().sort((a, b) => degree(b) - degree(a)).slice(0, 60).map(n => n.id));
+    roots.forEach(r => top.add(r));
+    all.forEach(n => { if (!top.has(n.id)) drop(n.id); });
+  }
+  if (o.hideLeaf) {
+    all.forEach(n => {
+      if (!rootSet.has(n.id) && (outDeg.get(n.id) || 0) === 0 && (inDeg.get(n.id) || 0) > 0) drop(n.id);
+    });
+  }
+
+  /* Depth = BFS distance from an entry point, over the surviving edges. */
+  const adj = new Map(all.map(n => [n.id, []]));
+  for (const e of allEdges) if (live.has(e[0]) && live.has(e[1])) adj.get(e[0]).push(e[1]);
+  const depth = new Map();
+  const queue = roots.filter(r => live.has(r)).map(id => ({id, d: 0}));
+  queue.forEach(x => depth.set(x.id, 0));
+  for (let i = 0; i < queue.length; i++) {
+    const x = queue[i];
+    for (const y of adj.get(x.id)) if (!depth.has(y)) { depth.set(y, x.d + 1); queue.push({id: y, d: x.d + 1}); }
+  }
+
+  if (o.hideOrphan) all.forEach(n => { if (!depth.has(n.id)) drop(n.id); });
+  if (o.minDeg > 0) {
+    all.forEach(n => { if (!rootSet.has(n.id) && degree(n) < o.minDeg) drop(n.id); });
+  }
+
+  /* ── cap ──────────────────────────────────────────────────────────── */
+  let nodes = all.filter(n => live.has(n.id));
+  const cap = o.maxNodes || 220;
+  if (nodes.length > cap) {
+    const top = new Set(nodes.slice().sort((a, b) => degree(b) - degree(a)).slice(0, cap).map(n => n.id));
+    roots.forEach(r => { if (live.has(r)) top.add(r); });
+    nodes = all.filter(n => top.has(n.id));
+  }
+  const ids = new Set(nodes.map(n => n.id));
+  const edges = allEdges.filter(e => ids.has(e[0]) && ids.has(e[1]));
+
+  const maxDepth = Math.max(0, ...nodes.map(n => depth.get(n.id) || 0));
+  nodes.forEach(n => { if (!depth.has(n.id)) depth.set(n.id, maxDepth + 1); });
+
+  /* ── layout ───────────────────────────────────────────────────────── */
+  /* Every layout below reserves real room for a node before placing it: a box
+     is as wide as its label, columns are packed by box size, and the canvas
+     grows instead of the boxes overlapping. */
+  const labelOf = n => String(n.label || n.id);
+  /* 6.4px per character: the wide end of monospace at 12px, so a box is
+     always at least as wide as the label it holds. */
+  const CHAR_W = 6.4;
+  const naturalW = n => Math.max(56, Math.min(210, labelOf(n).length * CHAR_W + 20));
+  const BOX_H = 26;
+  const ROW_GAP = 18;                       // clear space between stacked boxes
+  const COL_GAP = 56;                       // clear space between columns
+  let boxW = naturalW;
+
+  const pos = new Map();
+  let PW = W, PH = H;
+
+  if (o.layout === "radial") {
+    /* A ring must be long enough to seat its nodes side by side, or the
+       labels pile up along the arc. */
+    const rings = new Map();
+    nodes.forEach(n => {
+      const d = depth.get(n.id) || 0;
+      if (!rings.has(d)) rings.set(d, []);
+      rings.get(d).push(n);
+    });
+    let r = 0;
+    const placed = [];
+    [...rings.keys()].sort((a, b) => a - b).forEach(d => {
+      const items = rings.get(d);
+      const widest = items.reduce((m, n) => Math.max(m, naturalW(n)), 52);
+      const needed = (items.length * (widest + 20)) / (2 * Math.PI);
+      if (d === 0 && items.length === 1) {
+        r = 0;                     /* the lone entry point sits at the centre */
+      } else {
+        r = Math.max(r + 104, needed);
+      }
+      placed.push({items, r});
+    });
+    const maxR = Math.max(80, ...placed.map(x => x.r));
+    const cx = maxR + 130, cy = maxR + 70;
+    PW = Math.max(W, cx * 2);
+    PH = Math.max(H, cy * 2);
+    placed.forEach(({items, r}) => {
+      items.forEach((n, i) => {
+        /* Depth 0 is a single point in the middle; a ring of one would
+           otherwise be placed at an arbitrary angle. */
+        const a = items.length === 1 ? -Math.PI / 2
+                                     : (i / items.length) * Math.PI * 2 - Math.PI / 2;
+        pos.set(n.id, {x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r});
+      });
+    });
+  } else if (o.layout === "force") {
+    /* Short, synchronous run: deterministic between renders, and cheap enough
+       at these node caps to re-run on every control change. */
+    const sim = d3.forceSimulation(nodes.map(n => ({...n})))
+      .force("link", d3.forceLink(edges.map(e => ({source: e[0], target: e[1]})))
+        .id(d => d.id)
+        .distance(e => 64 + (naturalW(byId.get(e.source.id) || {}) +
+                             naturalW(byId.get(e.target.id) || {})) / 2)
+        .strength(0.35))
+      .force("charge", d3.forceManyBody().strength(-900).distanceMax(800))
+      .force("center", d3.forceCenter(W / 2, H / 2))
+      .force("collide", d3.forceCollide(d => Math.hypot(boxW(d) / 2, BOX_H / 2) + 14))
+      .stop();
+    for (let i = 0; i < 400; i++) sim.tick();
+    /* A force layout has no idea how big the canvas is - fit the result back
+       into one rather than letting nodes settle off-screen. */
+    const laid = sim.nodes();
+    const minX = Math.min(...laid.map(n => n.x - naturalW(n) / 2));
+    const maxX = Math.max(...laid.map(n => n.x + naturalW(n) / 2));
+    const minY = Math.min(...laid.map(n => n.y - BOX_H / 2));
+    const maxY = Math.max(...laid.map(n => n.y + BOX_H / 2));
+    const M = 44;
+    laid.forEach(n => pos.set(n.id, {x: n.x - minX + M, y: n.y - minY + M}));
+    PW = Math.max(W, maxX - minX + M * 2);
+    PH = Math.max(H, maxY - minY + M * 2);
+  } else {
+    /* Layered: one column per depth, packed by box size. Depths beyond the
+       10th share the last column, ordered by depth then name, so deep chains
+       stay on screen. The canvas grows downwards - a column of 60 functions
+       genuinely needs ~2600px, and squeezing it into 640px is what produced
+       the pile-up. */
+    const COL = Math.min(maxDepth, 9);
+    const colW = Math.max(110, Math.min(250, (W - 84) / (COL + 1)));
+    boxW = n => Math.min(colW - 18, naturalW(n));
+
+    const buckets = new Map();
+    nodes.forEach(n => {
+      const c = Math.min(depth.get(n.id) || 0, COL);
+      if (!buckets.has(c)) buckets.set(c, []);
+      buckets.get(c).push(n);
+    });
+    const tallest = Math.max(1, ...[...buckets.values()].map(items => items.length));
+    PH = Math.max(H, tallest * (BOX_H + ROW_GAP) - ROW_GAP + 64);
+
+    const colX = new Map();
+    let x = 42;
+    for (let c = 0; c <= COL; c++) {
+      const items = buckets.get(c) || [];
+      const w = items.reduce((m, n) => Math.max(m, boxW(n)), 90);
+      colX.set(c, x + w / 2);
+      x += w + COL_GAP;
+    }
+    PW = Math.max(W, x - COL_GAP + 42);
+
+    buckets.forEach((items, c) => {
+      items.sort((a, b) => (depth.get(a.id) - depth.get(b.id)) ||
+        String(a.label || a.id).localeCompare(String(b.label || b.id)));
+      const total = items.length * BOX_H + (items.length - 1) * ROW_GAP;
+      const top = (PH - total) / 2;
+      items.forEach((n, i) => pos.set(n.id, {
+        x: colX.get(c),
+        y: top + i * (BOX_H + ROW_GAP) + BOX_H / 2,
+      }));
+    });
+  }
+
+  /* The canvas is only as tall as the content needs, so the card grows and the
+     page scrolls rather than the graph being scaled down to illegibility. */
+  svg.attr("viewBox", `0 0 ${PW} ${PH}`);
+  const fitScale = Math.min(1, W / PW);
+  svgEl.style.height = Math.round(PH * fitScale) + "px";
+
+  /* ── draw ─────────────────────────────────────────────────────────── */
+  const g = svg.append("g").attr("class", "graph-content")
+    .attr("transform", d3.zoomTransform(svgEl));   /* keep the analyst's pan/zoom across re-renders */
+  const zoom = d3.zoom().scaleExtent([.25, 3.5]).on("zoom", ev => g.attr("transform", ev.transform));
+  svg.call(zoom);
+
+  const line = g.append("g").selectAll("path").data(edges).join("path").attr("class", "cg-line")
+    .attr("d", e => {
+      const a = pos.get(e[0]), b = pos.get(e[1]);
+      if (!a || !b) return "";
+      const q = Math.max(18, Math.abs(b.x - a.x) * .18);
+      return `M${a.x},${a.y} C${a.x + q},${a.y} ${b.x - q},${b.y} ${b.x},${b.y}`;
+    })
+    .attr("marker-end", "url(#arrow)");
+
+  const node = g.append("g").selectAll("g").data(nodes).join("g")
+    .attr("class", d => "cg-node" + (rootSet.has(d.id) ? " entry" : ""))
+    .attr("transform", d => { const p = pos.get(d.id); return `translate(${p.x},${p.y})`; });
+  node.append("rect").attr("x", d => -boxW(d) / 2).attr("y", -BOX_H / 2)
+    .attr("width", d => boxW(d)).attr("height", BOX_H);
+  node.append("text").attr("x", d => -boxW(d) / 2 + 10).attr("y", 4)
+    .text(d => {
+      const s = labelOf(d);
+      const fits = Math.max(4, Math.floor((boxW(d) - 20) / CHAR_W));
+      return s.length > fits ? s.slice(0, fits - 1) + "…" : s;
+    });
+  node.append("title").text(d =>
+    `${d.label || d.id}\n${inDeg.get(d.id) || 0} caller(s) · ${outDeg.get(d.id) || 0} callee(s) · depth ${depth.get(d.id) || 0}` +
+    (rootSet.has(d.id) ? " · entry point" : ""));
+  node.on("mouseenter", function (ev, d) {
+    const near = new Set([d.id]);
+    edges.forEach(e => { if (e[0] === d.id) near.add(e[1]); if (e[1] === d.id) near.add(e[0]); });
+    node.classed("dim", n => !near.has(n.id));
+    line.classed("dim", e => e[0] !== d.id && e[1] !== d.id).classed("hot", e => e[0] === d.id || e[1] === d.id);
+  }).on("mouseleave", () => {
+    node.classed("dim", false);
+    line.classed("dim", false).classed("hot", false);
+  });
+
+  /* Search highlight is part of the render, not a post-pass, so it survives
+     every re-render triggered by the other controls. */
+  if (o.search) {
+    node.classed("hit", d => String(d.label || d.id).toLowerCase().includes(o.search))
+        .classed("dim", d => !String(d.label || d.id).toLowerCase().includes(o.search));
+  }
+
+  return {nodes: nodes.length, edges: edges.length, total: all.length, totalEdges: allEdges.length};
+}
+
+function renderGraphs() {
+  const o = cgControls();
+  const cg = renderRankedGraph("cfgsvg", DATA.graphs.callgraph, Object.assign({maxNodes: 220}, o));
+  renderRankedGraph("secsvg", DATA.graphs.section, {layout: "layered", maxNodes: 180, compact: true});
+
+  const st = document.getElementById("cgStats");
+  if (st) st.innerHTML = [
+    ["Functions", cg ? cg.nodes + (cg.nodes < cg.total ? " / " + cg.total : "") : 0],
+    ["Call edges", cg ? cg.edges : 0],
+    ["Sections", (DATA.graphs.section.nodes || []).length],
+  ].map(x => `<div class="stat-card"><div class="sv">${x[1]}</div><div class="sl">${x[0]}</div></div>`).join("");
+
+  const degLbl = document.getElementById("cgMinDegV");
+  if (degLbl) degLbl.textContent = String(o.minDeg);
+
+  const allBtn = document.getElementById("cgAll");
+  if (allBtn) allBtn.textContent = "All (" + (DATA.graphs.callgraph.nodes || []).length + ")";
+
+  const note = document.getElementById("cgNote");
+  if (note) {
+    const bits = [`layout: ${o.layout}`];
+    if (o.compact) bits.push("top 60 by degree");
+    if (o.minDeg > 0) bits.push(`min calls ≥ ${o.minDeg}`);
+    if (o.hideLeaf) bits.push("leaf callees hidden");
+    if (o.hideOrphan) bits.push("unreachable hidden");
+    if (o.search) bits.push(`search "${o.search}"`);
+    note.textContent = cg
+      ? `${cg.nodes} of ${cg.total} functions · ${cg.edges} of ${cg.totalEdges} call edges · ${bits.join(" · ")} · hover to isolate callers/callees`
+      : "No call graph data for this sample.";
+  }
+}
+
+document.getElementById("cgFit")?.addEventListener("click", () => {
+  d3.select("#cfgsvg").transition().duration(250)
+    .call(d3.zoom().transform, d3.zoomIdentity);
+});
+
+/* Reset every graph control back to its default in one go. */
+document.getElementById("cgResetFocus")?.addEventListener("click", () => {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set("cgSearch", "");
+  set("cgLayout", "layered");
+  set("cgMinDeg", "0");
+  ["cgNoLeaf", "cgNoOrphan"].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
+  document.getElementById("cgCompact")?.classList.remove("active");
+  document.getElementById("cgAll")?.classList.add("active");
+  renderGraphs();
+});
+
+document.getElementById("cgCompact")?.addEventListener("click", function () {
+  this.classList.toggle("active");
+  document.getElementById("cgAll")?.classList.remove("active");
+  renderGraphs();
+});
+document.getElementById("cgAll")?.addEventListener("click", function () {
+  this.classList.add("active");
+  document.getElementById("cgCompact")?.classList.remove("active");
+  renderGraphs();
+});
+["cgLayout", "cgMinDeg", "cgNoLeaf", "cgNoOrphan"].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.oninput = el.onchange = () => renderGraphs();
+});
+/* Search re-renders on a short debounce: it's the only control driven by
+   per-keystroke input, and the force layout is not free. */
+(function () {
+  const el = document.getElementById("cgSearch");
+  if (!el) return;
+  let t = null;
+  el.oninput = () => { clearTimeout(t); t = setTimeout(renderGraphs, 140); };
+})();
+window.addEventListener("load", () => { renderGraphs(); });
 
 /* ═══ D3 Charts ═══ */
 function addTip(sel) {
@@ -2345,6 +3159,300 @@ function drawAllCharts() {
     ];
     cs.innerHTML = items.map(x=>`<div class="stat-card"><div class="si">${x.i}</div><div class="sv">${x.v}</div><div class="sl">${x.l}</div></div>`).join("");
   }
+}
+
+/* ═══ ATT&CK / STIX section ═══ */
+const SX_COLORS = {"attack-pattern":"#ff9f43","x-mitre-tactic":"#a78bfa","course-of-action":"#2ee6a8",
+  "indicator":"#22d3ee","malware":"#ff4d5e","tool":"#f472b6","vulnerability":"#ffd166",
+  "identity":"#4d8dff","intrusion-set":"#c084fc","report":"#6b7f9e"};
+const SX_R = {"attack-pattern":9,"x-mitre-tactic":12,"course-of-action":7,"indicator":8,
+  "malware":9,"vulnerability":8,"identity":7};
+const SX_NAME = {"attack-pattern":"Technique","x-mitre-tactic":"Tactic","course-of-action":"Mitigation",
+  "indicator":"Indicator","malware":"Malware","tool":"Tool","vulnerability":"Vulnerability",
+  "identity":"Identity","intrusion-set":"Intrusion Set","report":"Report"};
+const sxColor = t => SX_COLORS[t] || "#6b7f9e";
+const sxR = t => SX_R[t] || 6;
+const sxName = t => SX_NAME[t] || String(t).replace(/-/g," ");
+/* Reuse the shared detail drawer; map a STIX type to one of its colour keys. */
+const sxDetailType = t => t === "indicator" ? "ioc"
+  : t === "malware" ? "malicious"
+  : t === "attack-pattern" ? "capability" : "analysis";
+
+let sxBuilt = false, sxSvgSel = null, sxZoom = null, sxNodeSel = null;
+const sxActive = new Set();
+
+function sxTacticName(short) {
+  const hit = ((DATA.stix || {}).tactics || []).find(t => t.short === short);
+  return hit ? hit.name : String(short || "").replace(/-/g, " ");
+}
+
+function sxShow(id) {
+  const S = DATA.stix, node = (S.graph.nodes || []).find(n => n.id === id) || {};
+  const body = (S.graph.details || {})[id] || {};
+  const edges = S.graph.edges || [], allNodes = S.graph.nodes || [];
+  const titleOf = oid => { const n = allNodes.find(x => x.id === oid); return n ? (n.label || n.id) : oid; };
+  const refs = body.external_references || [];
+  const ext = refs.find(r => r && r.source_name === "mitre-attack" && r.external_id)
+           || refs.find(r => r && r.external_id);
+
+  const tags = [];
+  if (ext) tags.push(ext.external_id);
+  (node.tactics || []).forEach(t => tags.push(sxTacticName(t)));
+  if (node.tactic) tags.push(sxTacticName(node.tactic));
+  (body.x_mitre_platforms || []).forEach(p => tags.push(p));
+  if (body["x-synthesized"]) tags.push("inferred from " + body["x-synthesized"]);
+
+  const row = (k, v) => '<div class="dt-kv"><span class="k">' + esc(k) + '</span><span class="v">' + v + '</span></div>';
+  const para = (text, dim) => '<div style="font-size:14px;line-height:1.62;white-space:pre-wrap;' +
+    (dim ? "color:var(--dim)" : "") + '">' + esc(text) + '</div>';
+
+  let html = "";
+  if (body.description) html += sect("Description") + para(body.description);
+  if (body.x_mitre_detection) html += sect("Detection") + para(body.x_mitre_detection, true);
+
+  const facts = [];
+  if (ext && ext.url) facts.push(row("ATT&CK", '<a href="' + esc(ext.url) +
+    '" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all">' +
+    esc(ext.url) + '</a>'));
+  if (body.pattern) facts.push(row("Pattern", esc(body.pattern)));
+  if (body.confidence != null) facts.push(row("Confidence", esc(body.confidence)));
+  if (body.identity_class) facts.push(row("Class", esc(body.identity_class)));
+  if (node.sub) facts.push(row("Ref", esc(node.sub)));
+  facts.push(row("Object ID", esc(id)));
+  html += sect("Details") + facts.join("");
+
+  if ((body.x_mitre_mitigations || []).length) {
+    html += sect("Mitigations") + body.x_mitre_mitigations
+      .map(m => '<div class="dt-kv"><span class="v" style="text-align:left">' + esc(m) + '</span></div>')
+      .join("");
+  }
+  if (tags.length) html += sect("Tags") + '<div class="dt-chips">' +
+    tags.map(t => '<span class="dt-chip">' + esc(t) + '</span>').join("") + '</div>';
+
+  const rels = edges.filter(e => e.source === id || e.target === id);
+  html += sect("Relationships (" + rels.length + ")");
+  if (!rels.length) {
+    html += '<div class="dt-empty">Nothing in this bundle links to or from this object.</div>';
+  }
+  rels.slice(0, 60).forEach(e => {
+    const out = e.source === id, other = out ? e.target : e.source;
+    html += '<div class="dt-kv"><span class="k">' + (out ? "→ " : "← ") +
+      esc(e.label || "related-to") + '</span><span class="v" data-goto="' + esc(other) +
+      '" style="cursor:pointer;color:var(--accent)">' + esc(titleOf(other)) + '</span></div>';
+  });
+  if (rels.length > 60) html += '<div class="dt-empty">… ' + (rels.length - 60) + ' more</div>';
+
+  html += sect("Raw STIX object") +
+    '<pre style="white-space:pre-wrap;word-break:break-word;font-family:var(--mono);' +
+    'font-size:12px;margin:0;color:var(--dim)">' + esc(JSON.stringify(body, null, 2)) + '</pre>';
+
+  showDetail(node.label || id, {html: html},
+             {type: sxDetailType(node.type), sub: id, connections: rels.length});
+  document.querySelectorAll("#detailBody [data-goto]").forEach(el => {
+    el.onclick = () => { if (el.dataset.goto) sxShow(el.dataset.goto); };
+  });
+}
+
+function drawStix() {
+  const S = DATA.stix;
+  if (!S || !S.available || sxBuilt) return;
+  sxBuilt = true;
+
+  const st = S.graph.stats || {};
+  const cards = [
+    {v: st.objects || 0, l: "STIX Objects"},
+    {v: st.techniques || 0, l: "Techniques"},
+    {v: st.tactics || 0, l: "Tactics"},
+    {v: st.edges || 0, l: "Edges"},
+  ];
+  document.getElementById("stixStats").innerHTML = cards
+    .map(c => '<div class="stat-card"><div class="sv">' + c.v + '</div><div class="sl">' + c.l + "</div></div>")
+    .join("");
+
+  /* --- coverage matrix: tactics in kill-chain order --- */
+  const techs = (S.layer && S.layer.techniques) || [];
+  const byTactic = new Map(), unassigned = [];
+  techs.forEach(t => {
+    if (!t.tactic) { unassigned.push(t); return; }
+    if (!byTactic.has(t.tactic)) byTactic.set(t.tactic, []);
+    byTactic.get(t.tactic).push(t);
+  });
+
+  const mx = document.getElementById("stixMatrix");
+  if (!techs.length) {
+    mx.innerHTML = '<div class="dt-empty">No ATT&amp;CK techniques in this section.</div>';
+  } else {
+    let html = "";
+    (S.tactics || []).forEach(t => {
+      const list = byTactic.get(t.short) || [];
+      html += '<div class="sx-tac"><h4>' + esc(t.name) + "<b>" + list.length + "</b></h4>";
+      list.forEach(x => {
+        html += '<button class="sx-tech" data-tid="' + esc(x.techniqueID) + '">' +
+                "<code>" + esc(x.techniqueID) + "</code>" + esc(x.comment || "") + "</button>";
+      });
+      html += "</div>";
+    });
+    if (unassigned.length) {
+      html += '<div class="sx-tac"><h4>Unassigned<b>' + unassigned.length + "</b></h4>";
+      unassigned.forEach(x => {
+        html += '<button class="sx-tech" data-tid="' + esc(x.techniqueID) + '">' +
+                "<code>" + esc(x.techniqueID) + "</code>" + esc(x.comment || "") + "</button>";
+      });
+      html += "</div>";
+    }
+    mx.innerHTML = html;
+    mx.querySelectorAll(".sx-tech").forEach(b => {
+      b.onclick = () => {
+        const hit = (S.graph.nodes || []).find(n => n.technique_id === b.dataset.tid);
+        if (hit) sxShow(hit.id);
+      };
+    });
+  }
+
+  /* --- notes --- */
+  const notes = [];
+  if (S.source) notes.push("Source: " + S.source + ".");
+  if (S.synthesized) notes.push("No STIX bundle was supplied for this run — the techniques capa matched were turned into STIX attack-pattern objects.");
+  if (S.layer_note) notes.push(S.layer_note + ".");
+  if (st.synthetic_tactics) notes.push(st.synthetic_tactics + " tactic node(s) inferred from kill_chain_phases.");
+  if (st.dropped_edges) notes.push(st.dropped_edges + " relationship(s) dropped (endpoint not in the bundle).");
+  if (st.truncated_nodes) notes.push(st.truncated_nodes + " object(s) beyond the display cap are not drawn.");
+  document.getElementById("stixNote").textContent = notes.join(" ");
+
+  /* --- sub-tabs --- */
+  const showCov = on => {
+    document.getElementById("stixCoverage").style.display = on ? "" : "none";
+    document.getElementById("stixGraph").style.display = on ? "none" : "";
+    document.querySelectorAll("#stix .sxtab").forEach(b => b.classList.toggle("on", (b.dataset.sview === "coverage") === on));
+    if (!on) sxDrawGraph();
+  };
+  document.querySelectorAll("#stix .sxtab").forEach(b => {
+    b.onclick = () => { if (b.dataset.sview === "coverage") showCov(true); else showCov(false); };
+  });
+
+  document.getElementById("sxNav").onclick = () => {
+    if (!S.layer || !S.layer.techniques) { alert("No ATT&CK techniques to export."); return; }
+    const blob = new Blob([JSON.stringify(S.layer, null, 2)], {type: "application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = ((DATA.meta && DATA.meta.stem) || "layer") + "_navigator.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  document.getElementById("sxFullNav").onclick = () => {
+    if (!S.full_layer || !S.full_layer.techniques) {
+      alert("Full ATT&CK matrix not available. " + (S.full_layer_note || "MITRE ATT&CK cache not loaded."));
+      return;
+    }
+    const blob = new Blob([JSON.stringify(S.full_layer, null, 2)], {type: "application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "mitre_attack_enterprise_full_matrix.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+}
+
+function sxDrawGraph() {
+  const S = DATA.stix;
+  if (sxSvgSel || !S || !S.available) return;
+  const el = document.getElementById("stixSvg");
+  if (!el) return;
+
+  const svg = d3.select(el);
+  const W = el.clientWidth || 1000, H = 620;
+  svg.attr("viewBox", "0 0 " + W + " " + H);
+
+  const defs = svg.append("defs");
+  defs.append("marker").attr("id","sxArrow").attr("viewBox","0 -5 10 10").attr("refX",17)
+    .attr("refY",0).attr("markerWidth",5).attr("markerHeight",5).attr("orient","auto")
+    .append("path").attr("d","M0,-5L10,0L0,5").attr("fill","#284066");
+
+  sxZoom = d3.zoom().scaleExtent([0.15,4]).on("zoom", ev => g.attr("transform", ev.transform));
+  svg.call(sxZoom);
+  const g = svg.append("g");
+
+  const nodes = (S.graph.nodes || []).map(n => Object.assign({}, n));
+  const links = (S.graph.edges || []).map(e => Object.assign({}, e));
+
+  const link = g.append("g").selectAll("line").data(links).join("line")
+    .attr("class", "sx-link").attr("marker-end", "url(#sxArrow)");
+
+  /* The relationship type is the point of the edge: on the edge when the
+     graph is small enough to read, in a tooltip always. */
+  const sxTitleOf = oid => { const n = nodes.find(x => x.id === oid); return n ? (n.label || n.id) : oid; };
+  link.append("title").text(e => (e.label || "related-to") + "\n" +
+    sxTitleOf(e.source) + " → " + sxTitleOf(e.target));
+  const showLinkLabels = links.length > 0 && links.length <= 40;
+  const linkLabel = g.append("g").selectAll("text").data(showLinkLabels ? links : [])
+    .join("text").attr("class", "sx-linklabel")
+    .text(e => (e.label || "").replace(/-/g, " "));
+
+  const node = g.append("g").selectAll("g").data(nodes).join("g").attr("class", "sx-node");
+  node.append("circle").attr("r", d => sxR(d.type)).attr("fill", d => sxColor(d.type))
+    .on("click", (ev, d) => sxShow(d.id));
+  node.append("text").attr("x", d => sxR(d.type) + 4).attr("y", 3.5)
+    .text(d => (d.label || "").slice(0, 30));
+  node.append("title").text(d => (d.technique_id ? d.technique_id + " · " : "") + (d.label || d.id));
+
+  node.call(d3.drag()
+    .on("start", (ev, d) => { if (!ev.active) sim.alphaTarget(0.28).restart(); d.fx = d.x; d.fy = d.y; })
+    .on("drag", (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+    .on("end", (ev, d) => { if (!ev.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+  const sim = d3.forceSimulation(nodes)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(112).strength(0.45))
+    .force("charge", d3.forceManyBody().strength(-460))
+    .force("center", d3.forceCenter(W/2, H/2))
+    .force("collide", d3.forceCollide(d => sxR(d.type) + 26))
+    .on("tick", () => {
+      link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+          .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+      linkLabel.attr("x", d => (d.source.x + d.target.x) / 2)
+               .attr("y", d => (d.source.y + d.target.y) / 2 - 3);
+      node.attr("transform", d => "translate(" + d.x + "," + d.y + ")");
+    });
+
+  /* type filters + legend */
+  const types = Array.from(new Set(nodes.map(n => n.type))).sort();
+  const wrap = document.getElementById("sxTypes");
+  const leg = document.getElementById("stixLegend");
+  types.forEach(t => {
+    sxActive.add(t);
+    const b = document.createElement("button");
+    b.className = "fbtn active";
+    b.textContent = sxName(t) + " (" + nodes.filter(n => n.type === t).length + ")";
+    b.onclick = () => {
+      if (sxActive.has(t)) { sxActive.delete(t); b.classList.remove("active"); }
+      else { sxActive.add(t); b.classList.add("active"); }
+      sxFilter();
+    };
+    wrap.appendChild(b);
+    const li = document.createElement("div");
+    li.className = "li";
+    li.innerHTML = '<span class="ld" style="background:' + sxColor(t) + '"></span>' + esc(sxName(t));
+    leg.appendChild(li);
+  });
+
+  document.getElementById("sxSearch").addEventListener("input", sxFilter);
+  document.getElementById("sxFit").onclick = () =>
+    svg.transition().duration(260).call(sxZoom.transform, d3.zoomIdentity);
+
+  sxSvgSel = svg; sxNodeSel = node;
+}
+
+function sxFilter() {
+  if (!sxNodeSel) return;
+  const q = (document.getElementById("sxSearch").value || "").trim().toLowerCase();
+  sxNodeSel.classed("dim", d => {
+    if (!sxActive.has(d.type)) return true;
+    if (!q) return false;
+    return (d.label + " " + (d.technique_id || "") + " " + (d.sub || "")).toLowerCase().indexOf(q) === -1;
+  }).classed("hit", d => {
+    if (!q || !sxActive.has(d.type)) return false;
+    return (d.label + " " + (d.technique_id || "") + " " + (d.sub || "")).toLowerCase().indexOf(q) !== -1;
+  });
 }
 
 /* init charts when analytics first shown (already handled by nav onclick) */

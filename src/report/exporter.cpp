@@ -6,12 +6,15 @@
 #include "console.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
+#include <set>
 #include <sstream>
 
 namespace exporter {
@@ -732,6 +735,58 @@ json serialize_strings_summary(const extractor::strings_result_t& s) {
     };
 }
 
+json serialize_byte_histogram(const extractor::byte_histogram_t& h) {
+    LOG_TRACE("exporter: serialize_byte_histogram: total={}, entropy={:.3f}",
+              h.total_bytes, h.entropy);
+
+    json bins = json::array(), counts = json::array(), frequencies = json::array();
+    for (std::size_t i = 0; i < 256; ++i) {
+        bins.push_back(static_cast<std::uint32_t>(i));
+        counts.push_back(h.counts[i]);
+        frequencies.push_back(h.frequencies[i]);
+    }
+
+    struct byte_entry { std::uint32_t byte; std::uint64_t count; double freq; };
+    std::vector<byte_entry> top;
+    for (std::size_t i = 0; i < 256; ++i) {
+        if (h.counts[i] == 0) continue;
+        top.push_back({static_cast<std::uint32_t>(i), h.counts[i], h.frequencies[i]});
+    }
+    std::sort(top.begin(), top.end(),
+              [](const byte_entry& a, const byte_entry& b) { return a.count > b.count; });
+    if (top.size() > 10) top.resize(10);
+
+    json top_json = json::array();
+    for (const auto& e : top) {
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "0x%02x", e.byte);
+        top_json.push_back({{"byte", buf}, {"value", e.byte}, {"count", e.count}, {"percent", e.freq * 100.0}});
+    }
+
+    char most_buf[8], least_buf[8];
+    std::snprintf(most_buf, sizeof(most_buf), "0x%02x", h.most_common_byte);
+    std::snprintf(least_buf, sizeof(least_buf), "0x%02x", h.least_common_byte);
+
+    return json{
+        {"total_bytes",      h.total_bytes},
+        {"entropy",          h.entropy},
+        {"chi2",             h.chi2},
+        {"mean",             h.mean},
+        {"stddev",           h.stddev},
+        {"nonzero_bins",     h.nonzero_bins},
+        {"zero_bytes",       h.zero_bytes},
+        {"most_common_byte", {{"byte", most_buf}, {"value", h.most_common_byte}, {"count", h.counts[h.most_common_byte]}}},
+        {"least_common_byte", {{"byte", least_buf}, {"value", h.least_common_byte}, {"count", h.counts[h.least_common_byte]}}},
+        {"histogram", {
+            {"bins",        std::move(bins)},
+            {"counts",      std::move(counts)},
+            {"frequencies", std::move(frequencies)},
+        }},
+        {"top_10", std::move(top_json)},
+        {"errors", serialize_common_errors(h.errors)},
+    };
+}
+
 json serialize_packing(const extractor::packer_detection_t& p) {
     LOG_TRACE("exporter: serialize_packing: packed={}, reasons={}",
               p.packed, p.reasons.size());
@@ -979,12 +1034,17 @@ json to_json(const yara_scanner::result_t& r) {
 // ---------------------------------------------------------------------------
 
 json to_json(const extractor::extraction_result_t& r) {
+    // elf_impl() fills elf.got while the dedicated GOT stage fills the
+    // top-level got with the SAME entries (extractor.cpp) — so never add
+    // both. Prefer the stage output, fall back to the legacy embedded copy.
+    const std::size_t num_got = !r.got.entries.empty()
+        ? r.got.entries.size() : r.elf.got.entries.size();
     LOG_TRACE("exporter: to_json(extraction_result_t): sections={}, strings={}, "
               "instructions={}, packed={}, signed={}, iat={}, got={}",
               r.sections.sections.size(), r.strings.strings.size(),
               r.opcodes.total_instructions, r.packer.packed, r.signature.is_signed,
               r.pe.iat.entries.size(),
-              r.elf.got.entries.size() + r.got.entries.size());
+              num_got);
 
     const bool is_pe  = !r.pe.machine.empty();
     const bool is_elf = !r.elf.machine.empty();
@@ -1015,7 +1075,7 @@ json to_json(const extractor::extraction_result_t& r) {
         {"has_debug",          r.debug_symbols.has_debug_symbols},
         {"stripped",           r.debug_symbols.stripped},
         {"num_iat_entries",    r.pe.iat.entries.size()},
-        {"num_got_entries",    r.elf.got.entries.size() + r.got.entries.size()},
+        {"num_got_entries",    num_got},
     };
 
     json section_labels  = json::array();
@@ -1092,6 +1152,7 @@ json to_json(const extractor::extraction_result_t& r) {
         {"summary",         std::move(summary)},
         {"guards",          serialize_guards(r.guards)},
         {"sections",        std::move(sections_json)},
+        {"byte_histogram",  serialize_byte_histogram(r.histogram)},
         {"opcodes",         serialize_opcodes(r.opcodes)},
         {"packing",         serialize_packing(r.packer)},
         {"signature",       serialize_signature(r.signature)},
@@ -1530,9 +1591,20 @@ write_result_t write_all_impl(const std::string& stem,
                               const r2::bulk_result_t* radare2,
                               const r2::xref_asm_result_t* xref_asm,
                               const std::string* asm_text) {
+    // The overlay dump is conditional on the PE carrying overlay bytes, but that
+    // is already known from `extraction` before a single byte is written, so it
+    // can be part of the up-front plan rather than a surprise extra.
+    const bool overlay_expected =
+        extraction.pe.overlay.present && !extraction.pe.overlay.data.empty();
+
     const std::size_t expected =
         4 + (capa_report ? 1 : 0) + (iat ? 1 : 0) + (got ? 1 : 0)
-          + (radare2 ? 1 : 0) + (xref_asm ? 1 : 0) + (asm_text ? 1 : 0);
+          + (radare2 ? 1 : 0) + (xref_asm ? 1 : 0) + (asm_text ? 1 : 0)
+          + (overlay_expected ? 1 : 0);
+
+    // Hand the true total back to the caller so it never has to re-derive it.
+    write_result_t out;
+    out.expected = expected;
 
     LOG_INFO("exporter: write_all: starting export for stem='{}' "
              "(filepath='{}', capa={}, iat={}, got={}, radare2={}, iat_calls={}, asm_text={})",
@@ -1546,8 +1618,6 @@ write_result_t write_all_impl(const std::string& stem,
         " artifacts for '" + stem + "' ==") << "\n";
 
     scoped_timer timer("write_all(" + stem + ")", __FILE__, __LINE__);
-
-    write_result_t out;
 
     LOG_DEBUG("exporter: write_all: [1/{}] fileinfo", expected);
     out.fileinfo = write_fileinfo_json(stem, info);
@@ -1606,8 +1676,10 @@ write_result_t write_all_impl(const std::string& stem,
         LOG_DEBUG("exporter: write_all: skipping asm_text (not provided)");
     }
 
-    // Optional: only emitted when the PE actually has overlay bytes.
-    if (extraction.pe.overlay.present && !extraction.pe.overlay.data.empty()) {
+    // Optional: only emitted when the PE actually has overlay bytes. Its
+    // presence is already accounted for in `expected` above, so a PE with an
+    // overlay no longer trips the caller's "export files failed" check.
+    if (overlay_expected) {
         LOG_DEBUG("exporter: write_all: overlay (offset={}, size={}, formats={})",
                   extraction.pe.overlay.offset, extraction.pe.overlay.size,
                   extraction.pe.overlay.signatures.size());
@@ -1647,12 +1719,15 @@ write_result_t write_all_impl(const std::string& stem,
     }
 
     if (ok) {
+        // Report the real written/promised pair instead of "expected/expected",
+        // which claimed success even when a stage silently produced nothing.
+        const std::size_t written = out.paths().size();
         LOG_INFO("exporter: write_all: {}/{} artifacts written for stem='{}' "
                  "(total {} bytes)",
-                 expected, expected, stem, total_bytes);
+                 written, out.expected, stem, total_bytes);
         std::cout << console::paint(console::green,
-            "[+] exporter: " + std::to_string(expected) + "/" +
-            std::to_string(expected) + " artifacts written for '" + stem + "'")
+            "[+] exporter: " + std::to_string(written) + "/" +
+            std::to_string(out.expected) + " artifacts written for '" + stem + "'")
                   << "\n";
     } else {
         LOG_ERROR("exporter: write_all: partial failure for stem='{}' — "
@@ -1964,6 +2039,304 @@ std::filesystem::path write_cti_json(const std::string& stem, const cti::report&
     }
     const auto path = write_json_file(dir::cti, artifact_stem(stem, "cti"), doc);
     print_export_line("cti", path, !path.empty());
+    return path;
+  })
+}
+
+// ---------------------------------------------------------------------------
+// STIX 2.1 bundle + ATT&CK Navigator layer
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// ATT&CK v19 renamed the "defense-evasion" tactic (TA0005) to "stealth" and
+// added "defense-impairment" (TA0112).  The knowledge feed already speaks the
+// new names, but every capa rule still tags the tactic the old way
+// ("Defense Evasion::..."), so the legacy spelling is folded onto "stealth"
+// rather than dropped.
+std::string navigator_tactic(const std::string& raw) {
+    std::string key;
+    key.reserve(raw.size() + 4);
+    for (char c : raw) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        if (c == '&') { key += "and"; continue; }
+        if (std::isalnum(u)) key += static_cast<char>(std::tolower(u));
+        else                 key += '-';
+    }
+
+    std::string out;                       // collapse runs of '-', trim ends
+    bool pending_dash = false;
+    for (char c : key) {
+        if (c == '-') { pending_dash = true; continue; }
+        if (pending_dash && !out.empty()) out += '-';
+        pending_dash = false;
+        out += c;
+    }
+
+    static const std::map<std::string, std::string> aliases = {
+        {"c2", "command-and-control"},
+        {"c2-command-and-control", "command-and-control"},
+        {"command-and-control-c2", "command-and-control"},
+        {"recon", "reconnaissance"},
+        // ATT&CK <= v18 name for TA0005, still what every capa rule tags.
+        {"defense-evasion", "stealth"},
+        {"defense-evasion-and-privilege-escalation", "stealth"},
+    };
+    if (const auto it = aliases.find(out); it != aliases.end()) out = it->second;
+
+    static const std::set<std::string> known = {
+        "reconnaissance", "resource-development", "initial-access", "execution",
+        "persistence", "privilege-escalation", "stealth", "defense-impairment",
+        "credential-access", "discovery", "lateral-movement", "collection",
+        "command-and-control", "exfiltration", "impact",
+    };
+    return known.count(out) != 0 ? out : std::string{};
+}
+
+}  // namespace
+
+std::filesystem::path write_stix_bundle(const std::string& stem,
+                                        const cti::report& r,
+                                        const cti::stix_options& options) {
+  LOG_DEBUG("exporter: write_stix_bundle: stem='{}', items={}, producer='{}'",
+            stem, r.items.size(), options.producer);
+  EXPORTER_TRY("write_stix_bundle", {
+    // Same trap as write_cti_json(): cti::to_stix_bundle() returns JSON
+    // *text*, and handing that text to write_json_file() would store it as one
+    // quoted blob instead of a document.
+    const std::string text = cti::to_stix_bundle(r, options);
+    const json doc = json::parse(text, nullptr, false);
+    if (doc.is_discarded()) {
+      LOG_ERROR("export: cti::to_stix_bundle() produced unparseable JSON ({} bytes)",
+                text.size());
+      std::cout << console::paint(console::red, "[-] ")
+                << console::paint(console::red, "stix")
+                << ": internal JSON was not parseable\n";
+      return {};
+    }
+    const auto path = write_json_file(dir::stix, artifact_stem(stem, "stix21"), doc);
+    print_export_line("stix", path, !path.empty());
+    return path;
+  })
+}
+
+std::filesystem::path write_navigator_layer(const std::string& stem,
+                                            const capa::report_t& capa_report,
+                                            const cti::report& report,
+                                            const std::string& attack_version) {
+  LOG_DEBUG("exporter: write_navigator_layer: stem='{}', capabilities={}, report items={}",
+            stem, capa_report.capabilities.size(), report.items.size());
+  EXPORTER_TRY("write_navigator_layer", {
+    struct tech_info {
+      std::string name;                       // display name: knowledge > capa > id
+      std::string url;
+      std::vector<std::string> platforms;
+      std::vector<std::string> tactics;       // ALL tactics of the technique
+      std::vector<std::string> capabilities;  // distinct capa capability names
+      bool from_capa = false;
+      bool from_cti = false;
+      bool knowledge_tactics = false;         // tactics came from ATT&CK knowledge
+    };
+    std::map<std::string, tech_info> techs;   // keyed by upper-case technique id
+
+    const auto join_with = [](const std::vector<std::string>& parts, const char* sep) {
+      std::string out;
+      for (std::size_t i = 0; i < parts.size(); ++i) {
+        if (i) out += sep;
+        out += parts[i];
+      }
+      return out;
+    };
+
+    // 1) capa: the capability names (the procedure text in the comment), a
+    //    tactic fallback for when no ATT&CK knowledge is available, and the
+    //    display name. capa matches a technique once per capability, so the
+    //    capability list is deduped here.
+    for (const capa::capability_t& cap : capa_report.capabilities) {
+      for (const capa::attack_t& att : cap.attack) {
+        if (att.id.empty()) continue;
+        const std::string id = cti::to_upper(att.id);
+        tech_info& t = techs[id];
+        t.from_capa = true;
+        if (t.name.empty()) {
+          std::string display = att.technique;
+          if (!att.subtechnique.empty())
+            display += display.empty() ? att.subtechnique : ": " + att.subtechnique;
+          t.name = display.empty() ? id : display;
+        }
+        if (!cap.name.empty() &&
+            std::find(t.capabilities.begin(), t.capabilities.end(), cap.name) ==
+                t.capabilities.end())
+          t.capabilities.push_back(cap.name);
+        if (!t.knowledge_tactics) {
+          const std::string tactic = navigator_tactic(att.tactic);
+          if (!tactic.empty() &&
+              std::find(t.tactics.begin(), t.tactics.end(), tactic) == t.tactics.end())
+            t.tactics.push_back(tactic);
+        }
+      }
+    }
+
+    // 2) the (enriched) CTI report: the real technique name and - the point of
+    //    this rewrite - EVERY ATT&CK tactic the technique belongs to, not just
+    //    the one capa's rule tagged. Also picks up techniques capa never hit.
+    for (const cti::enrichment& e : report.items) {
+      if (e.skipped || e.art.type != cti::artifact_type::technique) continue;
+      const std::string id = cti::to_upper(e.art.value);
+      if (id.empty()) continue;
+      tech_info& t = techs[id];
+      t.from_cti = true;
+      const auto it = e.knowledge.find("mitre_attack");
+      if (it == e.knowledge.end() || !it->is_object()) continue;
+      const json& k = *it;
+      if (k.contains("name") && k["name"].is_string() && !k["name"].get<std::string>().empty())
+        t.name = k["name"].get<std::string>();
+      if (k.contains("url") && k["url"].is_string() && !k["url"].get<std::string>().empty())
+        t.url = k["url"].get<std::string>();
+      if (k.contains("platforms") && k["platforms"].is_array()) {
+        t.platforms.clear();
+        for (const json& p : k["platforms"])
+          if (p.is_string()) t.platforms.push_back(p.get<std::string>());
+      }
+      if (k.contains("tactic_shortnames") && k["tactic_shortnames"].is_array()) {
+        std::vector<std::string> known;
+        for (const json& raw : k["tactic_shortnames"]) {
+          if (!raw.is_string()) continue;
+          const std::string tactic = navigator_tactic(raw.get<std::string>());
+          if (!tactic.empty() &&
+              std::find(known.begin(), known.end(), tactic) == known.end())
+            known.push_back(tactic);
+        }
+        if (!known.empty()) {
+          t.tactics = std::move(known);   // knowledge wins over the capa fallback
+          t.knowledge_tactics = true;
+        }
+      }
+    }
+
+    for (auto& entry : techs)
+      if (entry.second.name.empty()) entry.second.name = entry.first;
+
+    if (techs.empty()) {
+      LOG_DEBUG("exporter: write_navigator_layer: no techniques observed");
+      return {};
+    }
+
+    // One entry per (technique, tactic): each technique is expanded across
+    // ALL of its ATT&CK tactics. A sub-technique is only reachable in the
+    // Navigator below its parent cell, so parents of matched sub-techniques
+    // get showSubtechniques - observed parents carry the flag on their own
+    // entries, unobserved parents are synthesised further down with score 0.
+    std::set<std::string> parents;
+    for (const auto& entry : techs) {
+      const auto dot = entry.first.find('.');
+      if (dot != std::string::npos) parents.insert(entry.first.substr(0, dot));
+    }
+
+    json techniques = json::array();
+    std::set<std::pair<std::string, std::string>> emitted;   // (id, tactic)
+    std::size_t unassigned = 0;
+    int max_score = 1;
+
+    auto push = [&](const std::string& id, const std::string& tactic, int score,
+                    std::string comment, json metadata, bool expand) {
+      if (!emitted.emplace(id, tactic).second) return;
+      json entry = {{"techniqueID", id}, {"enabled", true}, {"score", score},
+                    {"comment", std::move(comment)}, {"metadata", std::move(metadata)}};
+      if (tactic.empty()) ++unassigned;
+      else                 entry["tactic"] = tactic;
+      if (expand)          entry["showSubtechniques"] = true;
+      techniques.push_back(std::move(entry));
+    };
+
+    for (const auto& entry : techs) {
+      const std::string& id = entry.first;
+      const tech_info& t = entry.second;
+      const int score = static_cast<int>(std::max<std::size_t>(1, t.capabilities.size()));
+      max_score = std::max(max_score, score);
+
+      // comment = procedure detail: the capa capabilities that matched here.
+      std::string comment = t.name;
+      if (!t.capabilities.empty())
+        comment += " - matched by capa: " + join_with(t.capabilities, "; ");
+      else
+        comment += " - observed in this sample (no capa capability matched)";
+
+      json metadata = json::array();
+      metadata.push_back({{"name", "source"},
+                          {"value", t.from_capa && t.from_cti ? "capa + CTI"
+                                                             : (t.from_capa ? "capa" : "CTI")}});
+      if (!t.capabilities.empty())
+        metadata.push_back({{"name", "capabilities"},
+                            {"value", std::to_string(t.capabilities.size())}});
+      if (!t.platforms.empty())
+        metadata.push_back({{"name", "platforms"}, {"value", join_with(t.platforms, ", ")}});
+      if (!t.url.empty())
+        metadata.push_back({{"name", "attack_url"}, {"value", t.url}});
+
+      const bool expand = parents.count(id) != 0;
+      if (t.tactics.empty()) {
+        push(id, "", score, comment, metadata, expand);
+      } else {
+        for (const std::string& tactic : t.tactics)
+          push(id, tactic, score, comment, metadata, expand);
+      }
+    }
+
+    // Synthesised parents: not observed themselves, present only so the matched
+    // sub-technique underneath them renders (score 0 = not scored, honest).
+    for (const auto& entry : techs) {
+      const std::string& child = entry.first;
+      const auto dot = child.find('.');
+      if (dot == std::string::npos) continue;
+      const std::string parent_id = child.substr(0, dot);
+      if (techs.count(parent_id) != 0) continue;
+      const std::string comment = parent_id + " - parent of matched sub-technique " + child;
+      json metadata = json::array();
+      metadata.push_back({{"name", "source"}, {"value", "sub-technique expansion"}});
+      if (entry.second.tactics.empty()) {
+        push(parent_id, "", 0, comment, metadata, true);
+      } else {
+        for (const std::string& tactic : entry.second.tactics)
+          push(parent_id, tactic, 0, comment, metadata, true);
+      }
+    }
+
+    const json layer = {
+      {"name", stem},
+      {"versions", {
+        // v19 is the oldest release whose matrix uses "stealth" and
+        // "defense-impairment"; declaring 14 would hide every such column.
+        {"attack",    attack_version.empty() ? std::string("19") : attack_version},
+        {"navigator", "4.9.0"},
+        {"layer",     "4.5"},
+      }},
+      {"domain", "enterprise-attack"},
+      {"description", "Techniques observed during static analysis of " + stem +
+                      ", each mapped to ALL of its ATT&CK tactics. Score = number of "
+                      "matching capa capabilities (1 = observed once or via CTI)."},
+      {"techniques", std::move(techniques)},
+      {"gradient", {
+        {"colors", json::array({"#ffffff", "#ffd166", "#ff9f43", "#ff4d5e"})},
+        {"minValue", 0},
+        {"maxValue", std::max(3, max_score)},
+      }},
+      {"legendItems", json::array({
+        json{{"label", "score = matching capa capabilities"}, {"color", "#ff9f43"}},
+        json{{"label", "parent expanded for a matched sub-technique"}, {"color", "#ffffff"}},
+      })},
+      {"sorting", 3},
+      {"layout", {{"layout", "side"}, {"showID", true}, {"showName", true}}},
+      {"hideDisabled", true},
+    };
+
+    if (unassigned != 0) {
+      LOG_WARN("export: navigator layer: {} technique(s) had no usable tactic",
+               unassigned);
+    }
+
+    const auto path = write_json_file(dir::stix, artifact_stem(stem, "navigator"), layer);
+    print_export_line("navigator", path, !path.empty());
     return path;
   })
 }

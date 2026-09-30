@@ -124,6 +124,14 @@ class curl_http_client final : public http_client {
       curl_easy_setopt(curl, CURLOPT_POST, 1L);
       curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(request.body.size()));
       curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, request.body.c_str());
+    } else if (request.method == "HEAD") {
+      // A HEAD probe must never expect a body: with CURLOPT_CUSTOMREQUEST libcurl
+      // still waits for Content-Length bytes and reports CURLE_PARTIAL_FILE when a
+      // minimal server answers headers-only (like the fake CTI server, or any
+      // HEAD implementation that sends no body). CURLOPT_NOBODY makes libcurl send
+      // HEAD and accept headers-only as success, which is what network_available()
+      // needs from its connectivity probe.
+      curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     } else if (request.method != "GET") {
       curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request.method.c_str());
     }

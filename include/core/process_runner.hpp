@@ -40,6 +40,18 @@ enum class launch_status {
 
 const char* to_string(launch_status status);
 
+// Names a caller has declared secret (BW_SESSION, CTI API keys, ...).
+//
+// The environment block handed to a child is built by this module, so this is
+// the single point where a secret can be kept out of every subprocess. Without
+// it, CreateProcess/execve inherit the parent's environment wholesale and
+// `wsl.exe`, `capa`, the Python dashboard and every other tool we spawn would
+// receive the master-vault token for free.
+//
+// Marking a name is permanent for the process: it is a policy, not a toggle.
+// Names are compared case-insensitively, as Windows environment variables are.
+void protect_env_var(const std::string& name);
+
 struct run_options {
   std::chrono::milliseconds timeout{0};               // 0 = no timeout
   std::size_t max_stdout_bytes = 512u * 1024u * 1024u;

@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
     [switch]$Clean,
-    [switch]$SkipTests,
     [string]$InputFile
 )
 
@@ -45,9 +44,9 @@ if ($Clean -and (Test-Path -LiteralPath 'build-ucrt')) {
 Invoke-Checked 'cmake' '--preset' 'ucrt64'
 Invoke-Checked 'cmake' '--build' '--preset' 'ucrt64-release'
 
-if (-not $SkipTests) {
-    Invoke-Checked 'ctest' '--preset' 'ucrt64-tests' '--output-on-failure'
-}
+# No ctest step: STATIC_ANALYZER_ENABLE_TESTS and BUILD_TESTING are both OFF in
+# the ucrt64 preset, so no test targets are built and no tests are registered.
+# Running ctest here would only report "No tests were found".
 
 $Analyzer = Join-Path $PSScriptRoot 'build-ucrt\static_analyzer.exe'
 

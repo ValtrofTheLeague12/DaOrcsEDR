@@ -62,11 +62,16 @@ def main() -> int:
             print(f"analyzer failed with exit code {run.returncode}", file=sys.stderr)
             return 1
 
+        # These strings must match the section headings the analyzer actually
+        # prints. print_section() emits "  -- <text>" with no trailing dashes,
+        # and the generic "Sections:" table is deliberately skipped for PE/ELF/
+        # Mach-O (phase 1 prints a format-specific table instead), so the PE
+        # section table is asserted via its own heading.
         required_markers = {
-            1: ("-- PE section end / overlay --", "Inside section overlay:yes"),
-            2: ("-- Sections:",),
+            1: ("-- PE section end / overlay", "Inside section overlay:yes"),
+            2: ("-- NOP statistics by section",),
             3: ("-- IOC extraction",),
-            4: ("-- IAT", "DLL:"),
+            4: ("-- IAT/GOT call-site assembly", "DLL:"),
         }[phase]
         for marker in required_markers:
             if marker not in run.stdout:

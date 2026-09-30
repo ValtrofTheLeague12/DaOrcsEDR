@@ -1,11 +1,14 @@
 #include "secret_store.hpp"
 
 #include "http_client.hpp"
+#include "process_runner.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <cctype>
 #include <cstdlib>
+#include <memory>
+#include <utility>
 
 // secret_store.cpp
 //
@@ -51,71 +54,124 @@ cti::http_request make_request(const std::string& url, const std::string& sessio
   return request;
 }
 
-}  // namespace
+// Normalises a base URL: trims whitespace and drops trailing slashes so the
+// request paths below never double up on '/'.
+std::string normalize_base(const std::string& base_url) {
+  std::string base = trim(base_url);
+  while (!base.empty() && base.back() == '/') base.pop_back();
+  return base;
+}
 
-result_t fetch_from_bw_serve(const std::string& item_name, const std::string& base_url) {
-  result_t result;
+std::string missing_session_error() {
+  return "BW_SESSION is not set - run: export BW_SESSION=$(bw unlock --raw)";
+}
 
-  if (item_name.empty()) {
-    result.error = "no item name given";
-    return result;
-  }
+// Everything the entry points need to talk to `bw serve`. open_vault()
+// validates the preconditions once so the callers only deal with one error
+// string; the session token stays inside this structure and never reaches a
+// log line.
+struct vault_client {
+  std::unique_ptr<cti::http_client> http;
+  std::string base;
+  std::string session;
+  std::string error;
+  bool ok = false;
+};
+
+vault_client open_vault(const std::string& base_url) {
+  vault_client vault;
   if (!is_loopback_url(base_url)) {
-    result.error = "refusing non-loopback base_url for bw serve";
-    return result;
+    vault.error = "refusing non-loopback base_url for bw serve";
+    return vault;
   }
 
-  const char* session_env = std::getenv("BW_SESSION");
-  if (session_env == nullptr || *session_env == '\0') {
-    result.error = "BW_SESSION is not set - run: export BW_SESSION=$(bw unlock --raw)";
-    return result;
+  // Read the session, then scrub it from our own environment. Everything else
+  // in this program spawns children (wsl.exe, capa, the Python dashboard, ...),
+  // and each of them would otherwise inherit the master-vault token through the
+  // process environment.
+  //
+  // The token is cached in a process-local copy so that a second fetch (a retry,
+  // or the legacy single-key call after the roster) still works after the
+  // environment copy is gone. It lives in memory only, for the lifetime of the
+  // process, and is never logged.
+  static std::string cached_session;
+  if (cached_session.empty()) {
+    const char* session_env = std::getenv("BW_SESSION");
+    if (session_env == nullptr || *session_env == '\0') {
+      vault.error = missing_session_error();
+      return vault;
+    }
+    cached_session.assign(session_env);
+    cached_session.shrink_to_fit();
+
+    // Belt and braces: proc::protect_env_var() filters the variable out of every
+    // child environment this process builds; clearing it here additionally keeps
+    // it out of *our* environment, where a same-user process could read it.
+    proc::protect_env_var("BW_SESSION");
+#if defined(_WIN32)
+    _putenv_s("BW_SESSION", "");
+#else
+    ::unsetenv("BW_SESSION");
+#endif
   }
-  const std::string session = session_env;
 
   cti::http_options options;
   options.user_agent = "static-analyzer/1.0";
   // bw serve is on loopback and speaks plain HTTP; keep connection attempts
   // short so a missing server surfaces in seconds rather than minutes.
   options.connect_timeout_ms = 2000;
-  auto client = cti::make_curl_client(options);
-  if (!client) {
-    result.error = "libcurl could not be initialised";
-    return result;
+  vault.http = cti::make_curl_client(options);
+  if (!vault.http) {
+    vault.error = "libcurl could not be initialised";
+    return vault;
   }
 
-  // 1. List vault items and find the one with an exact name match.
-  std::string base = trim(base_url);
-  while (!base.empty() && base.back() == '/') base.pop_back();
+  vault.base = normalize_base(base_url);
+  vault.session = cached_session;   // not session_env: the environment copy is already scrubbed
+  vault.ok = true;
+  return vault;
+}
 
-  cti::http_response list =
-      client->perform(make_request(base + "/object/secure-item/vault-item", session));
+// GET /object/secure-item/vault-item once. `count` receives how many items the
+// session can see.
+bool list_vault_items(const vault_client& vault, nlohmann::json& items,
+                      std::size_t& count, std::string& error) {
+  cti::http_response list = vault.http->perform(
+      make_request(vault.base + "/object/secure-item/vault-item", vault.session));
   if (!list.transport_ok) {
-    result.error = "bw serve unreachable: " + list.error + " (is `bw serve` running?)";
-    return result;
+    error = "bw serve unreachable: " + list.error + " (is `bw serve` running?)";
+    return false;
   }
   if (list.status == 401) {
-    result.error = "bw serve rejected BW_SESSION - the vault is locked or the "
-                   "session expired; run: export BW_SESSION=$(bw unlock --raw)";
-    return result;
+    error = "bw serve rejected BW_SESSION - the vault is locked or the "
+            "session expired; run: export BW_SESSION=$(bw unlock --raw)";
+    return false;
   }
   if (!list.ok()) {
-    result.error = "listing vault items failed with HTTP " + std::to_string(list.status);
-    return result;
+    error = "listing vault items failed with HTTP " + std::to_string(list.status);
+    return false;
   }
 
-  nlohmann::json items;
   try {
     items = nlohmann::json::parse(list.body);
   } catch (const std::exception&) {
-    result.error = "could not parse the vault item list returned by bw serve";
-    return result;
+    error = "could not parse the vault item list returned by bw serve";
+    return false;
   }
   if (!items.is_array()) {
-    result.error = "unexpected response shape from bw serve (not a list)";
-    return result;
+    error = "unexpected response shape from bw serve (not a list)";
+    return false;
   }
+  count = items.size();
+  return true;
+}
 
-  std::string item_id;
+enum class match_result { found, missing, ambiguous, broken };
+
+// Exact-name match. Ambiguity is a failure on purpose: silently picking one of
+// two same-named items could send the wrong credential to the wrong service.
+match_result find_single_item(const nlohmann::json& items, const std::string& item_name,
+                              std::string& item_id, std::string& error) {
   int matches = 0;
   for (const auto& entry : items) {
     if (!entry.is_object()) continue;
@@ -127,65 +183,191 @@ result_t fetch_from_bw_serve(const std::string& item_name, const std::string& ba
     ++matches;
   }
 
-  // Ambiguity is a failure on purpose: silently picking one of two same-named
-  // items could send the wrong credential to the wrong service.
   if (matches == 0) {
-    result.error = "no vault item named '" + item_name + "'";
-    return result;
+    error = "no vault item named '" + item_name + "'";
+    return match_result::missing;
   }
   if (matches > 1) {
-    result.error = "vault has " + std::to_string(matches) + " items named '" +
-                   item_name + "'; rename them so the target is unambiguous";
-    return result;
+    error = "vault has " + std::to_string(matches) + " items named '" + item_name +
+            "'; rename them so the target is unambiguous";
+    return match_result::ambiguous;
   }
   if (item_id.empty()) {
-    result.error = "matched item has no id";
-    return result;
+    error = "matched item has no id";
+    return match_result::broken;
   }
+  return match_result::found;
+}
 
-  // 2. Read that item's decrypted data and take login.password.
-  cti::http_response data = client->perform(make_request(
-      base + "/object/secure-item/vault-item/" + item_id + "/data", session));
+// GET /object/secure-item/vault-item/<id>/data and take login.password.
+bool read_password(const vault_client& vault, const std::string& item_id,
+                   const std::string& item_name, std::string& password,
+                   std::string& error) {
+  cti::http_response data = vault.http->perform(make_request(
+      vault.base + "/object/secure-item/vault-item/" + item_id + "/data", vault.session));
   if (!data.transport_ok) {
-    result.error = "reading item data failed: " + data.error;
-    return result;
+    error = "reading item data failed: " + data.error;
+    return false;
   }
   if (data.status == 401) {
-    result.error = "bw serve rejected the session while reading item data";
-    return result;
+    error = "bw serve rejected the session while reading item data";
+    return false;
   }
   if (!data.ok()) {
-    result.error = "reading item data failed with HTTP " + std::to_string(data.status);
-    return result;
+    error = "reading item data failed with HTTP " + std::to_string(data.status);
+    return false;
   }
 
   nlohmann::json parsed;
   try {
     parsed = nlohmann::json::parse(data.body);
   } catch (const std::exception&) {
-    result.error = "could not parse the item data returned by bw serve";
-    return result;
+    error = "could not parse the item data returned by bw serve";
+    return false;
   }
   if (!parsed.is_object()) {
-    result.error = "unexpected item data shape from bw serve";
-    return result;
+    error = "unexpected item data shape from bw serve";
+    return false;
   }
 
   const auto login = parsed.find("login");
   if (login == parsed.end() || !login->is_object()) {
-    result.error = "item '" + item_name + "' has no login section";
-    return result;
+    error = "item '" + item_name + "' has no login section";
+    return false;
   }
-  const auto password = login->find("password");
-  if (password == login->end() || !password->is_string() ||
-      password->get_ref<const std::string&>().empty()) {
-    result.error = "item '" + item_name + "' has an empty password field";
+  const auto password_field = login->find("password");
+  if (password_field == login->end() || !password_field->is_string() ||
+      password_field->get_ref<const std::string&>().empty()) {
+    error = "item '" + item_name + "' has an empty password field";
+    return false;
+  }
+
+  password = password_field->get<std::string>();
+  return true;
+}
+
+}  // namespace
+
+result_t fetch_from_bw_serve(const std::string& item_name, const std::string& base_url) {
+  result_t result;
+
+  if (item_name.empty()) {
+    result.error = "no item name given";
     return result;
   }
 
+  vault_client vault = open_vault(base_url);
+  if (!vault.ok) {
+    result.error = vault.error;
+    return result;
+  }
+
+  nlohmann::json items;
+  std::size_t count = 0;
+  if (!list_vault_items(vault, items, count, result.error)) return result;
+
+  std::string item_id;
+  if (find_single_item(items, item_name, item_id, result.error) != match_result::found) {
+    return result;   // `error` already carries the operator-facing reason
+  }
+
+  std::string password;
+  if (!read_password(vault, item_id, item_name, password, result.error)) return result;
+
   result.ok = true;
-  result.value = password->get<std::string>();
+  result.value = std::move(password);
   return result;
+}
+
+const char* to_string(item_state state) {
+  switch (state) {
+    case item_state::missing:   return "missing";
+    case item_state::ambiguous: return "ambiguous";
+    case item_state::unusable:  return "unusable";
+    case item_state::present:   return "present";
+  }
+  return "unknown";
+}
+
+batch_result_t fetch_many_from_bw_serve(const std::vector<item_request_t>& requests,
+                                        const std::string& base_url) {
+  batch_result_t batch;
+  batch.items.reserve(requests.size());
+
+  // Mirrors a single failure onto every request so the caller always gets one
+  // result per requested name, in request order.
+  const auto fail_all = [&](const std::string& error) {
+    for (const item_request_t& request : requests) {
+      item_result_t item;
+      item.name = request.name;
+      item.target = request.target;
+      item.state = item_state::unusable;
+      item.error = error;
+      batch.items.push_back(std::move(item));
+    }
+  };
+
+  if (requests.empty()) {
+    batch.error = "no item names given";
+    return batch;
+  }
+
+  vault_client vault = open_vault(base_url);
+  if (!vault.ok) {
+    batch.error = vault.error;
+    fail_all(vault.error);
+    return batch;
+  }
+
+  nlohmann::json items;
+  std::size_t count = 0;
+  if (!list_vault_items(vault, items, count, batch.error)) {
+    fail_all(batch.error);
+    return batch;
+  }
+
+  batch.listing_ok  = true;
+  batch.vault_items = count;
+
+  for (const item_request_t& request : requests) {
+    item_result_t item;
+    item.name = request.name;
+    item.target = request.target;
+
+    if (request.name.empty()) {
+      item.state = item_state::missing;
+      item.error = "empty item name";
+      batch.items.push_back(std::move(item));
+      continue;
+    }
+
+    std::string item_id;
+    const match_result match = find_single_item(items, request.name, item_id, item.error);
+    if (match == match_result::missing) {
+      item.state = item_state::missing;
+    } else if (match == match_result::ambiguous) {
+      item.state = item_state::ambiguous;
+    } else if (match == match_result::broken) {
+      item.state = item_state::unusable;
+    } else if (request.target.empty()) {
+      // Existence check only: the caller does not need the secret, so it is
+      // never read into memory.
+      item.state = item_state::present;
+    } else {
+      std::string password;
+      if (!read_password(vault, item_id, request.name, password, item.error)) {
+        item.state = item_state::unusable;
+      } else {
+        item.state = item_state::present;
+        item.value_loaded = true;
+        item.value = std::move(password);
+      }
+    }
+
+    batch.items.push_back(std::move(item));
+  }
+
+  return batch;
 }
 
 }  // namespace secret_store

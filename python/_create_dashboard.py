@@ -33,6 +33,20 @@ except Exception as exc:  # pragma: no cover
     print(f"error: jinja2 is required: {exc}", file=sys.stderr)
     sys.exit(2)
 
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+# Shared with python/_view_stix.py so the STIX graph is built one way. A
+# failure here disables only the ATT&CK / STIX section - the rest of the
+# dashboard is still worth generating.
+try:
+    import stix_graph
+except Exception as exc:  # pragma: no cover
+    stix_graph = None
+    STIX_IMPORT_ERROR = f"cannot import python/stix_graph.py: {exc}"
+else:
+    STIX_IMPORT_ERROR = ""
+
 
 def load_json(path: str):
     if not path:
@@ -49,11 +63,13 @@ def load_json(path: str):
 
 
 def parse_dot(text: str) -> dict:
-    """Small DOT parser: returns {nodes:[{id,label}], edges:[[a,b]]}.
+    """Fallback DOT parser: returns {nodes:[{id,label}], edges:[[a,b]]}.
 
-    Only attribute blocks that contain ``label=`` are treated as node
-    definitions.  Edge attribute blocks (e.g. ``[color="#61afef" URL=...]``)
-    are skipped so their endpoint IDs don't clobber real node labels.
+    Only used when the cgraph-produced graphs.json is absent. It is known to
+    be less accurate than cgraph - it cannot tell a node statement from an edge
+    attribute block, and it treats "->" inside a quoted label (e.g. the
+    demangled C++ name "this->size()") as an edge. See load_graphs_json() for
+    the preferred path.
     """
     nodes: dict[str, str] = {}
     edges: list[list[str]] = []
@@ -79,6 +95,75 @@ def parse_dot(text: str) -> dict:
 
     return {"nodes": [{"id": k, "label": v} for k, v in nodes.items()],
             "edges": edges}
+
+
+def load_graphs_json(path: str, stem: str = "") -> dict:
+    """Load the cgraph-normalized graphs.json written by dot2json.
+
+    `stem` is the analyzed sample's stem (e.g. "suspicious_sample"). It is used
+    to select only that sample's graphs from a file that may cover many.
+
+    Returns {"callgraph": <graph>, "section": <graph>, "source": "cgraph"} on
+    success, or {} when the file is absent/unreadable so the caller can fall
+    back to parse_dot(). Each graph keeps only the node/edge keys the dashboard
+    template already consumes; the extra fields (name, self_loops, multi_edges,
+    per-node url) are passed through because they are additive and unused keys
+    are ignored by the template.
+    """
+    if not path:
+        return {}
+    p = Path(path)
+    if not p.is_file():
+        return {}
+    try:
+        with p.open("r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except Exception as exc:
+        print(f"warn: cannot parse {path}: {exc}", file=sys.stderr)
+        return {}
+
+    graphs = doc.get("graphs")
+    if not isinstance(graphs, dict):
+        print(f"warn: {path} has no 'graphs' object", file=sys.stderr)
+        return {}
+
+    # Keys are FILE STEMS (<stem>_callgraph, <stem>_section_<name>), not digraph
+    # names. Every r2 callgraph is called "digraph code", so selecting by graph
+    # name would mix samples. When a stem is given, only that sample's graphs
+    # are eligible.
+    def owned(stem_key: str) -> bool:
+        if not stem:
+            return True
+        return stem_key == stem or stem_key.startswith(stem + "_")
+
+    def pick(kind: str):
+        # r2 writes section graphs as <stem>_section_<section>, so the key has
+        # the section name appended (e.g. suspicious_sample_section__text).
+        # An exact <stem>_<kind> match wins; otherwise take the largest
+        # <stem>_section* graph, which is the main text CFG in practice.
+        exact = stem + "_" + kind if stem else None
+        if exact and exact in graphs and isinstance(graphs[exact], dict):
+            return graphs[exact]
+        candidates = [(k, g) for k, g in graphs.items()
+                      if isinstance(g, dict) and owned(k)
+                      and k.startswith((stem + "_" if stem else "") + kind)]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda kv: len(kv[1].get("nodes") or []), reverse=True)
+        return candidates[0][1]
+
+    callgraph = pick("callgraph")
+    section = pick("section")
+
+    out = {"source": doc.get("parser", "cgraph")}
+    if callgraph:
+        out["callgraph"] = callgraph
+    if section:
+        out["section"] = section
+
+    # A graphs.json that parsed cleanly but yielded nothing usable is treated
+    # as a miss so the regex fallback still runs.
+    return out if ("callgraph" in out or "section" in out) else {}
 
 
 def short_hash(h: str, n: int = 16) -> str:
@@ -391,6 +476,102 @@ def clip_eat(eat: dict) -> dict:
     return out
 
 
+def build_stix_section(args, capa: dict, cti_summary: dict) -> dict:
+    """The "ATT&CK / STIX" section: object graph + Navigator layer.
+
+    Prefers the bundle the analyzer wrote (exports/stix/<stem>_stix21.json), so
+    the panel shows the layer that will actually be shared with other tools.
+    When that file is missing - an older run, a skipped export - the techniques
+    capa matched are turned into real STIX attack-pattern / x-mitre-tactic
+    objects instead, so a sample with TTPs never renders an empty section.
+    """
+    empty = {"available": False, "source": "", "synthesized": False,
+             "graph": {"nodes": [], "edges": [], "details": {},
+                       "stats": {"objects": 0, "nodes": 0, "edges": 0,
+                                 "techniques": 0, "tactics": 0}},
+             "layer": {}, "layer_note": "", "tactics": []}
+
+    if stix_graph is None:
+        empty["reason"] = STIX_IMPORT_ERROR
+        return empty
+
+    empty["tactics"] = [{"short": s, "name": n} for s, n in stix_graph.TACTICS]
+
+    objects: list[dict] = []
+    source = ""
+    # The analyzer passes these paths unconditionally, so a run with nothing to
+    # export (no techniques, no indicators) simply leaves the file absent -
+    # that is not worth a warning. A file that IS there but will not parse is.
+    if args.stix and Path(args.stix).is_file():
+        objects, error = stix_graph.load_bundle(args.stix)
+        if error:
+            print(f"warn: stix: {error}", file=sys.stderr)
+            objects = []
+        elif objects:
+            source = Path(args.stix).name
+
+    synthesized = False
+    if not objects:
+        objects = stix_graph.graph_from_capa(capa)
+        if objects:
+            synthesized = True
+            source = "capa"
+
+    if not objects:
+        empty["reason"] = ("no STIX bundle was supplied and capa matched no ATT&CK "
+                           "techniques for this sample")
+        return empty
+
+    # The analyzer's own bundle carries technique IDs and little else; the CTI
+    # phase has already cached the MITRE bundle, so fill in the real names,
+    # descriptions and tactics from it when it is available.
+    knowledge: dict = {}
+    want = {t for obj in objects for t in stix_graph.technique_ids(obj)}
+    if want:
+        knowledge = stix_graph.load_attack_knowledge(want=want)
+        if knowledge:
+            filled = stix_graph.enrich_objects(objects, knowledge)
+            if filled:
+                print(f"[*] stix: enriched {filled} technique(s) from the ATT&CK cache",
+                      file=sys.stderr)
+
+    meta = {
+        "name": Path(args.stix).name if args.stix else (args.out_name or "sample"),
+        "source": args.stix or "",
+        "stem": args.out_name or "sample",
+        "attack_version": str((cti_summary.get("versions") or {}).get("mitre_attack") or ""),
+        "synthesized_from": "capa" if synthesized else "",
+    }
+    section = stix_graph.build_payload(objects, meta)
+    section["available"] = True
+    section["source"] = source
+    section["synthesized"] = synthesized
+
+    # The analyzer's own layer is authoritative when present: it carries the
+    # ATT&CK version the CTI phase resolved and is the file on disk.
+    nav = load_json(args.navigator)
+    if isinstance(nav, dict) and nav.get("techniques"):
+        section["layer"] = nav
+        section["layer_note"] = ""
+    # The layer is used verbatim, but a comment that is just the technique ID
+    # means the CTI lookup found nothing - the cache can still name it.
+    stix_graph.enrich_layer(section["layer"], knowledge)
+
+    # Build the FULL ATT&CK Navigator layer with ALL techniques from the MITRE
+    # knowledge base. This provides a complete reference matrix independent of
+    # the sample's findings.
+    attack_version = str((cti_summary.get("versions") or {}).get("mitre_attack") or "")
+    full_layer, full_layer_error = stix_graph.build_full_navigator_layer(attack_version)
+    if full_layer:
+        section["full_layer"] = full_layer
+        section["full_layer_note"] = full_layer_error or ""
+    else:
+        section["full_layer"] = {}
+        section["full_layer_note"] = full_layer_error or "Could not load full ATT&CK matrix"
+
+    return section
+
+
 def build_payload(args) -> dict:
     fileinfo = load_json(args.fileinfo) or {}
     hashj = load_json(args.hash) or {}
@@ -428,8 +609,22 @@ def build_payload(args) -> dict:
         mal_rows.append({"function": fn,
                          "data": data if isinstance(data, (dict, list)) else {"raw": str(data)}})
 
-    callgraph = parse_dot(read_text(args.callgraph))
-    section_graph = parse_dot(read_text(args.section_dot))
+    # Prefer the cgraph-normalized graphs.json when it is present: it is the
+    # reference parser and gets edges right, where the regex fallback below
+    # undercounts and misreads "->" inside labels. Fall back automatically.
+    graphs_json = load_graphs_json(getattr(args, "graphs_json", ""),
+                                   getattr(args, "out_name", ""))
+    if graphs_json:
+        callgraph = graphs_json.get("callgraph") or {"nodes": [], "edges": []}
+        section_graph = graphs_json.get("section") or {"nodes": [], "edges": []}
+        # Only regex-parse what the JSON did not supply.
+        if not graphs_json.get("callgraph"):
+            callgraph = parse_dot(read_text(args.callgraph))
+        if not graphs_json.get("section"):
+            section_graph = parse_dot(read_text(args.section_dot))
+    else:
+        callgraph = parse_dot(read_text(args.callgraph))
+        section_graph = parse_dot(read_text(args.section_dot))
 
     # VT-style threat graph (info blocks connected to the sample).
     t_nodes = []
@@ -725,6 +920,7 @@ def build_payload(args) -> dict:
         "threat_graph": {"nodes": t_nodes, "links": t_links},
         "cti": cti_summary,
         "geo": geo,
+        "stix": build_stix_section(args, capa, cti_summary),
         "charts": charts,
         "files": files,
     }
@@ -755,9 +951,23 @@ def verify_mappings(args, payload) -> list[str]:
         ("threat_graph", lambda: payload.get("threat_graph"), "payload.threat_graph"),
         ("cti", lambda: payload.get("geo", {}).get("items") or payload.get("cti"),
          "payload.geo / payload.cti"),
+        ("stix", lambda: payload.get("stix", {}).get("graph", {}).get("nodes"),
+         "payload.stix.graph.nodes"),
+        ("navigator", lambda: payload.get("stix", {}).get("layer", {}).get("techniques"),
+         "payload.stix.layer.techniques"),
     ]
 
+    # When graphs.json supplies a graph, the .dot file for it is optional, so
+    # don't demand raw data that the caller deliberately did not pass.
+    from_json = load_graphs_json(getattr(args, "graphs_json", ""),
+                                 getattr(args, "out_name", ""))
+
     for flag_name, accessor, payload_path in mappings:
+        # A graph satisfied from graphs.json needs no corresponding .dot.
+        if flag_name == "callgraph" and from_json.get("callgraph"):
+            continue
+        if flag_name == "section_dot" and from_json.get("section"):
+            continue
         raw = (read_text(getattr(args, flag_name, ""))
                if flag_name in ("callgraph", "section_dot")
                else load_json(getattr(args, flag_name, "")))
@@ -776,11 +986,15 @@ def verify_mappings(args, payload) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(add_help=True)
     for flag in ("fileinfo", "hash", "ioc", "extraction", "capa", "iat", "got",
-                 "radare2", "malapi", "cti", "out-dir", "out-name"):
+                 "radare2", "malapi", "cti", "stix", "navigator",
+                 "out-dir", "out-name"):
         ap.add_argument("--" + flag, default="")
     ap.add_argument("--asm-json", default="")
     ap.add_argument("--callgraph", default="")
     ap.add_argument("--section-dot", default="")
+    ap.add_argument("--graphs-json", default="",
+                    help="cgraph-normalized graphs.json from dot2json; "
+                         "falls back to regex parsing of the .dot files")
     ap.add_argument("--files-root", default="")
     ap.add_argument("--max-embed-bytes", type=int, default=24 * 1024 * 1024)
     ap.add_argument("--verify", action="store_true",

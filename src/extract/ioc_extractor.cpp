@@ -103,14 +103,104 @@ const std::unordered_set<std::string_view>& known_tlds() {
     return tlds;
 }
 
-// `domain` must be lower-case.
-bool is_plausible_domain(std::string_view domain) {
+// TLDs that double as extremely common file extensions or short code tokens.
+// A bare "word.tld" match against one of these is far more often a filename
+// (README.md, utils.py, handler.sh, libssl.so, main.rs, helper.la, model.ai)
+// or a decompiled namespace/member chain (System.IO, Console.In, Convert.To)
+// than an actual domain. Full URLs, hosts with a real subdomain, or hosts
+// followed by a path/port still get through -- see is_plausible_domain().
+const std::unordered_set<std::string_view>& ambiguous_tlds() {
+    static const std::unordered_set<std::string_view> tlds = {
+        "md",  // Markdown
+        "py",  // Python
+        "sh",  // shell script
+        "pl",  // Perl
+        "so",  // Linux shared object
+        "ai",  // Adobe Illustrator
+        "ml",  // OCaml source
+        "rs",  // Rust source
+        "gs",  // Google Apps Script
+        "la",  // libtool archive
+        "cc",  // C/C++ source (also a common ccTLD)
+        "tv", "im", "to", "in", "id", "is", "st", "gg",
+        "io", // very common as a bare 2-segment code/member chain too
+    };
+    return tlds;
+}
+
+// Extensions that commonly show up as the *second* extension on a
+// "double extension" file: utils.py.bak, README.md.orig, handler.so.1
+// (the trailing "1" isn't alphabetic so it's naturally excluded by
+// IOC_TLD's [a-z]{2,24} and never reaches this check).
+bool is_trailing_file_extension(std::string_view lower_ext) {
+    static const std::unordered_set<std::string_view> exts = {
+        "dll", "exe", "sys", "ocx", "drv", "cpl", "scr", "bat", "cmd", "ps1",
+        "vbs", "jar", "class", "pdb", "config", "resources", "mui", "manifest",
+        "bak", "old", "orig", "tmp", "log", "dat", "bin", "obj", "lib",
+        "deb", "rpm", "msi", "cab", "iso", "vhd", "apk", "ipa", "a", "o",
+    };
+    return exts.count(lower_ext) != 0;
+}
+
+// `text` is the ORIGINAL scan buffer; `pos`/`len` locate the raw regex match
+// inside it, so we can look at what precedes and follows the match itself
+// (subdomain depth, trailing double-extension, leading scheme/www.) instead
+// of judging the candidate domain in isolation.
+bool is_plausible_domain(std::string_view text, std::size_t pos, std::size_t len) {
+    std::string_view domain = text.substr(pos, len);
     if (domain.size() > 253) return false;
-    const std::size_t dot = domain.rfind('.');
-    if (dot == std::string_view::npos) return false;
-    const std::string_view tld = domain.substr(dot + 1);
-    if (tld.size() >= 4 && tld.substr(0, 4) == "xn--") return true;
-    return known_tlds().count(tld) != 0;
+
+    const std::string lower = to_lower(domain);
+    const std::size_t dot = lower.rfind('.');
+    if (dot == std::string::npos) return false;
+    const std::string_view tld = std::string_view(lower).substr(dot + 1);
+
+    const bool is_xn = tld.size() >= 4 && tld.substr(0, 4) == "xn--";
+    if (!is_xn && known_tlds().count(tld) == 0) return false;
+
+    // Double-extension guard: "utils.py.bak", "README.md.orig" -> reject if
+    // what immediately follows the match is another dotted, letters-only,
+    // known non-TLD file extension. Real domains are essentially never
+    // followed by ".dll" / ".bak" / ".config" etc. with no separator.
+    {
+        const std::size_t after = pos + len;
+        if (after < text.size() && text[after] == '.') {
+            std::size_t ext_start = after + 1;
+            std::size_t ext_end = ext_start;
+            while (ext_end < text.size() && is_alpha_lc(to_lc(text[ext_end]))) ++ext_end;
+            if (ext_end > ext_start) {
+                const std::string ext = to_lower(text.substr(ext_start, ext_end - ext_start));
+                if (is_trailing_file_extension(ext)) return false;
+            }
+        }
+    }
+
+    // Ambiguous TLD (also a common file extension / code token): only accept
+    // when there's real corroborating context -- a subdomain, a following
+    // path or port, or a preceding scheme/www. A bare "SLD.tld" with nothing
+    // else around it is more often README.md / utils.py / System.IO than an
+    // actual domain.
+    if (!is_xn && ambiguous_tlds().count(tld) != 0) {
+        const bool has_subdomain = std::count(lower.begin(), lower.end(), '.') >= 2;
+
+        const std::size_t after = pos + len;
+        const bool followed_by_path_or_port =
+            after < text.size() && (text[after] == '/' || text[after] == ':');
+
+        bool preceded_by_scheme_or_www = false;
+        if (pos > 0) {
+            const std::string before = to_lower(text.substr(0, pos));
+            preceded_by_scheme_or_www =
+                (before.size() >= 4 && before.compare(before.size() - 4, 4, "www.") == 0) ||
+                before.find("://") != std::string::npos;
+        }
+
+        if (!has_subdomain && !followed_by_path_or_port && !preceded_by_scheme_or_www) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 // Drops IPv4 "hits" that are really version strings / reserved space.
@@ -534,11 +624,16 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
             }
         }
         {
-            std::vector<std::string> tmp;
-            findAll(re.domain, buf, tmp);
-            for (auto& d : tmp) {
-                std::string lower = to_lower(d);
-                if (is_plausible_domain(lower) && seen_domains.insert(lower).second) {
+            // Uses spans (not findAll) so is_plausible_domain can inspect the
+            // characters surrounding the match -- needed to tell a real
+            // domain apart from a filename / code identifier that happens to
+            // end in a valid TLD (see is_plausible_domain / ambiguous_tlds).
+            std::vector<span_t> spans;
+            findAllSpans(re.domain, buf, spans);
+            for (const auto& s : spans) {
+                if (!is_plausible_domain(buf, s.pos, s.len)) continue;
+                std::string lower = to_lower(buf.substr(s.pos, s.len));
+                if (seen_domains.insert(lower).second) {
                     r.domains.push_back(std::move(lower));
                 }
             }
@@ -557,7 +652,7 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
             findAllGroup12(re.email, buf, parts);
             for (auto& [user, host] : parts) {
                 std::string full = to_lower(user + "@" + host);
-                if (!is_plausible_domain(to_lower(host))) continue;
+                if (!is_plausible_domain(host, 0, host.size())) continue;
                 if (seen_emails.insert(full).second) {
                     r.emails.push_back(std::move(full));
                 }
@@ -681,8 +776,7 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
         LOG_WARN("ioc: extract_all: no IOCs found in {} processed string(s)",
                  processed);
         add_error(r.errors, extractor_error::no_matches,
-                  "No IOCs or family keywords found across " +
-                  std::to_string(processed) + " strings");
+                  "No IOCS has been found...");
     }
 
     LOG_INFO("ioc: extract_all: done in {:.3f}s — strings={} (empty={}, "

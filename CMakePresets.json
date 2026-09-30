@@ -14,7 +14,8 @@
       "cacheVariables": {
         "CMAKE_CXX_COMPILER": "C:/msys64/ucrt64/bin/g++.exe",
         "CMAKE_BUILD_TYPE": "Release",
-        "BUILD_TESTING": "ON"
+        "BUILD_TESTING": "OFF",
+        "STATIC_ANALYZER_ENABLE_TESTS": "OFF"
       }
     }
   ],

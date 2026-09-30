@@ -5,3 +5,6 @@ loguru
 flask
 selectolax
 PyYAML
+stix2
+mitreattack-pyt
+cyclonedx-bom

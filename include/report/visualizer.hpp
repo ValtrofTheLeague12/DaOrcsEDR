@@ -45,7 +45,12 @@ struct options {
     std::string asm_json;      // enriched per-function assembly JSON
     std::string callgraph_dot; // whole-program call graph .dot
     std::string section_dot;   // per-section CFG .dot
+    std::string graphs_json;   // cgraph-normalized graphs.json (optional; when
+                               // set the dashboard skips regex-parsing the
+                               // .dot files above)
     std::string cti;           // CTI report JSON (per-IOC geo / ASN / verdicts)
+    std::string stix;          // STIX 2.1 bundle (ATT&CK techniques, indicators)
+    std::string navigator;     // ATT&CK Navigator layer JSON
     std::string files_root;    // read-only artifact tree embedded in dashboard
 
     // Hard cap on the total bytes of embedded JSON, so a huge sample cannot

@@ -40,6 +40,7 @@ capa-rules/
 capa-sigs/
 yara-rules/
 node/
+os-libzstd/
 
 # Secrets and local credentials
 # .env holds real values and must never be committed; .env.example is the
@@ -54,10 +55,14 @@ bitwarden*.json
 *.pfx
 *.p12
 credentials.json
+# Local agent launcher: machine specific, and it holds a gateway token in
+# plain text (ANTHROPIC_AUTH_TOKEN), so it must never be committed.
+claude.ps1
 
 # Editor / OS
 .vscode/
 .kilo/
+.claude/
 .idea/
 *.swp
 Thumbs.db

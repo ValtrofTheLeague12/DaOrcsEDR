@@ -65,12 +65,19 @@ std::atomic<bool> g_symbols_ready{false};
 TRACE_NO_INSTRUMENT bool is_project_symbol(const char* name) {
     if (!name) return false;
     const std::string_view symbol(name);
+    // Keep this list tight: __cyg_profile_func_* fires on every instrumented
+    // call, so every namespace added here multiplies the trace volume. The
+    // entries below are the phases whose internals are worth seeing. graphviz::
+    // is included because the .dot parsing runs once per sample and its failure
+    // is otherwise silent - without it, a trace shows the extraction phases and
+    // then nothing, which reads as "graphviz never ran".
     return symbol == "main"
         || symbol == "PrintMemoryInfo"
         || symbol.find("analyzer::")  != std::string_view::npos
         || symbol.find("hasher::")    != std::string_view::npos
         || symbol.find("console::")   != std::string_view::npos
-        || symbol.find("extractor::") != std::string_view::npos;
+        || symbol.find("extractor::") != std::string_view::npos
+        || symbol.find("graphviz::")  != std::string_view::npos;
 }
 
 TRACE_NO_INSTRUMENT void load_symbols_from_self() {

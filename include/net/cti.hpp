@@ -222,8 +222,12 @@ struct api_keys {
   std::string otx;          // OTX_API_KEY         https://otx.alienvault.com               (free)
   std::string virustotal;   // VT_API_KEY          https://www.virustotal.com               (free, 4 req/min)
   std::string abusech;      // ABUSECH_AUTH_KEY    https://auth.abuse.ch  ThreatFox, URLhaus, MalwareBazaar (free)
-  std::string greynoise;    // GREYNOISE_API_KEY   optional, raises community limits
-  std::string nvd;          // NVD_API_KEY         optional, raises the NVD rate limit
+  // Both of the following are optional. GreyNoise is queried through its
+  // Community API and NVD through its public API; neither needs a key to
+  // answer, so an empty value never disables the provider - it only means a
+  // smaller quota.
+  std::string greynoise;    // GREYNOISE_API_KEY   optional, raises the Community quota
+  std::string nvd;          // NVD_API_KEY         optional, raises the public rate limit
 };
 
 // Base URLs. Overridable so the pipeline can be pointed at a proxy or a test server.
@@ -235,13 +239,13 @@ struct endpoints {
   std::string urlhaus           = "https://urlhaus-api.abuse.ch/v1";
   std::string malwarebazaar     = "https://mb-api.abuse.ch/api/v1/";
   std::string virustotal        = "https://www.virustotal.com/api/v3";
-  std::string greynoise         = "https://api.greynoise.io/v3/community";
+  std::string greynoise         = "https://api.greynoise.io/v3/community";   // Community API, keyless
   std::string circl_hashlookup  = "https://hashlookup.circl.lu";
   std::string rdap              = "https://rdap.org";
   std::string doh               = "https://cloudflare-dns.com/dns-query";
   std::string crtsh             = "https://crt.sh";
   std::string epss              = "https://api.first.org/data/v1/epss";
-  std::string nvd               = "https://services.nvd.nist.gov/rest/json/cves/2.0";
+  std::string nvd               = "https://services.nvd.nist.gov/rest/json/cves/2.0";   // public API, keyless
   std::string cisa_kev          = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
   std::string attack_stix       = "https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json";
 };
@@ -337,6 +341,29 @@ class attack_db {
   std::size_t group_count_ = 0;
   std::string version_;
 };
+
+// Full ATT&CK detail for one technique, as read straight out of the cached MITRE
+// bundle. Unlike attack_technique (which drops description/detection to keep the
+// ~45 MB bundle small in memory), this keeps them - but only ever for the handful
+// of techniques a run actually matched.
+struct attack_detail {
+  std::string name;
+  std::string description;                   // ATT&CK "description"
+  std::string detection;                     // x_mitre_detection
+  std::string url;                           // https://attack.mitre.org/techniques/...
+  std::vector<std::string> tactic_shortnames;  // kill_chain_phases, kill-chain order
+  std::vector<std::string> platforms;          // x_mitre_platforms
+  bool is_subtechnique = false;
+};
+
+// Reads the cached MITRE ATT&CK bundle ($CTI_CACHE_DIR/knowledge/enterprise-attack.json,
+// default cti-cache/...) and returns details for `wanted_ids` only (case-insensitive,
+// keyed by upper-case id). Ids the cache does not know, and a missing/unreadable cache,
+// are simply absent from the result - never an error, callers fall back to what they
+// already have. No network access; parses the file twice with slim filters so the
+// descriptions (most of the file's size) are only held for the wanted techniques.
+std::map<std::string, attack_detail> attack_details_for(const std::set<std::string>& wanted_ids,
+                                                        const std::string& bundle_path = {});
 
 // ---------------------------------------------------------------------------
 // CISA KEV

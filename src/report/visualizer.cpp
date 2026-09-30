@@ -67,10 +67,13 @@ result render(const options& opts) {
     add_opt(args, "--radare2",    opts.radare2);
     add_opt(args, "--malapi",     opts.malapi);
     add_opt(args, "--cti",        opts.cti);
+    add_opt(args, "--stix",       opts.stix);
+    add_opt(args, "--navigator",  opts.navigator);
     add_opt(args, "--files-root", opts.files_root);
     add_opt(args, "--asm-json",   opts.asm_json);
     add_opt(args, "--callgraph",  opts.callgraph_dot);
     add_opt(args, "--section-dot",opts.section_dot);
+    add_opt(args, "--graphs-json",opts.graphs_json);
     add_opt(args, "--out-dir",    opts.output_dir);
     add_opt(args, "--out-name",   opts.output_name);
     args.push_back("--max-embed-bytes");

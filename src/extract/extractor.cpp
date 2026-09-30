@@ -1817,6 +1817,93 @@ bool signature_impl(signature_info_t& result, LIEF::Binary& binary) {
 }
 
 // ---------------------------------------------------------------------------
+// Byte histogram (whole file, raw bytes, no LIEF needed)
+// ---------------------------------------------------------------------------
+
+void finalize_histogram(byte_histogram_t& result) {
+  const double total = static_cast<double>(result.total_bytes);
+  if (result.total_bytes == 0) {
+    result.entropy = 0.0;
+    result.chi2 = 0.0;
+    result.mean = 0.0;
+    result.stddev = 0.0;
+    return;
+  }
+
+  double entropy = 0.0;
+  double sum = 0.0;
+  double sum_sq = 0.0;
+  std::uint64_t max_count = 0;
+  std::uint64_t min_count = result.total_bytes;
+  const double expected = total / 256.0;
+  double chi2 = 0.0;
+
+  for (std::size_t i = 0; i < 256; ++i) {
+    const std::uint64_t count = result.counts[i];
+    result.frequencies[i] = static_cast<double>(count) / total;
+    const double diff = static_cast<double>(count) - expected;
+    chi2 += (diff * diff) / expected;
+    if (count == 0) continue;
+    ++result.nonzero_bins;
+    const double probability = static_cast<double>(count) / total;
+    entropy -= probability * std::log2(probability);
+    if (count > max_count) {
+      max_count = count;
+      result.most_common_byte = static_cast<std::uint8_t>(i);
+    }
+    if (count < min_count) {
+      min_count = count;
+      result.least_common_byte = static_cast<std::uint8_t>(i);
+    }
+    sum += static_cast<double>(i) * static_cast<double>(count);
+    sum_sq += static_cast<double>(i) * static_cast<double>(i) *
+              static_cast<double>(count);
+  }
+
+  result.entropy = entropy;
+  result.chi2 = chi2;
+  result.mean = sum / total;
+  const double variance = sum_sq / total - result.mean * result.mean;
+  result.stddev = variance > 0.0 ? std::sqrt(variance) : 0.0;
+  result.zero_bytes = result.counts[0];
+}
+
+bool histogram_impl(byte_histogram_t& result, const analyzer::file_info_t& info) {
+  result = {};
+  if (!check_file_ok(info, result.errors)) return false;
+
+  std::ifstream input(info.filepath, std::ios::binary);
+  if (!input) {
+    add_error(result.errors, extractor_error::read_failed,
+              "Could not open file for byte histogram: " + info.filepath);
+    return false;
+  }
+
+  // Stream in chunks so very large samples never need a full copy in RAM.
+  std::array<char, 65536> buffer{};
+  bool any = false;
+  while (input) {
+    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const std::streamsize got = input.gcount();
+    if (got <= 0) break;
+    any = true;
+    for (std::streamsize i = 0; i < got; ++i) {
+      result.counts[static_cast<std::uint8_t>(buffer[static_cast<std::size_t>(i)])]++;
+      ++result.total_bytes;
+    }
+  }
+
+  if (!any || result.total_bytes == 0) {
+    add_error(result.errors, extractor_error::empty_file,
+              "File has no bytes for byte histogram: " + info.filepath);
+    return false;
+  }
+
+  finalize_histogram(result);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline helpers
 // ---------------------------------------------------------------------------
 
@@ -1872,6 +1959,9 @@ bool run_pipeline(extraction_result_t& result, const analyzer::file_info_t& info
       strings_impl(result.strings, bin, options.min_string_length, options.max_strings,
                    info.filepath);
     });
+    // The histogram reads raw bytes only - no LIEF object needed - so the
+    // stage goes through the public entry point, like the xxd/cminer stages.
+    run_stage(result, "histogram", [&] { extract_byte_histogram(result.histogram, info); });
     run_stage(result, "packer", [&] { packer_impl(result.packer, bin); });
     run_stage(result, "opcodes", [&] { opcodes_impl(result.opcodes, bin); });
     run_stage(result, "debug", [&] { debug_impl(result.debug_symbols, bin, options.max_symbols); });
@@ -1901,7 +1991,8 @@ bool run_pipeline(extraction_result_t& result, const analyzer::file_info_t& info
       &result.input_errors,     &result.guards.errors,      &result.elf.errors,
       &result.pe.errors,        &result.pe.iat.errors,      &result.elf.got.errors,
       &result.got.errors,       &result.sections.errors,    &result.strings.errors,
-      &result.packer.errors,    &result.opcodes.errors,     &result.debug_symbols.errors,
+      &result.histogram.errors, &result.packer.errors,     &result.opcodes.errors,
+      &result.debug_symbols.errors,
       &result.signature.errors, &result.capa.errors, &result.xxd.errors,
       &result.cminer.errors};
   for (const error_type_t* errors : stage_errors) {
@@ -2020,6 +2111,13 @@ bool extract_strings(strings_result_t& result, const analyzer::file_info_t& info
   return with_binary(result, info, [&](LIEF::Binary& binary) {
     return strings_impl(result, binary, min_length, max_strings, info.filepath);
   });
+}
+
+bool extract_byte_histogram(byte_histogram_t& result,
+                            const analyzer::file_info_t& info) {
+  result = {};
+  if (!check_file_ok(info, result.errors)) return false;
+  return histogram_impl(result, info);
 }
 
 bool detect_if_packed(packer_detection_t& result, const analyzer::file_info_t& info) {
@@ -2348,6 +2446,8 @@ std::vector<stage_errors_t> recover_errors(const extraction_result_t& result) {
     push("sections", result.sections.errors.messages);
   if (result.strings.errors.flags != extractor_error::none)
     push("strings", result.strings.errors.messages);
+  if (result.histogram.errors.flags != extractor_error::none)
+    push("histogram", result.histogram.errors.messages);
   if (result.packer.errors.flags != extractor_error::none)
     push("packer", result.packer.errors.messages);
   if (result.opcodes.errors.flags != extractor_error::none)
@@ -2404,6 +2504,11 @@ std::vector<std::string> get_error_messages(const sections_result_t& result) {
 
 bool has_errors(const strings_result_t& result) { return has_errors(result.errors); }
 std::vector<std::string> get_error_messages(const strings_result_t& result) {
+  return get_error_messages(result.errors);
+}
+
+bool has_errors(const byte_histogram_t& result) { return has_errors(result.errors); }
+std::vector<std::string> get_error_messages(const byte_histogram_t& result) {
   return get_error_messages(result.errors);
 }
 

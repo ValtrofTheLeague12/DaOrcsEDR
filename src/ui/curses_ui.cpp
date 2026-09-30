@@ -1,5 +1,7 @@
 #include "curses_ui.hpp"
 
+#include "console.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -20,6 +22,7 @@
   #include <io.h>
   #include <windows.h>
 #else
+  #include <sys/ioctl.h>
   #include <unistd.h>
 #endif
 
@@ -138,6 +141,93 @@ constexpr int kPairJsonKey = 8;
 constexpr int kPairJsonValue = 9;
 constexpr int kPairJsonLiteral = 10;
 constexpr int kPairJsonPunctuation = 11;
+constexpr int kPairLogo = 12;
+
+// Rows the live progress screen reserves below the logo: the block itself ends at
+// top+7, plus the blank spacer, plus the footer at rows-2. The logo may claim
+// rows-11 and no more, otherwise the spinner lands on the footer line.
+constexpr int kProgressBlockRows = 11;
+
+// Splash logo for the live progress screen and the plain-terminal banner, drawn
+// in red. STATIC_ANALYZER_LOGO overrides the path, a missing or empty file just
+// means no logo is drawn.
+std::filesystem::path logo_path() {
+  const char* override_path = std::getenv("STATIC_ANALYZER_LOGO");
+  if (override_path != nullptr && *override_path != '\0') return override_path;
+#ifdef STATIC_ANALYZER_SOURCE_DIR
+  return std::filesystem::path(STATIC_ANALYZER_SOURCE_DIR) / "logos" / "pdcursor.logo";
+#else
+  return std::filesystem::current_path() / "logos" / "pdcursor.logo";
+#endif
+}
+
+struct window_size_t {
+  int rows = 24;
+  int cols = 80;
+};
+
+// Size of the console stdout is attached to, in character cells. The 80x24
+// fallback is only reached when there is no console to ask, which the PDCurses
+// session has already ruled out by the time it draws.
+window_size_t console_window_size() {
+  window_size_t size;
+#ifdef _WIN32
+  const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (out == nullptr || out == INVALID_HANDLE_VALUE) return size;
+  CONSOLE_SCREEN_BUFFER_INFO info{};
+  if (!GetConsoleScreenBufferInfo(out, &info)) return size;
+  size.cols = info.srWindow.Right - info.srWindow.Left + 1;
+  size.rows = info.srWindow.Bottom - info.srWindow.Top + 1;
+#else
+  struct winsize win {};
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &win) == 0 && win.ws_col > 0 && win.ws_row > 0) {
+    size.cols = win.ws_col;
+    size.rows = win.ws_row;
+  }
+#endif
+  return size;
+}
+
+#ifdef _WIN32
+// Grow the console window until the logo and the progress block under it both
+// fit, so the art can be drawn at its own size rather than dropped for want of
+// room. How many cells the display and the current console font can actually
+// provide varies by machine, so the request is clamped to
+// GetLargestConsoleWindowSize() and the caller re-reads the window afterwards
+// instead of assuming the request was met.
+void enlarge_console(int want_cols, int want_rows) {
+  const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (out == nullptr || out == INVALID_HANDLE_VALUE) return;
+
+  CONSOLE_SCREEN_BUFFER_INFO info{};
+  if (!GetConsoleScreenBufferInfo(out, &info)) return;
+
+  const int have_cols = info.srWindow.Right - info.srWindow.Left + 1;
+  const int have_rows = info.srWindow.Bottom - info.srWindow.Top + 1;
+  if (want_cols <= have_cols && want_rows <= have_rows) return;
+
+  const COORD largest = GetLargestConsoleWindowSize(out);
+  const int cols = std::max(have_cols, std::min(want_cols, static_cast<int>(largest.X)));
+  const int rows = std::max(have_rows, std::min(want_rows, static_cast<int>(largest.Y)));
+
+  // Shrink to a single cell first. SetConsoleScreenBufferSize refuses a buffer
+  // smaller than the window it already has, and SetConsoleWindowInfo refuses a
+  // window larger than the display allows, so growing straight from the current
+  // size can fail on either count.
+  const SMALL_RECT tiny{0, 0, 0, 0};
+  SetConsoleWindowInfo(out, TRUE, &tiny);
+
+  // Only ever grow the buffer - its height is the scrollback the user had.
+  const COORD buffer{
+      static_cast<SHORT>(std::max(cols, static_cast<int>(info.dwSize.X))),
+      static_cast<SHORT>(std::max(rows, static_cast<int>(info.dwSize.Y)))};
+  SetConsoleScreenBufferSize(out, buffer);
+
+  const SMALL_RECT window{
+      0, 0, static_cast<SHORT>(cols - 1), static_cast<SHORT>(rows - 1)};
+  SetConsoleWindowInfo(out, TRUE, &window);
+}
+#endif
 
 bool starts_with(const std::string& text, const std::string& prefix) {
   return text.size() >= prefix.size() &&
@@ -160,10 +250,66 @@ int json_line_color(const std::string& line) {
   return kPairMuted;
 }
 
-int result_color(const std::string& line) {
-  if (starts_with(line, "====") || starts_with(line, "STATIC ANALYZER")) return kPairHeader;
-  if (starts_with(line, "[phase ")) return kPairPhase;
-  if (starts_with(line, "  -- ") || starts_with(line, "-- ")) return kPairSection;
+struct line_style_t {
+  int  pair = kPairMuted;
+  bool bold = false;
+};
+
+// First integer at or after `from`, or -1 when there is none.
+long long number_at(const std::string& line, std::size_t from) {
+  while (from < line.size() && !std::isdigit(static_cast<unsigned char>(line[from]))) ++from;
+  if (from >= line.size()) return -1;
+  long long value = 0;
+  while (from < line.size() && std::isdigit(static_cast<unsigned char>(line[from]))) {
+    value = value * 10 + (line[from] - '0');
+    ++from;
+  }
+  return value;
+}
+
+// The report reaches this file as plain text, so the colouriser has to know the
+// vocabulary the reporters emit. The CTI and YARA blocks carry the
+// security-relevant signals, so their markers are matched explicitly rather
+// than being left to fall through to grey - which is where the whole CTI report
+// used to end up, including the [MAL ...] findings.
+line_style_t result_style(const std::string& line) {
+  if (starts_with(line, "===") || starts_with(line, "STATIC ANALYZER")) return {kPairHeader, true};
+  if (starts_with(line, "[phase ")) return {kPairPhase, true};
+  if (starts_with(line, "  -- ") || starts_with(line, "-- ")) return {kPairSection, true};
+
+  // CTI verdict tags, and the family lines underneath them.
+  if (line.find("[MAL") != std::string::npos) return {kPairError, true};
+  if (line.find("[SUS") != std::string::npos) return {kPairWarning, true};
+  if (line.find("[BEN") != std::string::npos) return {kPairSuccess, false};
+  if (line.find("families:") != std::string::npos) return {kPairError, false};
+
+  // YARA headline: "no matches" is the quiet case, anything else is a hit.
+  if (line.find("Matches:") != std::string::npos) {
+    return line.find("no matches") != std::string::npos
+               ? line_style_t{kPairSuccess, false}
+               : line_style_t{kPairError, true};
+  }
+  const std::size_t loaded_at = line.find("Rules loaded:");
+  if (loaded_at != std::string::npos) {
+    // "N / M" - green only when every rule file actually loaded.
+    const long long loaded = number_at(line, loaded_at);
+    const std::size_t slash = line.find('/', loaded_at);
+    const long long found = slash == std::string::npos ? -1 : number_at(line, slash);
+    return (found < 0 || loaded == found) ? line_style_t{kPairSuccess, false}
+                                          : line_style_t{kPairWarning, false};
+  }
+  if (line.find("Rule files failed:") != std::string::npos) return {kPairError, true};
+  const std::size_t tags_at = line.find("Tags:");
+  if (tags_at != std::string::npos && tags_at < 8u) return {kPairJsonKey, false};  // cyan
+
+  // Provider statistics rows: the mal / sus columns are the reason to read them.
+  if (line.find(" queries ") != std::string::npos && line.find(" mal ") != std::string::npos) {
+    const std::size_t mal = line.find(" mal ");
+    if (number_at(line, mal + 5) > 0) return {kPairError, true};
+    const std::size_t sus = line.find(" sus ");
+    if (sus != std::string::npos && number_at(line, sus + 5) > 0) return {kPairWarning, true};
+    return {kPairMuted, false};
+  }
 
   // xxd rows: colour the offset, the hex bytes and the ASCII column separately.
   // The leading bullet from print_bullet() is stripped with the rest of the
@@ -175,19 +321,61 @@ int result_color(const std::string& line) {
       if (!std::isxdigit(static_cast<unsigned char>(line[i]))) hexish = false;
     }
     if (hexish) {
-      if (line.find('|') != std::string::npos) return kPairJsonValue;  // green
-      return kPairPhase;                                               // yellow
+      if (line.find('|') != std::string::npos) return {kPairJsonValue, false};  // green
+      return {kPairPhase, false};                                               // yellow
     }
   }
 
   if (line.find("Result:") != std::string::npos ||
       line.find("Status:               ok") != std::string::npos ||
-      line.find("[+]") != std::string::npos) return kPairSuccess;
+      line.find("[+]") != std::string::npos) return {kPairSuccess, false};
   if (line.find("[-]") != std::string::npos || line.find("FAILED") != std::string::npos ||
-      line.find("failed") != std::string::npos) return kPairError;
+      line.find("failed") != std::string::npos) return {kPairError, false};
   if (line.find("[!]") != std::string::npos || line.find("warning") != std::string::npos ||
-      line.find("Warning") != std::string::npos) return kPairWarning;
-  return kPairMuted;
+      line.find("Warning") != std::string::npos) return {kPairWarning, false};
+  return {kPairMuted, false};
+}
+
+bool is_heading_line(const std::string& line) {
+  return starts_with(line, "  -- ") || starts_with(line, "===");
+}
+
+// The content pane drew report lines with "%-*.*s", which truncates anything
+// wider than the frame. Every long CTI reason and YARA offset list was silently
+// cut off at the pane edge with no way to read the rest. Break on spaces where
+// possible, hard-break tokens that cannot fit, and carry the source line's
+// leading indentation onto the continuation lines so a wrapped bullet still
+// reads as part of its parent.
+std::vector<std::string> wrap_lines(const std::vector<std::string>& lines, int width) {
+  if (width < 8) width = 8;
+  std::vector<std::string> out;
+  out.reserve(lines.size());
+  for (const std::string& line : lines) {
+    if (static_cast<int>(line.size()) <= width) {
+      out.push_back(line);
+      continue;
+    }
+    const std::size_t first_text = line.find_first_not_of(' ');
+    const std::size_t indent_len = std::min(
+        first_text == std::string::npos ? line.size() : first_text,
+        static_cast<std::size_t>(std::max(0, width / 4)));
+    const std::string indent = line.substr(0, indent_len);
+    const std::size_t room = static_cast<std::size_t>(width) - indent.size();
+    std::string rest = line.substr(indent_len);
+    while (!rest.empty()) {
+      std::size_t take = std::min(room, rest.size());
+      if (take < rest.size()) {
+        const std::size_t space = rest.rfind(' ', take);
+        if (space != std::string::npos && space > 0) take = space;
+      }
+      std::string chunk = rest.substr(0, take);
+      while (!chunk.empty() && chunk.back() == ' ') chunk.pop_back();
+      rest.erase(0, take);
+      while (!rest.empty() && rest.front() == ' ') rest.erase(0, 1);
+      out.push_back(indent + chunk);
+    }
+  }
+  return out;
 }
 
 std::string spinner_frame(std::size_t tick) {
@@ -218,6 +406,43 @@ std::string elapsed_text(std::chrono::steady_clock::time_point started) {
 
 }  // namespace
 
+logo_t load_logo() {
+  logo_t logo;
+  std::ifstream input(logo_path(), std::ios::binary);
+  if (!input) return logo;
+  std::string line;
+  while (std::getline(input, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    logo.lines.push_back(line);
+  }
+  // Trailing blank lines are padding in the file, not part of the art, and
+  // would otherwise push the progress block off the bottom of the screen.
+  while (!logo.lines.empty() && logo.lines.back().empty()) logo.lines.pop_back();
+  for (const std::string& entry : logo.lines) {
+    logo.width = std::max(logo.width, static_cast<int>(entry.size()));
+  }
+  return logo;
+}
+
+void print_logo_banner() {
+  // A redirected run is not looking at a terminal, and 76 lines of art in a
+  // captured report is noise rather than a banner.
+  if (!terminal_available()) return;
+
+  const logo_t logo = load_logo();
+  if (logo.lines.empty()) return;
+
+  const window_size_t size = console_window_size();
+  const int left = std::max(0, (size.cols - logo.width) / 2);
+  const std::string margin(static_cast<std::size_t>(left), ' ');
+
+  std::cout << '\n';
+  for (const std::string& line : logo.lines) {
+    std::cout << console::paint(console::red, margin + line) << '\n';
+  }
+  std::cout << std::flush;
+}
+
 struct session::impl {
   bool active = false;
   bool finished = false;
@@ -234,6 +459,8 @@ struct session::impl {
   std::string input;
   std::string phase_label = "starting analysis";
   std::string dashboard_path;
+  std::vector<std::string> logo_lines;
+  int logo_width = 0;
   std::vector<export_file_t> export_files;
   std::size_t selected_export = 0;
   std::size_t export_top = 0;
@@ -260,6 +487,7 @@ struct session::impl {
     init_pair(kPairJsonValue, COLOR_GREEN, -1);
     init_pair(kPairJsonLiteral, COLOR_YELLOW, -1);
     init_pair(kPairJsonPunctuation, COLOR_MAGENTA, -1);
+    init_pair(kPairLogo, COLOR_RED, -1);
   }
 
   void render() {
@@ -269,12 +497,48 @@ struct session::impl {
     int cols = 80;
     getmaxyx(stdscr, rows, cols);
     erase();
+
+    // The logo is drawn at the size it has in the file - never rescaled, no
+    // matter which sheet logos/pdcursor.logo currently holds - from its first
+    // line, in red, starting at the top of the pane. begin() has already grown
+    // the window so the whole sheet fits, and the progress block is drawn after
+    // the art rather than over it.
+    //
+    // begin() could not get the cells it asked for when the display or the
+    // console font is the limit, so the art is clipped to what the pane really
+    // has: horizontally to a centred window on the sheet, and vertically to the
+    // top of the art so the progress block below always keeps its rows.
+    // Clipping is explicit because a %s wider than the pane wraps onto the next
+    // line and corrupts the whole layout.
+    const int logo_rows = std::max(0, rows - kProgressBlockRows);
+    int top = 0;
+    if (!logo_lines.empty() && logo_rows > 0) {
+      const int logo_height = static_cast<int>(logo_lines.size());
+      const int visible = std::min(logo_height, logo_rows);
+      const int logo_left = std::max(0, (cols - logo_width) / 2);
+      const int clipped = std::min(logo_width, std::max(0, cols - logo_left));
+      const int first_col = std::max(0, (logo_width - cols) / 2);
+      attron(COLOR_PAIR(kPairLogo) | A_BOLD);
+      for (int i = 0; i < visible; ++i) {
+        const std::string& line = logo_lines[static_cast<std::size_t>(i)];
+        // A short line (a blank spacer, or art narrower than the centre slice)
+        // still consumes its row; skipping the write must not reuse the row
+        // below, or the next line would be drawn on top of this one.
+        if (static_cast<int>(line.size()) > first_col && clipped > 0) {
+          mvprintw(top + i, logo_left, "%.*s", clipped, line.c_str() + first_col);
+        }
+      }
+      attroff(COLOR_PAIR(kPairLogo) | A_BOLD);
+      // The sheet owns rows [0, visible); one blank spacer, then the block.
+      top = visible + 1;
+    }
+
     attron(COLOR_PAIR(kPairHeader) | A_BOLD);
-    mvprintw(0, 0, "STATIC ANALYZER");
+    mvprintw(top, 0, "STATIC ANALYZER");
     attroff(COLOR_PAIR(kPairHeader) | A_BOLD);
     attron(COLOR_PAIR(kPairMuted));
-    mvprintw(1, 0, "Input: %.*s", std::max(1, cols - 10), input.c_str());
-    mvprintw(2, 0, "Elapsed: %s  Activity: %s",
+    mvprintw(top + 1, 0, "Input: %.*s", std::max(1, cols - 10), input.c_str());
+    mvprintw(top + 2, 0, "Elapsed: %s  Activity: %s",
              elapsed_text(started_at).c_str(), activity_dots(tick.load()).c_str());
     attroff(COLOR_PAIR(kPairMuted));
 
@@ -286,13 +550,13 @@ struct session::impl {
     std::string bar(static_cast<std::size_t>(filled), '#');
     bar.append(static_cast<std::size_t>(bar_width - filled), '.');
     attron(COLOR_PAIR(kPairPhase));
-    mvprintw(3, 0, "Progress: [%s] %zu/%zu", bar.c_str(), done, total_phases);
+    mvprintw(top + 3, 0, "Progress: [%s] %zu/%zu", bar.c_str(), done, total_phases);
     attroff(COLOR_PAIR(kPairPhase));
     attron(COLOR_PAIR(kPairSection) | A_BOLD);
-    mvprintw(5, 0, "Phase: %.*s", std::max(1, cols - 10), phase_label.c_str());
+    mvprintw(top + 5, 0, "Phase: %.*s", std::max(1, cols - 10), phase_label.c_str());
     attroff(COLOR_PAIR(kPairSection) | A_BOLD);
     attron(COLOR_PAIR(kPairSuccess));
-    mvprintw(7, 0, "Analyzing %s", spinner_frame(tick).c_str());
+    mvprintw(top + 7, 0, "Analyzing %s", spinner_frame(tick).c_str());
     attroff(COLOR_PAIR(kPairSuccess));
     attron(COLOR_PAIR(kPairMuted));
     mvprintw(rows - 2, 0, "Results will be displayed when analysis completes.");
@@ -353,6 +617,10 @@ struct session::impl {
     if (!export_files.empty()) sections.push_back(std::move(exports_section));
     std::size_t selected = 0;
     std::vector<std::size_t> section_top(sections.size(), 0);
+    // Folded view of every section. A report line wider than the pane used to
+    // be clipped, so the cache is rebuilt only when the pane width changes.
+    std::vector<std::vector<std::string>> wrapped;
+    int wrapped_width = -1;
     // The sidebar and the content pane are separate focus targets. The content
     // pane is entered with Enter/Right and left again with Esc/Left, so Up/Down
     // can move the section list and scroll the text independently.
@@ -375,6 +643,18 @@ struct session::impl {
       const std::size_t file_list_rows =
           static_cast<std::size_t>(std::max(3, visible / 2));
       const int file_content_x = right_x + std::max(14, right_width / 2);
+      // Wrap and draw at the same width, or a line folded at one width would be
+      // clipped again by the other.
+      const int body_width = std::max(8, right_width - 4);
+
+      if (body_width != wrapped_width) {
+        wrapped_width = body_width;
+        wrapped.clear();
+        wrapped.reserve(sections.size());
+        for (const result_section_t& entry : sections) {
+          wrapped.push_back(wrap_lines(entry.lines, wrapped_width));
+        }
+      }
 
       attron(COLOR_PAIR(kPairHeader) | A_BOLD);
       mvprintw(0, 0, "STATIC ANALYZER - LAYERED RESULTS");
@@ -419,6 +699,7 @@ struct session::impl {
       attroff(COLOR_PAIR(kPairSection));
 
       const result_section_t& section = sections[selected];
+      const std::vector<std::string>& body = wrapped[selected];
       const bool filesystem_view = section.title == "Export Manager";
       const bool dashboard_view = section.title == "Dashboard";
       // The open-dashboard action belongs to the Dashboard panel only, so it is
@@ -430,8 +711,8 @@ struct session::impl {
       // at the bottom of the pane; clamping to lines-1 instead would let the view
       // run past the end until a single line sat alone at the top.
       const std::size_t scroll_max =
-          section.lines.size() > static_cast<std::size_t>(content_rows)
-              ? section.lines.size() - static_cast<std::size_t>(content_rows)
+          body.size() > static_cast<std::size_t>(content_rows)
+              ? body.size() - static_cast<std::size_t>(content_rows)
               : 0;
       const std::size_t max_top = filesystem_view
           ? (export_files.empty() ? 0 : export_files.size() - 1)
@@ -460,6 +741,25 @@ struct session::impl {
       } else if (section_top[selected] > max_top) {
         section_top[selected] = max_top;
       }
+
+      // "  -- " headings are the section's table of contents. A CTI phase holds
+      // hundreds of progress lines before the first finding, so [ and ] step
+      // between headings rather than making the reader page there.
+      const auto jump_heading = [&](int direction) {
+        if (filesystem_view || body.empty()) return;
+        if (direction > 0) {
+          std::size_t index = std::min(section_top[selected] + 1, body.size() - 1);
+          while (index < body.size() && !is_heading_line(body[index])) ++index;
+          section_top[selected] = index < body.size() ? std::min(index, max_top) : max_top;
+        } else {
+          std::size_t index = section_top[selected];
+          while (index > 0) {
+            --index;
+            if (is_heading_line(body[index])) break;
+          }
+          section_top[selected] = std::min(index, max_top);
+        }
+      };
       attron(COLOR_PAIR(kPairHeader) | A_BOLD);
       mvprintw(3, right_x + 2, " %-*.*s ", right_width - 4, right_width - 5,
                section.title.c_str());
@@ -568,20 +868,18 @@ struct session::impl {
         const int body_top = 5 + (dashboard_view ? 2 : 0);
         for (int row = 0; row < content_rows; ++row) {
           const std::size_t index = section_top[selected] + static_cast<std::size_t>(row);
-          if (index >= section.lines.size()) break;
-          const int color = result_color(section.lines[index]);
-          const bool heading = starts_with(section.lines[index], "  -- ") ||
-                               starts_with(section.lines[index], "====");
-          attron(COLOR_PAIR(color) | (heading ? A_BOLD : A_NORMAL));
-          mvprintw(body_top + row, right_x + 2, "%-*.*s", right_width - 4, right_width - 5,
-                   section.lines[index].c_str());
-          attroff(COLOR_PAIR(color) | (heading ? A_BOLD : A_NORMAL));
+          if (index >= body.size()) break;
+          const line_style_t style = result_style(body[index]);
+          attron(COLOR_PAIR(style.pair) | (style.bold ? A_BOLD : A_NORMAL));
+          mvprintw(body_top + row, right_x + 2, "%-*.*s", body_width, body_width,
+                   body[index].c_str());
+          attroff(COLOR_PAIR(style.pair) | (style.bold ? A_BOLD : A_NORMAL));
         }
         // Vertical scrollbar down the right edge of the frame, so the reader can
         // see how far through a long section they are and drag/jump by clicking.
         const int track_top = body_top;
         const int track_rows = content_rows;
-        const std::size_t total = section.lines.size();
+        const std::size_t total = body.size();
         if (track_rows > 0 && total > static_cast<std::size_t>(track_rows)) {
           const std::size_t top = section_top[selected];
           const int thumb = std::max(1, static_cast<int>(
@@ -610,7 +908,7 @@ struct session::impl {
 
       attron(COLOR_PAIR(kPairMuted));
       if (reading) {
-        mvprintw(rows - 3, 0, "Esc/Left: back | Up/Down: scroll | PgUp/PgDn: page | Home/End: jump | q: close");
+        mvprintw(rows - 3, 0, "Esc/Left: back | Up/Down: scroll | PgUp/PgDn: page | Home/End: jump | [ ]: heading | q: close");
       } else if (browsing) {
         mvprintw(rows - 3, 0, "Enter: preview | Esc: back to sections | Up/Down: pick file | q: close");
       } else if (filesystem_view) {
@@ -618,13 +916,13 @@ struct session::impl {
       } else if (dashboard_view) {
         mvprintw(rows - 3, 0, "Enter: read section | Up/Down: select | PgUp/PgDn: scroll | A: open | q: close");
       } else {
-        mvprintw(rows - 3, 0, "Enter: read section | Up/Down: select | PgUp/PgDn: scroll | Home/End: jump | q: close");
+        mvprintw(rows - 3, 0, "Enter: read section | Up/Down: select | PgUp/PgDn: scroll | [ ]: heading | q: close");
       }
       mvprintw(rows - 2, 0, "%s | Selected: %zu/%zu | Lines: %zu | Showing %zu-%zu",
                reading ? "READING" : (browsing ? "FILES" : "SECTIONS"),
-               selected + 1, sections.size(), section.lines.size(),
-               section.lines.empty() ? 0 : section_top[selected] + 1,
-               std::min(section.lines.size(), section_top[selected] + static_cast<std::size_t>(visible)));
+               selected + 1, sections.size(), body.size(),
+               body.empty() ? 0 : section_top[selected] + 1,
+               std::min(body.size(), section_top[selected] + static_cast<std::size_t>(visible)));
       attroff(COLOR_PAIR(kPairMuted));
       refresh();
 
@@ -786,6 +1084,12 @@ struct session::impl {
           else if (filesystem_view) selected_export = max_top;
           else section_top[selected] = max_top;
           break;
+        case '[':
+          jump_heading(-1);
+          break;
+        case ']':
+          jump_heading(1);
+          break;
         case 'a':
         case 'A':
           // Only the Dashboard panel exposes the open action.
@@ -828,6 +1132,24 @@ bool session::begin(const std::string& input, std::size_t total_phases) {
   keypad(stdscr, TRUE);
   mousemask(ALL_MOUSE_EVENTS, nullptr);
   impl_->initialize_colors();
+
+  const logo_t logo = load_logo();
+  impl_->logo_lines = logo.lines;
+  impl_->logo_width = logo.width;
+#ifdef _WIN32
+  // Grow the window before the first frame so the logo can be drawn whole above
+  // the progress block. resize_term() is what makes the new size visible to
+  // getmaxyx(), which the spinner thread redraws from.
+  if (!impl_->logo_lines.empty()) {
+    // +1 for the blank spacer that separates the art from the block, so the
+    // request matches what render() actually consumes.
+    enlarge_console(impl_->logo_width + 2,
+                    static_cast<int>(impl_->logo_lines.size()) + kProgressBlockRows + 1);
+    const window_size_t size = console_window_size();
+    resize_term(size.rows, size.cols);
+  }
+#endif
+
   impl_->active = true;
   impl_->finished = false;
   impl_->success = false;

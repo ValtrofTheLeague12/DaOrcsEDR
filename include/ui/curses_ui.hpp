@@ -4,8 +4,26 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace curses_ui {
+
+// The splash logo - the lines of logos/pdcursor.logo exactly as the file has
+// them, plus the width of the widest one for centring. Both front-ends draw it
+// at that size and never rescale it, so this carries no terminal of its own.
+struct logo_t {
+  std::vector<std::string> lines;
+  int width = 0;
+};
+
+// Reads the logo file once. Empty lines when it is missing or unreadable, which
+// callers treat as "draw nothing". STATIC_ANALYZER_LOGO overrides the path.
+logo_t load_logo();
+
+// Startup banner for runs where the PDCurses session is inactive: the same
+// logo, red and centred in the console window. Does nothing when stdout is not
+// a terminal, so a redirected run does not get the art in its captured output.
+void print_logo_banner();
 
 // Interactive PDCurses front-end. It remains a no-op when stdout is redirected
 // or STATIC_ANALYZER_CURSES=0. begin() captures ordinary std::cout output while

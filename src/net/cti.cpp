@@ -1,5 +1,7 @@
 #include "cti.hpp"
 
+#include "console.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -994,11 +996,16 @@ bool mitre_reference(const json& object, std::string& id, std::string& url) {
   return false;
 }
 
+// ATT&CK v19 renamed the "defense-evasion" tactic (TA0005) to "stealth" and
+// added a 15th tactic, "defense-impairment" (TA0112).  The legacy spelling is
+// kept in the list so an older cached feed still ranks sensibly; consumers
+// (the Navigator layer) fold it onto the current name.
 const std::vector<std::string>& kill_chain_order() {
   static const std::vector<std::string> order = {
       "reconnaissance", "resource-development", "initial-access", "execution", "persistence",
-      "privilege-escalation", "defense-evasion", "credential-access", "discovery", "lateral-movement",
-      "collection", "command-and-control", "exfiltration", "impact"};
+      "privilege-escalation", "stealth", "defense-evasion", "credential-access", "discovery",
+      "lateral-movement", "collection", "command-and-control", "exfiltration", "impact",
+      "defense-impairment"};
   return order;
 }
 
@@ -1133,6 +1140,152 @@ const attack_tactic* attack_db::tactic(const std::string& shortname) const {
 std::string attack_db::tactic_name(const std::string& shortname) const {
   const attack_tactic* t = tactic(shortname);
   return t != nullptr ? t->name : std::string();
+}
+
+// ===========================================================================
+// attack_details_for: description / detection / platforms for a few techniques
+// ===========================================================================
+namespace {
+
+// Pass 1 keeps only the small keys needed to tell WHICH objects are the wanted
+// techniques (identity, references, name, phases, platforms). Everything big -
+// description and x_mitre_detection above all - is dropped while parsing, the
+// same way attack_db does it, so the 54 MB bundle stays a few MB in memory.
+// The callback filters at EVERY depth, so the keys nested inside the kept
+// arrays (external_references, kill_chain_phases) must be listed too - or the
+// arrays survive as shells of empty objects and mitre_reference() finds
+// nothing.
+bool keep_detail_brief_value(int, json::parse_event_t event, json& parsed) {
+  if (event != json::parse_event_t::key) return true;
+  static const std::set<std::string> kept = {
+      "type", "id", "objects", "external_references", "source_name", "external_id", "url",
+      "name", "kill_chain_phases", "kill_chain_name", "phase_name",
+      "x_mitre_platforms", "x_mitre_is_subtechnique", "revoked", "x_mitre_deprecated"};
+  return kept.count(parsed.get_ref<const std::string&>()) != 0;
+}
+
+// Pass 2 state: which STIX ids (from pass 1) may keep their description.
+struct detail_scan {
+  const std::map<std::string, std::string>* stix_to_tid = nullptr;   // STIX id -> T-id
+  bool id_pending = false; // last depth-3 key was "id"
+  std::string current_id;  // STIX id of the object being parsed
+};
+
+}  // namespace
+
+std::map<std::string, attack_detail> attack_details_for(const std::set<std::string>& wanted_ids,
+                                                        const std::string& bundle_path) {
+  std::map<std::string, attack_detail> out;
+  if (wanted_ids.empty()) return out;
+
+  // Resolve the cache exactly like pipeline::load_knowledge_impl() does:
+  // $CTI_CACHE_DIR (default cti-cache)/knowledge/enterprise-attack.json, with
+  // an empty base meaning "caching disabled" -> the temp-dir fallback. A full
+  // file path may also be passed in directly.
+  fs::path path;
+  if (!bundle_path.empty()) path = bundle_path;
+  else {
+    const std::string base = env_or("CTI_CACHE_DIR", "cti-cache");
+    path = base.empty() ? fs::temp_directory_path() / "cti-knowledge" / "enterprise-attack.json"
+                        : fs::path(base) / "knowledge" / "enterprise-attack.json";
+  }
+  std::string text;
+  if (!read_file(path.string(), text) || text.empty()) return out;
+
+  std::set<std::string> want;
+  for (const std::string& id : wanted_ids) want.insert(to_upper(id));
+
+  // ---- pass 1: identity + structure, no descriptions -----------------------
+  const json brief = json::parse(text.begin(), text.end(), keep_detail_brief_value,
+                                 /*allow_exceptions=*/false);
+  if (brief.is_discarded() || !brief.is_object() || !brief.contains("objects") ||
+      !brief["objects"].is_array())
+    return out;
+
+  std::map<std::string, std::string> stix_to_tid;   // STIX id -> wanted T-id
+  for (const json& object : brief["objects"]) {
+    if (!object.is_object() || flag_of(object, "revoked") || flag_of(object, "x_mitre_deprecated"))
+      continue;
+    if (str_of(object, "type") != "attack-pattern") continue;
+    std::string ext_id, url;
+    if (!mitre_reference(object, ext_id, url)) continue;
+    ext_id = to_upper(ext_id);
+    if (want.count(ext_id) == 0 || out.count(ext_id) != 0) continue;   // first occurrence wins
+
+    attack_detail d;
+    d.name = str_of(object, "name");
+    d.url = url;
+    d.is_subtechnique = flag_of(object, "x_mitre_is_subtechnique");
+    if (const auto phases = object.find("kill_chain_phases");
+        phases != object.end() && phases->is_array()) {
+      for (const json& phase : *phases) {
+        if (str_of(phase, "kill_chain_name") != "mitre-attack") continue;
+        std::string shortname = str_of(phase, "phase_name");
+        if (!shortname.empty()) d.tactic_shortnames.push_back(std::move(shortname));
+      }
+      std::sort(d.tactic_shortnames.begin(), d.tactic_shortnames.end(),
+                [](const std::string& a, const std::string& b) {
+                  return tactic_rank(a) < tactic_rank(b);
+                });
+    }
+    if (const auto platforms = object.find("x_mitre_platforms");
+        platforms != object.end() && platforms->is_array()) {
+      for (const json& p : *platforms)
+        if (p.is_string()) d.platforms.push_back(p.get<std::string>());
+    }
+    const std::string stix_id = str_of(object, "id");
+    if (!stix_id.empty()) stix_to_tid[stix_id] = ext_id;
+    out.emplace(ext_id, std::move(d));
+  }
+  if (stix_to_tid.empty()) return out;
+
+  // ---- pass 2: descriptions / detection for the wanted objects only --------
+  // The callback keeps type/id/objects everywhere, plus description and
+  // x_mitre_detection - and those two only while parsing an object whose STIX
+  // id pass 1 mapped to a wanted technique. MITRE serialises "id" before
+  // "description", so the decision can be made per key; a bundle that ever
+  // reversed the order would only lose that one detail (callers fill absent
+  // keys, so nothing breaks).
+  //
+  // Key depth comes from the callback itself (ref_stack.size()): for a bundle
+  // the stack is [root-object, objects-array, current-object], so keys OF an
+  // object in the top-level "objects" array arrive at depth 3. Tracking depth
+  // by counting object_start/object_end events would be wrong - nlohmann skips
+  // the object_end callback for containers it decided not to store.
+  constexpr int k_object_keys = 3;
+  detail_scan scan;
+  scan.stix_to_tid = &stix_to_tid;
+  const json texts = json::parse(
+      text.begin(), text.end(),
+      [&scan, k_object_keys](int depth, json::parse_event_t event, json& parsed) -> bool {
+        if (event == json::parse_event_t::key) {
+          const std::string& key = parsed.get_ref<const std::string&>();
+          if (key == "description" || key == "x_mitre_detection")
+            return depth == k_object_keys && scan.stix_to_tid->count(scan.current_id) != 0;
+          if (depth == k_object_keys && key == "id") scan.id_pending = true;
+          return key == "type" || key == "id" || key == "objects";
+        }
+        if (event == json::parse_event_t::value && scan.id_pending) {
+          // the value of a depth-3 "id" key: the STIX id of the current object
+          scan.id_pending = false;
+          if (parsed.is_string()) scan.current_id = parsed.get<std::string>();
+        }
+        return true;   // objects and arrays are structure, keep them
+      },
+      /*allow_exceptions=*/false);
+  if (texts.is_discarded() || !texts.is_object() || !texts.contains("objects") ||
+      !texts["objects"].is_array())
+    return out;
+
+  for (const json& object : texts["objects"]) {
+    if (!object.is_object()) continue;
+    const auto map_it = stix_to_tid.find(str_of(object, "id"));
+    if (map_it == stix_to_tid.end()) continue;
+    attack_detail& d = out[map_it->second];
+    if (d.description.empty()) d.description = str_of(object, "description");
+    if (d.detection.empty())   d.detection   = str_of(object, "x_mitre_detection");
+  }
+  return out;
 }
 
 // ===========================================================================
@@ -1456,7 +1609,9 @@ class base_provider : public provider {
       const json parsed = json::parse(response.body, nullptr, false);
       if (!parsed.is_discarded()) f.body = parsed;
     } else if (response.status == 401 || response.status == 403) {
-      f.error = "authentication failed (HTTP " + std::to_string(response.status) + "): check the " + name_ + " API key";
+      f.error = status_note(response.status);
+      if (f.error.empty())
+        f.error = "authentication failed (HTTP " + std::to_string(response.status) + "): check the " + name_ + " API key";
     } else if (response.status == 429) {
       f.error = "rate limited (HTTP 429)";
       f.retryable = true;
@@ -1479,6 +1634,14 @@ class base_provider : public provider {
   void note(query_result& result, const fetched& f) const {
     if (f.ok || f.not_found) return;
     result.errors.push_back({name_, f.error.empty() ? "unknown error" : f.error, f.status, f.retryable});
+  }
+
+  // Most services signal "bad credentials" with 401/403 and "too many requests" with 429.
+  // A provider whose service splits them differently can word its own status codes here;
+  // an empty string means "use the generic wording".
+  virtual std::string status_note(long status) const {
+    (void)status;
+    return {};
   }
 
   finding make_finding(const fetched& f) const {
@@ -1603,12 +1766,26 @@ class abuseipdb_provider final : public base_provider {
 };
 
 // ===========================================================================
-// IP: GreyNoise community
+// IP: GreyNoise Community API
 // ===========================================================================
+// Keyless by design: the Community endpoint answers without credentials, so
+// this provider is never skipped for a missing GREYNOISE_API_KEY - the key is
+// optional and only raises the quota.
+//
+// That quota is small and measured per day / week, not per minute (see
+// docs.greynoise.io "Using the GreyNoise Community API": 10 IP lookups per day
+// unauthenticated, 50 per week for a free-tier key). The keyless rate is
+// therefore one lookup every five minutes: a 10-minute run spends at most two
+// and the rest of the day still works, instead of one sample eating the whole
+// allowance. A paid key answers far more often, hence the higher keyed rate.
 class greynoise_provider final : public base_provider {
  public:
   explicit greynoise_provider(const config& cfg)
-      : base_provider("greynoise", 20, 5, 1, 0.8), url_(cfg.urls.greynoise), key_(cfg.keys.greynoise) {}
+      : base_provider("greynoise",
+                      cfg.keys.greynoise.empty() ? 0.2 : 20,
+                      cfg.keys.greynoise.empty() ? 1 : 5,
+                      1, 0.8),
+        url_(cfg.urls.greynoise), key_(cfg.keys.greynoise) {}
   bool supports(artifact_type t) const override { return t == artifact_type::ip; }
 
   query_result query(const artifact& art, provider_context& ctx) override {
@@ -2384,6 +2561,20 @@ class epss_provider final : public base_provider {
   std::string url_;
 };
 
+// ===========================================================================
+// CVE: NVD public API
+// ===========================================================================
+// Keyless by design: the public NVD API answers without credentials, so this
+// provider always runs and a blank NVD_API_KEY is not a missing key. The key is
+// optional and only lifts the published limit (5 requests / 30 s anonymous, 50
+// with one); the per-minute rates below stay under both in either case.
+//
+// Two NVD quirks the generic status handling gets wrong:
+//   * Throttling is answered with 403 (not 429), so status_note() spells that out
+//     instead of blaming the credentials.
+//   * An invalid apiKey is answered with a 404 and an empty body - the reason only
+//     appears in a response header - which without the check below would look
+//     exactly like "this CVE is not in NVD".
 class nvd_provider final : public base_provider {
  public:
   explicit nvd_provider(const config& cfg)
@@ -2398,6 +2589,12 @@ class nvd_provider final : public base_provider {
     if (!key_.empty()) req.headers.push_back({"apiKey", key_});
     const fetched f = fetch(ctx, req);
     note(r, f);
+    if (f.not_found && !key_.empty() && f.body.is_null()) {
+      r.errors.push_back({name(),
+                          "HTTP 404 with an empty body while NVD_API_KEY is set - NVD answers an invalid key "
+                          "with 404, so this may be a key problem rather than a missing CVE",
+                          f.status, false});
+    }
     if (!f.ok) return r;
     const json* list = jget(f.body, "vulnerabilities");
     if (list == nullptr || !list->is_array() || list->empty()) return r;
@@ -2437,6 +2634,14 @@ class nvd_provider final : public base_provider {
     fd.references.push_back("https://nvd.nist.gov/vuln/detail/" + art.value);
     r.findings.push_back(std::move(fd));
     return r;
+  }
+
+ protected:
+  std::string status_note(long status) const override {
+    if (status == 403)
+      return "rate limited (HTTP 403): the NVD public API blocks clients that exceed its limit "
+             "(5 requests / 30 s without an API key, 50 with one)";
+    return {};
   }
 
  private:
@@ -3356,19 +3561,55 @@ std::string to_stix_bundle(const report& r, const stix_options& options) {
       if (!options.include_techniques) continue;
       json ap = base("attack-pattern", stix_id("attack-pattern", e.art.value));
       ap["created_by_ref"] = identity_id;
-      std::string name = e.art.value, url = "https://attack.mitre.org/techniques/" + e.art.value;
-      std::replace(url.begin(), url.end(), '.', '/');
+      std::string name = e.art.value;
+      // MITRE spells a sub-technique URL with a slash: T1497/001, not T1497.001.
+      // Only the ID is rewritten - replacing every '.' would also mangle the
+      // dots in the "attack.mitre.org" host.
+      std::string url_id = e.art.value;
+      std::replace(url_id.begin(), url_id.end(), '.', '/');
+      std::string url = "https://attack.mitre.org/techniques/" + url_id;
       json phases = json::array();
+      json platforms = json::array();
+      std::string description, detection;
+      bool is_subtechnique = false;
       if (const auto it = e.knowledge.find("mitre_attack"); it != e.knowledge.end() && it->is_object()) {
-        if (it->contains("name")) name = (*it)["name"].get<std::string>();
-        if (it->contains("url") && (*it)["url"].is_string() && !(*it)["url"].get<std::string>().empty()) url = (*it)["url"].get<std::string>();
-        if (it->contains("tactic_shortnames")) {
-          for (const json& t : (*it)["tactic_shortnames"]) phases.push_back({{"kill_chain_name", "mitre-attack"}, {"phase_name", t}});
+        const json& k = *it;
+        if (k.contains("name") && k["name"].is_string() && !k["name"].get<std::string>().empty())
+          name = k["name"].get<std::string>();
+        if (k.contains("url") && k["url"].is_string() && !k["url"].get<std::string>().empty())
+          url = k["url"].get<std::string>();
+        if (k.contains("tactic_shortnames") && k["tactic_shortnames"].is_array()) {
+          for (const json& t : k["tactic_shortnames"])
+            if (t.is_string())
+              phases.push_back({{"kill_chain_name", "mitre-attack"}, {"phase_name", t.get<std::string>()}});
         }
+        if (k.contains("description") && k["description"].is_string())
+          description = k["description"].get<std::string>();
+        if (k.contains("detection") && k["detection"].is_string())
+          detection = k["detection"].get<std::string>();
+        if (k.contains("platforms") && k["platforms"].is_array()) {
+          for (const json& p : k["platforms"])
+            if (p.is_string()) platforms.push_back(p.get<std::string>());
+        }
+        if (k.contains("subtechnique") && k["subtechnique"].is_boolean())
+          is_subtechnique = k["subtechnique"].get<bool>();
       }
       ap["name"] = name;
       ap["external_references"] = json::array({{{"source_name", "mitre-attack"}, {"external_id", e.art.value}, {"url", url}}});
       if (!phases.empty()) ap["kill_chain_phases"] = phases;
+      if (description.empty()) {
+        // No ATT&CK text was ever resolved (knowledge cache never fetched):
+        // still ship a usable sentence instead of an empty field, and say where
+        // the technique came from.
+        description = "ATT&CK technique " + e.art.value +
+                      (name != e.art.value ? " (" + name + ")" : "") +
+                      " observed in this sample. See " + url + ".";
+      }
+      ap["description"] = description;
+      if (!detection.empty()) ap["x_mitre_detection"] = detection;
+      if (!platforms.empty()) ap["x_mitre_platforms"] = platforms;
+      if (is_subtechnique || e.art.value.find('.') != std::string::npos)
+        ap["x_mitre_is_subtechnique"] = true;
       emit(std::move(ap));
       continue;
     }
@@ -3450,19 +3691,72 @@ std::string to_stix_bundle(const report& r, const stix_options& options) {
 // console summary
 // ===========================================================================
 void print_summary(const report& r, std::ostream& out, std::size_t max_items) {
-  auto rule = [&out](const std::string& title) { out << "\n--- " << title << " ---\n"; };
-  auto counts = [](const std::map<std::string, std::size_t>& m) {
+  using console::paint;
+
+  // This block used to be written as plain text with "--- Title ---" rules at
+  // column 0. Neither the terminal palette nor the PDCurses colouriser knew that
+  // shape, so the whole CTI report landed in the results browser as one grey
+  // wall - including the [MAL ...] findings, which are the entire point of the
+  // phase. It now speaks the same vocabulary as the rest of the report
+  // (print_section / print_kv / print_bullet in main.cpp): "  -- Title" headings
+  // and "    Key:  value" lines, painted with the console palette.
+  const auto section = [&out](const std::string& title) {
+    out << '\n' << paint(console::cyan, "  -- " + title) << '\n';
+  };
+  const auto kv_raw = [&out](const std::string& key, const std::string& value) {
+    std::ostringstream line;
+    line << "    " << std::left << std::setw(22) << (key + ":");
+    out << line.str() << value << '\n';
+  };
+  const auto bullet = [&out](const std::string& text,
+                             std::string_view color = console::grey) {
+    out << paint(console::grey, "      * ") << paint(color, text) << '\n';
+  };
+  const auto counts = [](const std::map<std::string, std::size_t>& m) {
     std::string s;
     for (const auto& [k, v] : m) s += (s.empty() ? "" : ", ") + k + " " + std::to_string(v);
     return s.empty() ? std::string("none") : s;
   };
+  const auto pad = [](std::size_t value, int width) {
+    std::ostringstream o;
+    o << std::right << std::setw(width) << value;
+    return o.str();
+  };
 
-  out << "=== CTI report  (" << r.generated_at << ", " << std::fixed << std::setprecision(1) << r.seconds << " s) ===\n";
-  out << "Artifacts: " << r.items.size() << "  (" << counts(r.counts_by_type) << ")\n";
-  out << "Verdicts:  " << counts(r.counts_by_verdict) << "\n";
-  if (r.attack_version.empty() == false || r.kev_version.empty() == false) {
-    out << "Knowledge: ATT&CK " << (r.attack_version.empty() ? "n/a" : r.attack_version) << ", CISA KEV "
-        << (r.kev_version.empty() ? "n/a" : r.kev_version) << "\n";
+  {
+    std::ostringstream head;
+    head << "=== CTI report  (" << r.generated_at << ", " << std::fixed
+         << std::setprecision(1) << r.seconds << " s) ===";
+    out << '\n' << paint(console::cyan, head.str()) << '\n';
+  }
+  kv_raw("Artifacts", std::to_string(r.items.size()) + "  (" + counts(r.counts_by_type) + ")");
+  {
+    // Severity order, not the map's alphabetical one: the question this block
+    // has to answer first is "was anything malicious?", not "how much was benign?".
+    static constexpr const char* kOrder[] = {"malicious", "suspicious", "benign", "unknown"};
+    static constexpr std::string_view kColors[] = {console::red, console::yellow,
+                                                   console::green, console::grey};
+    std::string verdicts;
+    std::set<std::string> emitted;
+    for (std::size_t i = 0; i < std::size(kOrder); ++i) {
+      const auto it = r.counts_by_verdict.find(kOrder[i]);
+      if (it == r.counts_by_verdict.end()) continue;
+      emitted.insert(it->first);
+      if (!verdicts.empty()) verdicts += ", ";
+      verdicts += paint(kColors[i], it->first + " " + std::to_string(it->second));
+    }
+    // Anything a future verdict name introduces that the order list does not
+    // know about still gets reported rather than silently dropped.
+    for (const auto& [name, n] : r.counts_by_verdict) {
+      if (emitted.count(name) != 0) continue;
+      if (!verdicts.empty()) verdicts += ", ";
+      verdicts += paint(console::grey, name + " " + std::to_string(n));
+    }
+    kv_raw("Verdicts", verdicts.empty() ? std::string("none") : verdicts);
+  }
+  if (!r.attack_version.empty() || !r.kev_version.empty()) {
+    kv_raw("Knowledge", "ATT&CK " + (r.attack_version.empty() ? std::string("n/a") : r.attack_version) +
+                        ", CISA KEV " + (r.kev_version.empty() ? std::string("n/a") : r.kev_version));
   }
 
   std::vector<const enrichment*> flagged_items;
@@ -3471,84 +3765,151 @@ void print_summary(const report& r, std::ostream& out, std::size_t max_items) {
         e.art.type != artifact_type::technique) flagged_items.push_back(&e);
   }
   std::sort(flagged_items.begin(), flagged_items.end(), [](const enrichment* a, const enrichment* b) { return a->score > b->score; });
-  rule("Malicious / suspicious (" + std::to_string(flagged_items.size()) + ")");
+  section("Malicious / suspicious (" + std::to_string(flagged_items.size()) + ")");
   std::size_t shown = 0;
   for (const enrichment* e : flagged_items) {
-    if (shown++ >= max_items) { out << "  ... and " << flagged_items.size() - max_items << " more\n"; break; }
-    out << "  [" << (e->outcome == verdict::malicious ? "MAL" : "SUS") << " " << std::setw(3) << e->score << "] "
-        << e->art.key() << "\n      " << e->reason << "\n";
-    if (!e->families.empty()) {
-      out << "      families: ";
-      for (std::size_t i = 0; i < e->families.size() && i < 4; ++i) out << (i ? ", " : "") << e->families[i];
-      out << "\n";
+    if (shown++ >= max_items) {
+      bullet("... and " + std::to_string(flagged_items.size() - max_items) + " more "
+             "(the full list is in the CTI JSON export)");
+      break;
     }
-    if (!e->art.derived_from.empty()) out << "      found via " << e->art.derived_from << "\n";
+    const bool malicious = e->outcome == verdict::malicious;
+    std::ostringstream tag;
+    tag << (malicious ? "[MAL " : "[SUS ") << std::setw(3) << e->score << "] ";
+    out << "    " << paint(malicious ? console::red : console::yellow, tag.str())
+        << paint(console::green, e->art.key()) << '\n';
+
+    // `reason` is only the aggregation arithmetic ("virustotal (67), abuseipdb
+    // (100)"), which tells the reader nothing about why. The human-readable
+    // explanation already exists on every finding and was never printed, so
+    // surface the strongest few. KEV / EPSS / CVSS significance comes along for
+    // free: those are finding summaries too.
+    std::vector<const finding*> ranked;
+    ranked.reserve(e->findings.size());
+    for (const finding& f : e->findings) {
+      if (!f.summary.empty()) ranked.push_back(&f);
+    }
+    std::sort(ranked.begin(), ranked.end(), [](const finding* a, const finding* b) {
+      return a->confidence * a->weight > b->confidence * b->weight;
+    });
+    std::size_t shown_findings = 0;
+    for (const finding* f : ranked) {
+      if (shown_findings++ >= 3) break;
+      std::ostringstream lead;
+      lead << std::left << std::setw(16) << f->provider
+           << " (conf " << std::setw(3) << f->confidence << ")";
+      out << "        " << paint(console::cyan, lead.str()) << ' '
+          << paint(console::grey, f->summary) << '\n';
+    }
+    if (shown_findings == 0 && !e->reason.empty()) {
+      out << "        " << paint(console::grey, e->reason) << '\n';
+    }
+    if (!e->families.empty()) {
+      std::string families;
+      for (std::size_t i = 0; i < e->families.size() && i < 4; ++i) {
+        families += (i ? ", " : "") + e->families[i];
+      }
+      if (e->families.size() > 4) families += ", ...";
+      out << "        " << paint(console::grey, "families: ") << paint(console::red, families) << '\n';
+    }
+    if (!e->art.derived_from.empty()) {
+      out << "        " << paint(console::grey, "found via " + e->art.derived_from) << '\n';
+    }
   }
-  if (flagged_items.empty()) out << "  none\n";
+  if (flagged_items.empty()) bullet("none");
+
+  // Artifacts the pipeline never queried (private addresses, invalid names,
+  // empty-input hashes). They were reported nowhere before, which made a scan
+  // of an internal host look like a provider outage.
+  std::vector<const enrichment*> skipped_items;
+  for (const enrichment& e : r.items) {
+    if (e.skipped) skipped_items.push_back(&e);
+  }
+  if (!skipped_items.empty()) {
+    section("Skipped (" + std::to_string(skipped_items.size()) + ")");
+    std::size_t shown_skipped = 0;
+    for (const enrichment* e : skipped_items) {
+      if (shown_skipped++ >= max_items) {
+        bullet("... and " + std::to_string(skipped_items.size() - max_items) + " more");
+        break;
+      }
+      bullet(e->art.key() + (e->skip_reason.empty() ? "" : "  (" + e->skip_reason + ")"));
+    }
+  }
 
   if (!r.families.empty()) {
-    rule("Malware families");
-    for (std::size_t i = 0; i < r.families.size() && i < max_items; ++i)
-      out << "  " << r.families[i].name << ": " << r.families[i].artifacts.size() << " artifact(s), via " << r.families[i].providers.size() << " provider(s)\n";
+    section("Malware families");
+    std::size_t shown_families = 0;
+    for (const family_summary& f : r.families) {
+      if (shown_families++ >= max_items) break;
+      bullet(f.name + ": " + std::to_string(f.artifacts.size()) + " artifact(s), via " +
+                 std::to_string(f.providers.size()) + " provider(s)",
+             console::red);
+    }
   }
   if (!r.kev_cves.empty()) {
-    rule("CISA KEV (actively exploited)");
+    section("CISA KEV (actively exploited)");
     for (const std::string& cve : r.kev_cves) {
       const enrichment* e = r.find("cve:" + cve);
-      out << "  " << cve << (e != nullptr && !e->art.derived_from.empty() ? "  <- " + e->art.derived_from : "") << "\n";
+      out << "    " << paint(console::red, cve)
+          << (e != nullptr && !e->art.derived_from.empty()
+                  ? paint(console::grey, "  <- " + e->art.derived_from) : std::string())
+          << '\n';
     }
   }
   if (!r.attack_matrix.empty()) {
-    rule("MITRE ATT&CK");
+    section("MITRE ATT&CK");
     for (const tactic_coverage& t : r.attack_matrix) {
-      out << "  " << t.name << ":";
-      for (std::size_t i = 0; i < t.techniques.size() && i < 6; ++i) out << (i ? "; " : " ") << t.techniques[i];
-      out << "\n";
+      std::string techniques;
+      for (std::size_t i = 0; i < t.techniques.size() && i < 6; ++i) {
+        techniques += (i ? "; " : " ") + t.techniques[i];
+      }
+      if (t.techniques.size() > 6) techniques += "; ...";
+      bullet(t.name + ":" + techniques, console::cyan);
     }
-    for (const group_match& g : r.likely_groups)
-      out << "  possible group: " << g.name << " (" << g.id << ") shares " << g.techniques_matched << " technique(s)\n";
+    for (const group_match& g : r.likely_groups) {
+      bullet("possible group: " + g.name + " (" + g.id + ") shares " +
+                 std::to_string(g.techniques_matched) + " technique(s)",
+             console::yellow);
+    }
   }
   if (!r.shared_hosting.empty() || !r.asn_clusters.empty()) {
-    rule("Infrastructure");
+    section("Infrastructure");
     for (const shared_host& h : r.shared_hosting) {
-      out << "  " << h.ip << (h.asn.empty() ? "" : " (" + h.asn + " " + h.asn_name + ")") << " hosts:";
-      for (const std::string& d : h.domains) out << " " << d;
-      out << "\n";
+      std::string line = h.ip + (h.asn.empty() ? "" : " (" + h.asn + " " + h.asn_name + ")") + " hosts:";
+      for (const std::string& d : h.domains) line += " " + d;
+      bullet(line);
     }
-    for (const asn_cluster& c : r.asn_clusters) out << "  " << c.asn << " " << c.asn_name << ": " << c.ips.size() << " IPs\n";
-  }
-  rule("Providers");
-  for (const provider_stat& s : r.provider_stats) {
-    out << "  " << std::left << std::setw(18) << s.provider << std::right << " queries " << std::setw(3) << s.queries
-        << "  answers " << std::setw(3) << s.answers << "  mal " << std::setw(2) << s.malicious << "  sus " << std::setw(2) << s.suspicious
-        << "  cache " << std::setw(3) << s.cache_hits << "  errors " << s.errors << "\n";
-  }
-  if (!r.warnings.empty()) {
-    rule("Warnings");
-    for (const std::string& w : r.warnings) out << "  - " << w << "\n";
-  }
-  std::vector<const enrichment*> ip_items;
-  for (const enrichment& e : r.items) {
-    if (e.art.type == artifact_type::ip) ip_items.push_back(&e);
-  }
-  if (!ip_items.empty()) {
-    rule("IP network details");
-    for (const enrichment* e : ip_items) {
-      out << "  " << e->art.value << ": " << e->net.ip_version << ", class " << e->net.ip_class
-          << ", CIDR " << e->net.cidr << ", mask " << e->net.subnet_mask
-          << ", network " << e->net.network_address;
-      if (!e->net.broadcast_address.empty()) out << ", broadcast " << e->net.broadcast_address;
-      out << "\n";
+    for (const asn_cluster& c : r.asn_clusters) {
+      bullet(c.asn + " " + c.asn_name + ": " + std::to_string(c.ips.size()) + " IPs");
     }
   }
 
+  if (!r.provider_stats.empty()) {
+    section("Providers");
+    for (const provider_stat& s : r.provider_stats) {
+      out << "    " << std::left << std::setw(18) << s.provider << std::right
+          << " queries " << std::setw(3) << s.queries
+          << "  answers " << std::setw(3) << s.answers
+          << "  mal " << paint(s.malicious == 0 ? console::grey : console::red,
+                               pad(s.malicious, 3))
+          << "  sus " << paint(s.suspicious == 0 ? console::grey : console::yellow,
+                               pad(s.suspicious, 3))
+          << "  cache " << std::setw(3) << s.cache_hits
+          << "  errors " << s.errors << '\n';
+    }
+  }
+  if (!r.warnings.empty()) {
+    section("Warnings");
+    for (const std::string& w : r.warnings) bullet(w, console::yellow);
+  }
   if (r.error_count() > 0) {
-    rule("Provider errors (first 10)");
+    section("Provider errors (first 10)");
     std::size_t n = 0;
     for (const enrichment& e : r.items) {
       for (const provider_error& err : e.errors) {
         if (n++ >= 10) break;
-        out << "  " << e.art.key() << "  [" << err.provider << "] " << err.message << "\n";
+        bullet(e.art.key() + "  [" + err.provider + "] " + err.message, console::red);
       }
     }
   }

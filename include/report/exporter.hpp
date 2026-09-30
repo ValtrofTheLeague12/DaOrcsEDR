@@ -35,6 +35,7 @@ inline constexpr const char* got        = "exports/got";
 inline constexpr const char* radare2    = "exports/radare2";
 inline constexpr const char* malapi     = "exports/malapi";
 inline constexpr const char* cti        = "exports/cti";
+inline constexpr const char* stix       = "exports/stix";
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +122,33 @@ std::filesystem::path write_cti_json(const std::string& stem,
                                      const cti::report& report);
 
 // ---------------------------------------------------------------------------
+// STIX 2.1 writers
+// ---------------------------------------------------------------------------
+
+// STIX 2.1 bundle for the report (identity, indicators, malware families, CVEs,
+// ATT&CK attack-patterns and the relationships between them). Written as
+// <stem>_stix21.json. Returns an empty path if the bundle cannot be produced.
+std::filesystem::path write_stix_bundle(const std::string& stem,
+                                        const cti::report& report,
+                                        const cti::stix_options& options = {});
+
+// ATT&CK Navigator layer (layer format 4.5) covering every technique the run
+// observed, written as <stem>_navigator.json. Techniques come from both the
+// capa report and the (enriched) CTI report, and EACH technique is mapped to
+// ALL of its ATT&CK tactics - not just the one capa happened to report - with
+// the matched capa capabilities as the procedure text in the comment. The CTI
+// report is also why the layer is complete offline: its per-technique knowledge
+// was filled from the local ATT&CK cache. capa alone still drives the score
+// (number of matching capabilities), so a CTI-only technique scores the
+// baseline 1. Built from capa + report on purpose: capa runs offline, so the
+// layer is complete even when no CTI provider answered. Returns an empty path
+// when no technique was observed at all.
+std::filesystem::path write_navigator_layer(const std::string& stem,
+                                            const capa::report_t& capa_report,
+                                            const cti::report& report = {},
+                                            const std::string& attack_version = "");
+
+// ---------------------------------------------------------------------------
 // write_result_t and write_all overloads
 // ---------------------------------------------------------------------------
 
@@ -136,6 +164,21 @@ struct write_result_t {
   std::filesystem::path iat_calls;
   std::filesystem::path asm_text;
   std::filesystem::path overlay;
+
+  // Number of artifacts write_all() was actually asked to produce for this
+  // sample: the 4 mandatory JSON files plus every optional stage that was
+  // supplied, plus the overlay dump when the PE actually carries overlay
+  // bytes. Populated by write_all() so callers never have to re-derive it
+  // from the arguments and drift out of sync (which is how the optional
+  // overlay previously went uncounted and turned a healthy run into a
+  // spurious "export files failed to write" error).
+  std::size_t expected = 0;
+
+  // True when every artifact write_all() promised was written. This is the
+  // authoritative completeness check: paths().size() == expected.
+  bool complete() const {
+    return expected != 0 && paths().size() == expected;
+  }
 
   bool all_ok() const {
     return !fileinfo.empty() && !hash.empty() &&

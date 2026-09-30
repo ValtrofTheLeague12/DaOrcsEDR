@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STIX Viewer</title>
+<style>
+:root{
+  --bg:#0a0e16;--bg2:#0e1420;--panel:#111a2a;--panel2:#162036;
+  --line:#1c2a44;--line2:#284066;
+  --fg:#e2eaf6;--dim:#6b7f9e;--accent:#4d8dff;--cyan:#22d3ee;
+  --red:#ff4d5e;--orange:#ff9f43;--yellow:#ffd166;--green:#2ee6a8;
+  --purple:#a78bfa;--pink:#f472b6;
+  --mono:'Ubuntu Mono','JetBrains Mono',Consolas,monospace;
+  --r:10px;--rs:7px;--shadow:0 8px 32px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--mono);font-size:15px;line-height:1.5}
+header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:14px 20px;background:rgba(10,14,22,.92);border-bottom:1px solid var(--line);
+  backdrop-filter:blur(12px)}
+h1{font-size:19px;font-weight:700;letter-spacing:.3px}
+.sha{color:var(--dim);font-size:12.5px;max-width:52ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pill{font-size:11.5px;padding:3px 10px;border-radius:20px;border:1px solid var(--line2);
+  color:var(--dim);background:var(--panel)}
+.pill b{color:var(--fg)}
+.spacer{flex:1}
+button{font-family:var(--mono);font-size:13.5px;color:var(--fg);background:var(--panel);
+  border:1px solid var(--line2);border-radius:var(--rs);padding:7px 13px;cursor:pointer;
+  transition:all .15s ease}
+button:hover{border-color:var(--accent);color:#fff}
+button.on{background:rgba(77,141,255,.16);border-color:var(--accent);color:#fff}
+main{padding:18px 20px 40px;max-width:1800px;margin:0 auto}
+.tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow);padding:14px}
+.hint{color:var(--dim);font-size:12.5px;margin-top:10px}
+.warn{color:var(--yellow);font-size:12.5px;margin-top:8px}
+.empty{color:var(--dim);padding:38px 12px;text-align:center}
+svg{display:block;width:100%}
+/* ---- coverage ---- */
+#coverage{display:grid;gap:10px;grid-auto-flow:column;grid-auto-columns:minmax(190px,1fr);
+  overflow-x:auto;padding-bottom:8px}
+.tac{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r);padding:10px}
+.tac h3{font-size:12.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);
+  margin-bottom:8px;display:flex;justify-content:space-between;gap:6px}
+.tac h3 span{color:var(--accent);font-weight:700}
+.tech{display:block;width:100%;text-align:left;margin-bottom:5px;padding:6px 8px;font-size:12.5px;
+  background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.32);border-radius:var(--rs);
+  color:var(--fg)}
+.tech:hover{background:rgba(255,159,67,.2)}
+.tech code{color:var(--orange);font-weight:700;margin-right:5px}
+/* ---- graph ---- */
+#graphWrap{position:relative;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow)}
+#graphSvg{height:660px;cursor:grab}
+#graphSvg:active{cursor:grabbing}
+.node circle{stroke:#0a0e16;stroke-width:1.5px;cursor:pointer}
+.node text{font-size:10.5px;fill:var(--fg);pointer-events:none;
+  text-shadow:0 0 4px #0a0e16,0 0 4px #0a0e16}
+.node.dim{opacity:.16}
+.node.hit circle{stroke:var(--yellow);stroke-width:2.5px}
+.link{stroke:var(--line2);stroke-width:1.2px;fill:none}
+.link.hit{stroke:var(--yellow);stroke-width:1.8px}
+.linklabel{font-size:9.5px;fill:var(--dim);text-anchor:middle;pointer-events:none;
+  text-shadow:0 0 4px var(--panel),0 0 4px var(--panel),0 0 4px var(--panel)}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.toolbar input{font-family:var(--mono);font-size:13.5px;background:var(--panel);color:var(--fg);
+  border:1px solid var(--line2);border-radius:var(--rs);padding:7px 11px;min-width:210px}
+.toolbar input:focus{outline:none;border-color:var(--accent)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--dim);font-size:12px;margin-top:10px}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:5px}
+/* ---- detail ---- */
+#detail{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100%;z-index:40;
+  background:var(--panel);border-left:1px solid var(--line2);box-shadow:-12px 0 40px rgba(0,0,0,.5);
+  transform:translateX(100%);transition:transform .22s cubic-bezier(.4,0,.2,1);
+  display:flex;flex-direction:column}
+#detail.open{transform:none}
+#detail .dh{display:flex;align-items:flex-start;gap:10px;padding:16px;border-bottom:1px solid var(--line)}
+#detail h2{font-size:15px;font-weight:700;flex:1;line-height:1.35}
+#detail .type{color:var(--accent);font-size:11.5px;text-transform:uppercase;letter-spacing:.5px}
+#detail .body{flex:1;overflow:auto;padding:4px 16px 20px}
+.tagrow{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px}
+.tag{font-size:11.5px;padding:2px 9px;border-radius:20px;background:rgba(77,141,255,.12);
+  border:1px solid rgba(77,141,255,.32);color:var(--accent)}
+.sec{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);
+  margin:15px 0 7px;padding-bottom:5px;border-bottom:1px solid var(--line)}
+.body > .sec:first-child{margin-top:8px}
+.para{font-size:13px;color:var(--fg);line-height:1.62;white-space:pre-wrap;word-break:break-word}
+.kv{display:flex;gap:12px;justify-content:space-between;padding:4px 0;font-size:12.5px;
+  border-bottom:1px solid rgba(28,42,68,.55)}
+.kv:last-child{border-bottom:none}
+.kv .k{color:var(--dim);flex:0 0 auto}
+.kv .v{text-align:right;word-break:break-all}
+.body a{color:var(--accent);word-break:break-all}
+.rel{display:flex;gap:8px;align-items:baseline;padding:5px 0;font-size:12.5px;
+  border-bottom:1px solid rgba(28,42,68,.55)}
+.rel:last-child{border-bottom:none}
+.rel .d{color:var(--dim);flex:0 0 12px;text-align:center}
+.rel .t{color:var(--cyan);flex:0 0 auto}
+.rel .o{color:var(--fg);flex:1;word-break:break-word}
+.rel .o.link{cursor:pointer}
+.rel .o.link:hover{color:var(--accent);text-decoration:underline}
+.rel .o.dim{color:var(--dim)}
+.raw{margin-top:16px}
+.raw summary{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);
+  cursor:pointer;padding:6px 0;list-style:none}
+.raw summary::-webkit-details-marker{display:none}
+.raw summary::before{content:"▸ ";}
+.raw[open] summary::before{content:"▾ ";}
+.raw pre{font-size:12px;color:var(--dim);white-space:pre-wrap;word-break:break-word;
+  background:var(--bg2);border:1px solid var(--line);border-radius:var(--rs);padding:10px;
+  max-height:360px;overflow:auto}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">STIX Viewer</h1>
+  <span class="pill">objects <b id="cObjects">0</b></span>
+  <span class="pill">techniques <b id="cTech">0</b></span>
+  <span class="pill">tactics <b id="cTac">0</b></span>
+  <span class="pill">edges <b id="cEdges">0</b></span>
+  <span class="spacer"></span>
+  <button id="navBtn" title="Write the ATT&CK Navigator layer JSON">⬇ Navigator layer</button>
+</header>
+
+<main>
+  <div class="tabs">
+    <button class="on" data-v="coverage">ATT&amp;CK Coverage</button>
+    <button data-v="graph">Object Graph</button>
+  </div>
+
+  <section id="viewCoverage">
+    <div class="card">
+      <div id="coverage"></div>
+      <div id="covNote" class="hint"></div>
+    </div>
+  </section>
+
+  <section id="viewGraph" style="display:none">
+    <div class="toolbar">
+      <input id="search" placeholder="Filter nodes by name or ID…">
+      <span id="typeFilters" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+      <span class="spacer"></span>
+      <button id="fitBtn">Reset view</button>
+    </div>
+    <div id="graphWrap"><svg id="graphSvg"></svg></div>
+    <div class="legend" id="legend"></div>
+    <p class="hint">Click a node for its raw STIX object · drag to move · scroll to zoom ·
+      <span id="dropNote"></span></p>
+  </section>
+</main>
+
+<aside id="detail">
+  <div class="dh">
+    <div>
+      <div class="type" id="dType"></div>
+      <h2 id="dTitle"></h2>
+    </div>
+    <button id="dClose">✕</button>
+  </div>
+  <div class="tagrow" id="dTags"></div>
+  <div class="body" id="dBody"></div>
+</aside>
+
+<script>/*__D3__*/</script>
+<script>
+const DATA = /*__PAYLOAD__*/;
+</script>
+<script>
+(function () {
+  "use strict";
+  const G = DATA.graph, META = DATA.meta || {};
+  const COLORS = {
+    "attack-pattern":   "#ff9f43",
+    "x-mitre-tactic":   "#a78bfa",
+    "course-of-action": "#2ee6a8",
+    "indicator":        "#22d3ee",
+    "malware":          "#ff4d5e",
+    "tool":             "#f472b6",
+    "vulnerability":    "#ffd166",
+    "identity":         "#4d8dff",
+    "intrusion-set":    "#c084fc",
+    "report":           "#6b7f9e"
+  };
+  const FALLBACK = "#6b7f9e";
+  const RADIUS = {
+    "attack-pattern": 9, "x-mitre-tactic": 12, "course-of-action": 7,
+    "indicator": 8, "malware": 9, "vulnerability": 8, "identity": 7
+  };
+  const FALLBACK_R = 6;
+  const NAMES = {
+    "attack-pattern": "Technique", "x-mitre-tactic": "Tactic",
+    "course-of-action": "Mitigation", "indicator": "Indicator",
+    "malware": "Malware", "tool": "Tool", "vulnerability": "Vulnerability",
+    "identity": "Identity", "intrusion-set": "Intrusion Set",
+    "report": "Report", "relationship": "Relationship"
+  };
+  const color = t => COLORS[t] || FALLBACK;
+  const radius = t => RADIUS[t] || FALLBACK_R;
+  const tname = t => NAMES[t] || t.replace(/-/g, " ");
+  const TACTIC_NAME = short => {
+    const hit = (DATA.tactics || []).find(t => t.short === short);
+    return hit ? hit.name : String(short || "").replace(/-/g, " ");
+  };
+
+  document.getElementById("title").textContent = META.name || "STIX Viewer";
+  document.getElementById("cObjects").textContent = G.stats.objects;
+  document.getElementById("cTech").textContent = G.stats.techniques;
+  document.getElementById("cTac").textContent = G.stats.tactics;
+  document.getElementById("cEdges").textContent = G.stats.edges;
+  if (META.source) document.getElementById("title").title = META.source;
+
+  const drop = document.getElementById("dropNote");
+  const notes0 = [];
+  if (G.stats.dropped_edges) {
+    notes0.push(G.stats.dropped_edges +
+      " relationship(s) dropped (endpoint not present in this bundle)");
+  }
+  if (G.stats.dropped_truncated) {
+    notes0.push(G.stats.dropped_truncated +
+      " relationship(s) hidden with nodes beyond the display cap");
+  }
+  notes0.push("labels are relationship types");
+  drop.textContent = notes0.join(" · ");
+
+  /* ---------- detail panel ---------- */
+  const panel = document.getElementById("detail");
+  const esc = s => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  const nodeById = id => G.nodes.find(n => n.id === id);
+  const titleOf = id => { const n = nodeById(id); return n ? (n.label || n.id) : id; };
+
+  /* "T1129 Shared Modules" -> "T1129", for the chip row. */
+  function externalId(d) {
+    for (const ref of d.external_references || []) {
+      if (ref && ref.source_name === "mitre-attack" && ref.external_id) return ref;
+    }
+    for (const ref of d.external_references || []) {
+      if (ref && ref.external_id) return ref;
+    }
+    return null;
+  }
+
+  function show(id) {
+    const d = G.details[id] || {};
+    const node = nodeById(id) || {};
+    const ext = externalId(d);
+
+    document.getElementById("dType").textContent = tname(node.type || "object");
+    document.getElementById("dTitle").textContent = node.label || id;
+
+    /* --- chips --- */
+    const tags = [];
+    if (ext) tags.push(ext.external_id);
+    (node.tactics || []).forEach(t => tags.push(TACTIC_NAME(t)));
+    if (node.tactic) tags.push(TACTIC_NAME(node.tactic));
+    (d.x_mitre_platforms || []).forEach(p => tags.push(p));
+    if (d["x-synthesized"]) tags.push("inferred from " + d["x-synthesized"]);
+    document.getElementById("dTags").innerHTML =
+      tags.map(t => '<span class="tag">' + esc(t) + "</span>").join("");
+
+    /* --- body --- */
+    const out = [];
+    const sec = name => out.push('<div class="sec">' + esc(name) + "</div>");
+    const kv = (k, v) => out.push(
+      '<div class="kv"><span class="k">' + esc(k) + '</span><span class="v">' +
+      (v && v.html ? v.html : esc(v)) + "</span></div>");
+
+    if (d.description) {
+      sec("Description");
+      out.push('<div class="para">' + esc(d.description) + "</div>");
+    }
+    if (d.x_mitre_detection) {
+      sec("Detection");
+      out.push('<div class="para">' + esc(d.x_mitre_detection) + "</div>");
+    }
+
+    const facts = [];
+    if (ext && ext.url) {
+      facts.push(["ATT&CK", {html: '<a href="' + esc(ext.url) +
+        '" target="_blank" rel="noopener">' + esc(ext.url) + "</a>"}]);
+    }
+    if (d.x_mitre_is_subtechnique != null) facts.push(["Sub-technique", d.x_mitre_is_subtechnique ? "yes" : "no"]);
+    if (d.pattern) facts.push(["Pattern", d.pattern]);
+    if (d.confidence != null) facts.push(["Confidence", d.confidence]);
+    if (d.identity_class) facts.push(["Class", d.identity_class]);
+    if (d.report_types) facts.push(["Report type", d.report_types.join(", ")]);
+    sec("Details");
+    facts.forEach(f => kv(f[0], f[1]));
+    kv("Object ID", id);
+
+    if (d.x_mitre_mitigations && d.x_mitre_mitigations.length) {
+      sec("Mitigations");
+      d.x_mitre_mitigations.forEach(m => out.push('<div class="para">' + esc(m) + "</div>"));
+    }
+
+    /* --- relationships, in both directions --- */
+    const rels = G.edges.filter(e => e.source === id || e.target === id);
+    sec("Relationships (" + rels.length + ")");
+    if (!rels.length) {
+      out.push('<div class="para" style="color:var(--dim)">Nothing in this bundle ' +
+               "links to or from this object.</div>");
+    }
+    rels.slice(0, 60).forEach(e => {
+      const outgoing = e.source === id;
+      const other = outgoing ? e.target : e.source;
+      const present = !!nodeById(other);
+      out.push('<div class="rel">' +
+        '<span class="d">' + (outgoing ? "→" : "←") + "</span>" +
+        '<span class="t">' + esc(e.label || "related-to") + "</span>" +
+        '<span class="o' + (present ? " link" : " dim") + '" data-goto="' +
+        esc(present ? other : "") + '">' + esc(titleOf(other)) + "</span></div>");
+    });
+    if (rels.length > 60) {
+      out.push('<div class="para" style="color:var(--dim)">… ' + (rels.length - 60) +
+               " more</div>");
+    }
+
+    out.push('<details class="raw"><summary>Raw STIX object</summary><pre>' +
+             esc(JSON.stringify(d, null, 2)) + "</pre></details>");
+
+    const body = document.getElementById("dBody");
+    body.innerHTML = out.join("");
+    body.querySelectorAll("[data-goto]").forEach(el => {
+      el.onclick = () => { if (el.dataset.goto) show(el.dataset.goto); };
+    });
+    panel.classList.add("open");
+  }
+  document.getElementById("dClose").onclick = () => panel.classList.remove("open");
+
+  /* ---------- coverage ---------- */
+  const layerTechs = (DATA.layer && DATA.layer.techniques) || [];
+  const byTactic = new Map();
+  const unassigned = [];
+  layerTechs.forEach(t => {
+    if (!t.tactic) { unassigned.push(t); return; }
+    if (!byTactic.has(t.tactic)) byTactic.set(t.tactic, []);
+    byTactic.get(t.tactic).push(t);
+  });
+
+  const cov = document.getElementById("coverage");
+  if (!layerTechs.length) {
+    cov.innerHTML = '<div class="empty">No ATT&amp;CK techniques in this bundle.' +
+                    'Nothing to place on the matrix.</div>';
+  } else {
+    DATA.tactics.forEach(function (t, i) {
+      const list = byTactic.get(t.short);
+      const box = document.createElement("div");
+      box.className = "tac";
+      box.innerHTML = "<h3>" + t.name +
+        '<span>' + (list ? list.length : 0) + "</span></h3>";
+      (list || []).forEach(function (tech) {
+        const b = document.createElement("button");
+        b.className = "tech";
+        b.innerHTML = "<code>" + tech.techniqueID + "</code>" +
+                      (tech.comment || "");
+        b.onclick = function () {
+          const hit = G.nodes.find(n => n.technique_id === tech.techniqueID);
+          if (hit) { show(hit.id); } else { switchView("graph"); }
+        };
+        box.appendChild(b);
+      });
+      cov.appendChild(box);
+    });
+    if (unassigned.length) {
+      const box = document.createElement("div");
+      box.className = "tac";
+      box.innerHTML = "<h3>Unassigned<span>" + unassigned.length + "</span></h3>";
+      unassigned.forEach(function (tech) {
+        const b = document.createElement("button");
+        b.className = "tech";
+        b.innerHTML = "<code>" + tech.techniqueID + "</code>" + (tech.comment || "");
+        b.onclick = function () {
+          const hit = G.nodes.find(n => n.technique_id === tech.techniqueID);
+          if (hit) show(hit.id);
+        };
+        box.appendChild(b);
+      });
+      cov.appendChild(box);
+    }
+  }
+  const notes = [];
+  if (DATA.layer_note) notes.push(DATA.layer_note);
+  if (META.synthesized_from) {
+    notes.push("Techniques were synthesised from the " + META.synthesized_from +
+               " export: no STIX bundle was supplied for this run.");
+  }
+  if (G.stats.synthetic_tactics) {
+    notes.push(G.stats.synthetic_tactics + " tactic node(s) inferred from kill_chain_phases.");
+  }
+  if (G.stats.truncated_nodes) {
+    notes.push(G.stats.truncated_nodes + " object(s) beyond the display cap were not drawn; " +
+               "the coverage matrix above still lists every technique.");
+  }
+  document.getElementById("covNote").textContent = notes.join(" ");
+
+  /* ---------- navigator download ---------- */
+  document.getElementById("navBtn").onclick = function () {
+    if (!DATA.layer || !DATA.layer.techniques) {
+      alert("No ATT&CK techniques in this bundle - nothing to export.");
+      return;
+    }
+    const blob = new Blob([JSON.stringify(DATA.layer, null, 2)],
+                          { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (META.stem || "layer") + ".navigator.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  /* ---------- graph ---------- */
+  const svgEl = document.getElementById("graphSvg");
+  let svg, root, zoom, sim;
+  const nodes = G.nodes.map(n => Object.assign({}, n));
+  const links = G.edges.map(e => Object.assign({}, e));
+
+  function draw() {
+    svg = d3.select(svgEl);
+    const W = svgEl.clientWidth || 1200, H = 660;
+    svg.attr("viewBox", "0 0 " + W + " " + H);
+    svg.selectAll("*").remove();
+
+    const defs = svg.append("defs");
+    defs.append("marker")
+      .attr("id", "arrow").attr("viewBox", "0 -5 10 10").attr("refX", 17)
+      .attr("refY", 0).attr("markerWidth", 5).attr("markerHeight", 5)
+      .attr("orient", "auto")
+      .append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#284066");
+
+    zoom = d3.zoom().scaleExtent([0.15, 4])
+      .on("zoom", ev => root.attr("transform", ev.transform));
+    svg.call(zoom);
+    root = svg.append("g");
+
+    const link = root.append("g").selectAll("line")
+      .data(links).join("line").attr("class", "link")
+      .attr("marker-end", "url(#arrow)");
+
+    /* The relationship type is the whole point of these edges, so it goes on
+       the edge itself whenever the graph is small enough to read it, and into
+       a tooltip in every case. */
+    link.append("title").text(d =>
+      (d.label || "related-to") + "\n" + titleOf(d.source) + " → " + titleOf(d.target));
+    const showLabels = links.length > 0 && links.length <= 40;
+    const linkLabel = root.append("g").selectAll("text")
+      .data(showLabels ? links : []).join("text")
+      .attr("class", "linklabel")
+      .text(d => (d.label || "").replace(/-/g, " "));
+
+    const node = root.append("g").selectAll("g")
+      .data(nodes).join("g").attr("class", "node");
+
+    node.append("circle")
+      .attr("r", d => radius(d.type))
+      .attr("fill", d => color(d.type))
+      .on("click", (ev, d) => show(d.id));
+
+    node.append("text")
+      .attr("x", d => radius(d.type) + 4)
+      .attr("y", 3.5)
+      .text(d => (d.label || "").slice(0, 34));
+
+    node.append("title").text(d => (d.technique_id ? d.technique_id + " · " : "") +
+                                   (d.label || d.id));
+
+    node.call(d3.drag()
+      .on("start", function (ev, d) {
+        if (!ev.active) sim.alphaTarget(0.28).restart();
+        d.fx = d.x; d.fy = d.y;
+      })
+      .on("drag", (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+      .on("end", function (ev, d) {
+        if (!ev.active) sim.alphaTarget(0);
+        d.fx = null; d.fy = null;
+      }));
+
+    sim = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(links).id(d => d.id).distance(112).strength(0.45))
+      .force("charge", d3.forceManyBody().strength(-460))
+      .force("center", d3.forceCenter(W / 2, H / 2))
+      .force("collide", d3.forceCollide(d => radius(d.type) + 26))
+      .on("tick", function () {
+        link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+            .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+        linkLabel.attr("x", d => (d.source.x + d.target.x) / 2)
+                 .attr("y", d => (d.source.y + d.target.y) / 2 - 3);
+        node.attr("transform", d => "translate(" + d.x + "," + d.y + ")");
+      });
+
+    typeFilter = node;
+  }
+
+  let typeFilter = null;
+
+  /* ---------- type filters + legend ---------- */
+  const types = Array.from(new Set(G.nodes.map(n => n.type))).sort();
+  const filters = document.getElementById("typeFilters");
+  const legend = document.getElementById("legend");
+  const active = new Set(types);
+  types.forEach(function (t) {
+    const b = document.createElement("button");
+    b.className = "on";
+    b.textContent = tname(t) + " (" + G.nodes.filter(n => n.type === t).length + ")";
+    b.onclick = function () {
+      if (active.has(t)) { active.delete(t); b.classList.remove("on"); }
+      else { active.add(t); b.classList.add("on"); }
+      applyFilter();
+    };
+    filters.appendChild(b);
+    const li = document.createElement("span");
+    li.innerHTML = '<i style="background:' + color(t) + '"></i>' + tname(t);
+    legend.appendChild(li);
+  });
+
+  function applyFilter() {
+    const q = (document.getElementById("search").value || "").trim().toLowerCase();
+    if (!typeFilter) return;
+    typeFilter.classed("dim", function (d) {
+      if (!active.has(d.type)) return true;
+      if (!q) return false;
+      const hay = (d.label + " " + (d.technique_id || "") + " " + (d.sub || "")).toLowerCase();
+      return hay.indexOf(q) === -1;
+    }).classed("hit", function (d) {
+      if (!q) return false;
+      const hay = (d.label + " " + (d.technique_id || "") + " " + (d.sub || "")).toLowerCase();
+      return active.has(d.type) && hay.indexOf(q) !== -1;
+    });
+  }
+  document.getElementById("search").addEventListener("input", applyFilter);
+  document.getElementById("fitBtn").onclick = function () {
+    svg.transition().duration(280).call(zoom.transform, d3.zoomIdentity);
+  };
+
+  /* ---------- view switching ---------- */
+  function switchView(name) {
+    document.querySelectorAll(".tabs button").forEach(function (b) {
+      b.classList.toggle("on", b.dataset.v === name);
+    });
+    document.getElementById("viewCoverage").style.display = name === "coverage" ? "" : "none";
+    document.getElementById("viewGraph").style.display = name === "graph" ? "" : "none";
+    if (name === "graph" && !svg) { draw(); applyFilter(); }
+  }
+  document.querySelectorAll(".tabs button").forEach(function (b) {
+    b.onclick = () => switchView(b.dataset.v);
+  });
+
+  if (DATA.layer_note) {
+    document.getElementById("navBtn").title += " — " + DATA.layer_note;
+  }
+})();
+</script>
+</body>
+</html>

@@ -451,8 +451,28 @@ bool extract_strings(strings_result_t& result,
                      std::size_t max_strings = 500000);
 
 // ---------------------------------------------------------------------------
-// Packer detection
+// Byte histogram (whole file)
 // ---------------------------------------------------------------------------
+
+struct byte_histogram_t {
+  error_type_t  errors;
+  std::uint64_t counts[256]      = {};
+  double        frequencies[256] = {};
+
+  std::uint64_t total_bytes   = 0;
+  double        entropy       = 0.0;
+  double        chi2          = 0.0;
+  double        mean          = 0.0;
+  double        stddev        = 0.0;
+
+  std::uint8_t most_common_byte  = 0;
+  std::uint8_t least_common_byte = 0;
+  std::size_t  nonzero_bins      = 0;
+  std::size_t  zero_bytes        = 0;
+};
+
+bool extract_byte_histogram(byte_histogram_t& result,
+                            const analyzer::file_info_t& info);
 
 struct packer_detection_t {
   error_type_t             errors;
@@ -662,6 +682,7 @@ struct extraction_result_t {
   pe_sections_t       pe;
   sections_result_t   sections;
   strings_result_t    strings;
+  byte_histogram_t    histogram;
   packer_detection_t  packer;
   opcode_stats_t      opcodes;
   debug_symbols_t     debug_symbols;
@@ -735,6 +756,9 @@ std::vector<std::string> get_error_messages(const sections_result_t& result);
 
 bool has_errors(const strings_result_t& result);
 std::vector<std::string> get_error_messages(const strings_result_t& result);
+
+bool has_errors(const byte_histogram_t& result);
+std::vector<std::string> get_error_messages(const byte_histogram_t& result);
 
 bool has_errors(const packer_detection_t& result);
 std::vector<std::string> get_error_messages(const packer_detection_t& result);
