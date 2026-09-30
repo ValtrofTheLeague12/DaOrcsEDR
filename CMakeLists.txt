@@ -535,13 +535,15 @@ endif()
 
 # The unit and phase tests are disabled for now.
 #
-# tests/test_ioc.c++ and tests/test_pe_overlay.py are no longer in the tree, so
-# their target (test_ioc), the test_ioc_generator test and the four
-# test_pe_phase_* registrations have been removed rather than left dangling. A
-# missing source in add_executable() is a hard generate-time error, so keeping
-# them would have made -DSTATIC_ANALYZER_ENABLE_TESTS=ON impossible to
-# configure. Restore both files (git checkout HEAD -- tests/) and re-add the
-# target and registrations that used to sit here to bring them back.
+# tests/test_ioc.c++ and tests/test_pe_overlay.py are both present, but
+# their targets (test_ioc, the test_ioc_generator test and the four
+# test_pe_phase_* registrations) are not wired up here, so a
+# -DSTATIC_ANALYZER_ENABLE_TESTS=ON configure builds only the fixture and
+# the smoke test below. Re-add those targets and registrations to bring the
+# suite back. A missing source in add_executable() is a hard generate-time
+# error, so a registration must never outlive its file: if either test
+# disappears again, drop its target here too (or restore the file with
+# git checkout HEAD -- tests/).
 if(STATIC_ANALYZER_ENABLE_TESTS AND BUILD_TESTING)
     # Fail loudly if a registered test source has been deleted. Without this,
     # a removed source silently degrades the build to "0 tests, exit 0" because
