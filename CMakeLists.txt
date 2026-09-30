@@ -333,15 +333,26 @@ if(STATIC_ANALYZER_BUILD_SAMPLE_ARCHIVE)
         set(SAMPLE_ARCHIVE_ZSTD "${SAMPLE_ARCHIVE_ZSTD_LIBRARY}")
     endif()
 
-    add_executable(sample_archive "${CMAKE_SOURCE_DIR}/tools/sample_archive.cpp")
+    # The whole tool lives under tools/sample_archive/ on purpose: the
+    # analyzer's source glob is src/*/*.cpp, and anything landing there gets
+    # compiled into static_analyzer, which does not link zstd. Three TUs: the
+    # CLI driver, the compress/decompress library, and its tiny stderr logger
+    # (deliberately not the analyzer's logging subsystem).
+    add_executable(sample_archive
+        "${CMAKE_SOURCE_DIR}/tools/sample_archive/main.cpp"
+        "${CMAKE_SOURCE_DIR}/tools/sample_archive/sample_archive.cpp"
+        "${CMAKE_SOURCE_DIR}/tools/sample_archive/archive_log.cpp"
+    )
     target_compile_features(sample_archive PRIVATE cxx_std_20)
     target_compile_options(sample_archive PRIVATE
         $<$<CONFIG:Release>:-O2>
         -Wall -Wextra -Wpedantic
     )
-    # zstd_vendored exports os-libzstd/lib as a PUBLIC include dir, so the
-    # system branch has to supply the equivalent explicitly.
+    # Project headers (sample_archive/...) first; zstd_vendored exports
+    # os-libzstd/lib as a PUBLIC include dir, so the system branch has to
+    # supply the zstd include dir explicitly.
     target_include_directories(sample_archive PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
         ${SAMPLE_ARCHIVE_ZSTD_INCLUDE_DIR}
     )
     target_link_libraries(sample_archive PRIVATE ${SAMPLE_ARCHIVE_ZSTD})

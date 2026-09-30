@@ -1,34 +1,58 @@
-// sample_archive: zstd compress / decompress for sample STORAGE and TRANSFER.
+// sample_archive library: zstd compress / decompress for sample STORAGE and
+// TRANSFER (ported from tools/sample_archive.cpp, keeping its verified
+// streaming logic and both bug fixes: ZSTD_getErrorName(size_t) error
+// reporting, and rejecting truncated frames instead of silently accepting a
+// partial restore).
 //
-// This tool only moves bytes around; it does not make anything executable. A
-// zstd-compressed PE has no MZ header, no section table and no entry point, so
-// it cannot be run or analyzed as a binary - decompress it first if you need to
-// feed it to static_analyzer. It exists to keep samples small in an evidence
-// store, a mail attachment, or a transfer to another analysis host.
-//
-//   sample_archive compress   <in> [out.zst]
-//   sample_archive decompress <in.zst> [out]
-//   sample_archive info       <in.zst>
-//
-// Output defaults to the input path with ".zst" appended, or with the
-// extension stripped for decompress.
+// Only moves bytes around; never makes anything executable. See
+// include/sample_archive/sample_archive.hpp for the API contract.
+
+#include "sample_archive/sample_archive.hpp"
+
+#include "sample_archive/archive_log.hpp"
 
 #include <zstd.h>
 
 #include <algorithm>
-#include <cstdint>
 #include <cstdio>
-#include <filesystem>
 #include <fstream>
-#include <iomanip>
-#include <iostream>
-#include <optional>
-#include <string>
 #include <vector>
+
+namespace sample_archive {
 
 namespace {
 
 constexpr std::size_t kChunk = 256 * 1024;
+
+std::filesystem::path temp_sibling(const std::filesystem::path& out) {
+    std::filesystem::path tmp = out;
+    tmp += ".partial";
+    return tmp;
+}
+
+// On any failure path that has already created the staged temp file, drop it
+// so an aborted run never leaves a ".partial" lying next to the archive.
+void discard(const std::filesystem::path& tmp) {
+    std::error_code ignored;
+    std::filesystem::remove(tmp, ignored);
+}
+
+// zstd wants the raw size_t result here: ZSTD_getErrorName(size_t) decodes
+// the error from the result itself. Converting through ZSTD_getErrorCode()
+// first mis-reports real failures (e.g. a checksum mismatch came out as
+// "No error detected").
+std::string describe(std::size_t rc, std::uint64_t pos) {
+    return std::string(ZSTD_getErrorName(rc)) + " (at byte " + std::to_string(pos) + ")";
+}
+
+}  // namespace
+
+std::optional<std::uint64_t> size_on_disk(const std::filesystem::path& p) {
+    std::error_code ec;
+    const auto n = std::filesystem::file_size(p, ec);
+    if (ec) return std::nullopt;
+    return static_cast<std::uint64_t>(n);
+}
 
 std::string human_size(std::uint64_t bytes) {
     static const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
@@ -41,44 +65,8 @@ std::string human_size(std::uint64_t bytes) {
     char buf[64];
     if (unit == 0) std::snprintf(buf, sizeof(buf), "%llu %s",
                                  static_cast<unsigned long long>(bytes), units[unit]);
-    else          std::snprintf(buf, sizeof(buf), "%.2f %s", value, units[unit]);
+    else           std::snprintf(buf, sizeof(buf), "%.2f %s", value, units[unit]);
     return buf;
-}
-
-void usage() {
-    std::cout
-        << "sample_archive - zstd compress/decompress for sample storage or transfer\n\n"
-        << "usage:\n"
-        << "  sample_archive compress   <in> [out.zst]\n"
-        << "  sample_archive decompress <in.zst> [out]\n"
-        << "  sample_archive info       <in.zst>\n\n"
-        << "Notes:\n"
-        << "  * Compressed output is a zstd frame, not a PE. Decompress it before\n"
-        << "    handing it to static_analyzer or any other binary parser.\n"
-        << "  * Frames carry an xxhash64 content checksum; corrupt input is rejected\n"
-        << "    on decompress rather than silently producing garbage.\n";
-}
-
-// Not named file_size(): argument-dependent lookup would make every call
-// ambiguous with std::filesystem::file_size.
-std::optional<std::uint64_t> size_on_disk(const std::filesystem::path& p) {
-    std::error_code ec;
-    const auto n = std::filesystem::file_size(p, ec);
-    if (ec) return std::nullopt;
-    return static_cast<std::uint64_t>(n);
-}
-
-struct result_t {
-    bool ok = false;
-    std::string error;
-    std::uint64_t in_bytes = 0;
-    std::uint64_t out_bytes = 0;
-};
-
-// zstd's own error strings are terse; add the stream position so a truncated
-// file can be told apart from a corrupt one.
-std::string describe(ZSTD_ErrorCode code, std::uint64_t pos) {
-    return std::string(ZSTD_getErrorName(code)) + " (at byte " + std::to_string(pos) + ")";
 }
 
 result_t compress(const std::filesystem::path& in, const std::filesystem::path& out) {
@@ -86,17 +74,25 @@ result_t compress(const std::filesystem::path& in, const std::filesystem::path& 
     std::ifstream src(in, std::ios::binary);
     if (!src) { r.error = "cannot read " + in.string(); return r; }
 
-    std::ofstream dst(out, std::ios::binary);
-    if (!dst) { r.error = "cannot write " + out.string(); return r; }
+    // Staged write + rename on success, so a failure can never leave a
+    // half-written sample behind that looks like a real one.
+    const std::filesystem::path tmp = temp_sibling(out);
+    std::ofstream dst(tmp, std::ios::binary | std::ios::trunc);
+    if (!dst) { r.error = "cannot write " + tmp.string(); return r; }
 
     std::vector<char> in_buf(kChunk);
     std::vector<char> out_buf(ZSTD_CStreamOutSize());
 
     ZSTD_CStream* cs = ZSTD_createCStream();
-    if (cs == nullptr) { r.error = "ZSTD_createCStream failed"; return r; }
+    if (cs == nullptr) {
+        r.error = "ZSTD_createCStream failed";
+        dst.close();
+        discard(tmp);
+        return r;
+    }
     // Level 19: best ratio, and this is an offline storage path where the CPU
     // cost does not matter.
-    const std::size_t init_err = ZSTD_initCStream(cs, 19);
+    const std::size_t init_err = ZSTD_initCStream(cs, kLevel);
     if (!ZSTD_isError(init_err)) {
         // xxhash64 content checksum, so a corrupt archive is detected on
         // decompress instead of yielding silently wrong bytes.
@@ -128,22 +124,38 @@ result_t compress(const std::filesystem::path& in, const std::filesystem::path& 
         const std::size_t rc = eof ? ZSTD_endStream(cs, &output)
                                    : ZSTD_compressStream(cs, &output, &input);
         if (ZSTD_isError(rc)) {
-            r.error = "compress failed: " + describe(ZSTD_getErrorCode(rc), input.pos);
+            r.error = "compress failed: " + describe(rc, input.pos);
             break;
         }
         if (output.pos) {
             dst.write(out_buf.data(), static_cast<std::streamsize>(output.pos));
             r.out_bytes += output.pos;
-            if (!dst) { r.error = "write error on " + out.string(); break; }
+            if (!dst) { r.error = "write error on " + tmp.string(); break; }
         }
         if (eof && rc == 0) finished = true;       // frame fully flushed
+        archive_log::debug("compress: out=" + std::to_string(r.out_bytes) +
+                           (eof ? " (flushing)" : ""));
     }
 
     ZSTD_freeCStream(cs);
-    if (!r.error.empty()) return r;
+    dst.close();
+    if (!r.error.empty()) {
+        discard(tmp);
+        return r;
+    }
+
+    std::error_code ec;
+    std::filesystem::rename(tmp, out, ec);
+    if (ec) {
+        discard(tmp);
+        r.error = "cannot move " + tmp.string() + " -> " + out.string() + ": " + ec.message();
+        return r;
+    }
 
     r.in_bytes = size_on_disk(in).value_or(r.out_bytes);
     r.ok = true;
+    archive_log::info("compressed " + in.string() + " -> " + out.string() + " (" +
+                      std::to_string(r.in_bytes) + " -> " + std::to_string(r.out_bytes) + ")");
     return r;
 }
 
@@ -154,23 +166,30 @@ result_t decompress(const std::filesystem::path& in, const std::filesystem::path
 
     // Write to a sibling temp file and rename on success, so a truncated or
     // corrupt archive never leaves a half-written "restored" sample behind.
-    std::filesystem::path tmp = out;
-    tmp += ".partial";
+    const std::filesystem::path tmp = temp_sibling(out);
     {
-        std::ofstream dst(tmp, std::ios::binary);
+        std::ofstream dst(tmp, std::ios::binary | std::ios::trunc);
         if (!dst) { r.error = "cannot write " + tmp.string(); return r; }
 
         std::vector<char> in_buf(kChunk);
         std::vector<char> out_buf(ZSTD_DStreamOutSize());
 
         ZSTD_DStream* ds = ZSTD_createDStream();
-        if (ds == nullptr) { r.error = "ZSTD_createDStream failed"; return r; }
+        if (ds == nullptr) {
+            r.error = "ZSTD_createDStream failed";
+            dst.close();
+            discard(tmp);
+            return r;
+        }
         const std::size_t init_err = ZSTD_initDStream(ds);
 
         ZSTD_inBuffer input{in_buf.data(), 0, 0};
         bool eof = false;
+        bool frame_done = false;
+        std::uint64_t total_in = 0;
         while (!ZSTD_isError(init_err)) {
             if (input.pos == input.size && !eof) {
+                total_in += static_cast<std::uint64_t>(input.size);
                 src.read(in_buf.data(), static_cast<std::streamsize>(in_buf.size()));
                 const std::streamsize got = src.gcount();
                 if (got < 0) { r.error = "read error on " + in.string(); break; }
@@ -180,25 +199,34 @@ result_t decompress(const std::filesystem::path& in, const std::filesystem::path
             ZSTD_outBuffer output{out_buf.data(), out_buf.size(), 0};
             const std::size_t rc = ZSTD_decompressStream(ds, &output, &input);
             if (ZSTD_isError(rc)) {
-                r.error = "decompress failed: " + describe(ZSTD_getErrorCode(rc), input.pos);
+                r.error = "decompress failed: " + describe(rc, input.pos);
                 break;
             }
+            if (rc == 0) frame_done = true;
+            archive_log::debug("decompress: out=" + std::to_string(r.out_bytes) +
+                               (eof ? " (draining)" : ""));
             if (output.pos) {
                 dst.write(out_buf.data(), static_cast<std::streamsize>(output.pos));
                 r.out_bytes += output.pos;
                 if (!dst) { r.error = "write error on " + tmp.string(); break; }
             }
-            // At EOF keep feeding an empty input until zstd reports the frame
-            // finished (rc == 0). Breaking on EOF alone would silently truncate
-            // any sample whose final frame still has buffered blocks.
-            if (eof && input.pos == input.size && (rc == 0 || output.pos == 0)) break;
+            // rc == 0 means the current frame is fully decoded. At EOF with no
+            // output left to flush the stream is done; a nonzero rc here means
+            // the frame is incomplete, i.e. truncated input, so fail instead
+            // of silently accepting a partial sample.
+            if (eof && input.pos == input.size && output.pos == 0) {
+                if (!frame_done) {
+                    r.error = "decompress failed: truncated input (frame incomplete "
+                              "at byte " + std::to_string(total_in) + ")";
+                }
+                break;
+            }
         }
 
         ZSTD_freeDStream(ds);
+        dst.close();
         if (!r.error.empty()) {
-            dst.close();
-            std::error_code ignored;
-            std::filesystem::remove(tmp, ignored);
+            discard(tmp);
             return r;
         }
     }
@@ -206,20 +234,22 @@ result_t decompress(const std::filesystem::path& in, const std::filesystem::path
     std::error_code ec;
     std::filesystem::rename(tmp, out, ec);
     if (ec) {
-        std::error_code ignored;
-        std::filesystem::remove(tmp, ignored);
+        discard(tmp);
         r.error = "cannot move " + tmp.string() + " -> " + out.string() + ": " + ec.message();
         return r;
     }
 
     r.in_bytes = size_on_disk(in).value_or(r.out_bytes);
     r.ok = true;
+    archive_log::info("decompressed " + in.string() + " -> " + out.string() + " (" +
+                      std::to_string(r.in_bytes) + " -> " + std::to_string(r.out_bytes) + ")");
     return r;
 }
 
-int show_info(const std::filesystem::path& in) {
+info_t inspect(const std::filesystem::path& in) {
+    info_t i;
     std::ifstream src(in, std::ios::binary);
-    if (!src) { std::cerr << "error: cannot read " << in << "\n"; return 1; }
+    if (!src) { i.error = "cannot read " + in.string(); return i; }
 
     // Frame boundaries come from ZSTD_findFrameCompressedSize rather than from
     // ZSTD_decompressStream's return value. The latter is only guaranteed to
@@ -229,7 +259,8 @@ int show_info(const std::filesystem::path& in) {
     //
     // Only the frame header is needed to size a frame, so a small window at
     // each offset is enough and the file is never held in memory.
-    const std::uint64_t total = size_on_disk(in).value_or(0);
+    i.compressed = size_on_disk(in).value_or(0);
+    const std::uint64_t total = i.compressed;
 
     // ZSTD_findFrameCompressedSize needs the whole frame in the buffer, not
     // just its header, so read the largest frame this file could hold. Capped
@@ -249,11 +280,10 @@ int show_info(const std::filesystem::path& in) {
         const std::size_t frame_size =
             ZSTD_findFrameCompressedSize(buf.data(), static_cast<std::size_t>(got));
         if (ZSTD_isError(frame_size)) {
-            std::cerr << "error: " << ZSTD_getErrorName(frame_size)
-                      << " at byte " << offset
-                      << " (file " << total << " B, read " << got
-                      << " B, needs more than " << buf.size() << " B)\n";
-            return 1;
+            i.error = "Unknown frame descriptor at byte " + std::to_string(offset) + " (file " +
+                      std::to_string(total) + " B, read " + std::to_string(got) +
+                      " B, needs more than " + std::to_string(buf.size()) + " B)";
+            return i;
         }
         if (frame_size == 0) break;                 // no further frame
         ++frames;
@@ -262,7 +292,7 @@ int show_info(const std::filesystem::path& in) {
 
     // Measure the decompressed size so the ratio is meaningful.
     ZSTD_DStream* ds = ZSTD_createDStream();
-    if (ds == nullptr) { std::cerr << "error: ZSTD_createDStream failed\n"; return 1; }
+    if (ds == nullptr) { i.error = "ZSTD_createDStream failed"; return i; }
     ZSTD_initDStream(ds);
     src.clear();
     src.seekg(0, std::ios::beg);
@@ -290,108 +320,26 @@ int show_info(const std::filesystem::path& in) {
         ZSTD_outBuffer output{out_buf.data(), out_buf.size(), 0};
         const std::size_t rc = ZSTD_decompressStream(ds, &output, &input);
         if (ZSTD_isError(rc)) {
-            std::cerr << "error: " << ZSTD_getErrorName(rc) << " at byte " << input.pos << "\n";
+            i.error = std::string(ZSTD_getErrorName(rc)) + " at byte " + std::to_string(input.pos);
             ZSTD_freeDStream(ds);
-            return 1;
+            return i;
         }
         produced += output.pos;
         if (eof && input.pos == input.size && (rc == 0 || output.pos == 0)) break;
     }
     ZSTD_freeDStream(ds);
 
-    if (offset < total) {
-        // Trailing bytes that are not a frame: skippable frames or junk.
-        std::cout << "note:        " << (total - offset)
-                  << " trailing byte(s) after the last frame\n";
-    }
-
-    std::cout << "file:         " << in << "\n"
-              << "compressed:   " << human_size(total) << "\n"
-              << "decompressed: " << human_size(produced) << "\n";
-    if (total) {
-        std::cout << "ratio:        " << std::fixed << std::setprecision(1)
-                  << (100.0 * static_cast<double>(produced) / static_cast<double>(total))
-                  << "% of original\n";
-    }
-    std::cout << "frames:       " << frames << "\n"
-              << "content:      xxhash64 checksum verified while scanning\n";
-    return 0;
+    i.trailing = total - offset;
+    i.produced = produced;
+    i.frames = frames;
+    i.checksum = true;  // verified implicitly: a mismatch fails the scan above
+    i.ok = true;
+    archive_log::debug("inspect: frames=" + std::to_string(frames) +
+                       " produced=" + std::to_string(produced));
+    return i;
 }
 
-void report(const char* verb, const std::filesystem::path& out, const result_t& r) {
-    std::cout << "[+] " << verb << " " << out.string() << "\n"
-              << "    " << human_size(r.in_bytes) << " -> " << human_size(r.out_bytes) << "\n";
-    if (r.in_bytes) {
-        std::cout << "    " << std::fixed << std::setprecision(1)
-                  << (100.0 * static_cast<double>(r.out_bytes) /
-                      static_cast<double>(r.in_bytes))
-                  << "% of original\n";
-    }
-}
+}  // namespace sample_archive
 
-}  // namespace
 
-int main(int argc, char** argv) {
-    // --help is valid with no file argument, so it has to be handled before
-    // the argc check below.
-    if (argc >= 2) {
-        const std::string maybe_verb = argv[1];
-        if (maybe_verb == "-h" || maybe_verb == "--help" || maybe_verb == "help") {
-            usage();
-            return 0;
-        }
-    }
-    if (argc < 3) { usage(); return 2; }
 
-    const std::string verb = argv[1];
-    const std::filesystem::path in = argv[2];
-
-    if (verb == "info") {
-        if (argc > 3) { std::cerr << "error: info takes exactly one file\n"; return 2; }
-        return show_info(in);
-    }
-
-    const bool compressing = (verb == "compress");
-    const bool expanding = (verb == "decompress");
-    if (!compressing && !expanding) {
-        std::cerr << "error: unknown verb '" << verb << "'\n\n";
-        usage();
-        return 2;
-    }
-    if (argc > 4) {
-        std::cerr << "error: too many arguments\n\n";
-        usage();
-        return 2;
-    }
-
-    std::filesystem::path out;
-    if (argc == 4) {
-        out = argv[3];
-    } else if (compressing) {
-        out = in;
-        out += ".zst";
-    } else {
-        out = in;
-        out.replace_extension();                 // drop ".zst"
-    }
-
-    if (out == in) {
-        std::cerr << "error: refusing to overwrite the input with its own output\n";
-        return 1;
-    }
-    if (std::filesystem::exists(out)) {
-        std::cerr << "error: " << out.string() << " already exists (delete it or pass a name)\n";
-        return 1;
-    }
-
-    const result_t r = compressing ? compress(in, out) : decompress(in, out);
-    if (!r.ok) {
-        std::cerr << "error: " << r.error << "\n";
-        return 1;
-    }
-    report(compressing ? "compressed to" : "decompressed to", out, r);
-    if (compressing) {
-        std::cout << "    note: this is a zstd frame, not a PE - decompress before analysis\n";
-    }
-    return 0;
-}
