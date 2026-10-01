@@ -353,6 +353,23 @@ json to_json(const ioc::ioc_results_t& r) {
         });
     }
 
+    // CyberChef encoded-string flags: the candidate, the recipe that
+    // decoded it, what came out, and why that was flagged.
+    auto clip_text = [](const std::string& s, std::size_t n) {
+        return s.size() <= n ? s : s.substr(0, n) + "...";
+    };
+    json encoded_flags = json::array();
+    for (const auto& f : r.encoded_flags) {
+        encoded_flags.push_back({
+            {"recipe",     f.recipe},
+            {"original",   clip_text(f.original, 400)},
+            {"decoded",    clip_text(f.decoded, 1500)},
+            {"indicators", f.indicators},
+            {"urls",       f.urls},
+        });
+    }
+    add_slice("encoded", r.encoded_flags.size());
+
     if (ioc::has_errors(r.errors)) {
         LOG_WARN("exporter: to_json(ioc): extraction errors present "
                  "(flags={}, messages={})",
@@ -371,6 +388,7 @@ json to_json(const ioc::ioc_results_t& r) {
             {"sha256",    r.num_sha256},
             {"sha512",    r.num_sha512},
             {"hash_tags", r.num_hash_tags},
+            {"encoded",   r.encoded_flags.size()},
         }},
         {"pie_data", {
             {"labels", pie_labels},
@@ -384,6 +402,7 @@ json to_json(const ioc::ioc_results_t& r) {
         {"hashes",      std::move(hashes_detailed)},
         {"hash_tags",   r.num_hash_tags},
         {"family_hits", std::move(family_hits)},
+        {"encoded_flags", std::move(encoded_flags)},
         {"errors", {
             {"has_errors", ioc::has_errors(r.errors)},
             {"flags",      static_cast<std::uint32_t>(r.errors.flags)},

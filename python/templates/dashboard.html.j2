@@ -929,6 +929,17 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
         <span class="chip red">{{ f.keyword }} → {{ f.classification }}</span>
       {% endfor %}
     </div>
+    <div class="card">
+      <h3>Encoded Strings ({{ (payload.ioc.encoded_flags or [])|length }} flagged)</h3>
+      {% for f in (payload.ioc.encoded_flags or []) %}
+        <span class="chip red mono" title="{{ f.decoded|e }}">{{ f.recipe }}: {{ f.original[:110]|e }}</span>
+        <span class="chip yellow mono">{{ f.decoded[:200]|e }}</span>
+        {% for ind in f.indicators %}<span class="chip">{{ ind|e }}</span>{% endfor %}
+        {% for u in f.urls %}<span class="chip green mono">{{ u|e }}</span>{% endfor %}
+      {% else %}
+        <span class="chip">none flagged</span>
+      {% endfor %}
+    </div>
   </div>
 </section>
 

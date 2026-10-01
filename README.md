@@ -264,6 +264,7 @@ Important C++ components:
 - `visualizer` — Python dashboard generation wrapper.
 - `local_api` — local MalAPI service supervision (launch, health-poll, stop).
 - `podman_runner` — long-lived container supervision through WSL.
+- `net/cyberchef` — CyberChef-server client: decodes ROT13/ROT47 suspects through `/bake` and runs base64/hex/% shapes through `/magic`, flagging strings whose decoded form hits suspicious indicators (see `CYBERCHEF_URL` / `CYBERCHEF_DISABLE`).
 - `secret_store` — Bitwarden (`bw serve`) credential retrieval, in memory only.
 - `curses_ui` — PDCurses results browser.
 - `process_runner` — bounded subprocess execution and process-tree handling.

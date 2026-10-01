@@ -8,7 +8,7 @@
 //   * everything goes through WSL, because the image and the build context
 //     both live inside the distro:
 //         wsl.exe [-d <distro>] -- podman run --rm --name cyberchef
-//                  -p 127.0.0.1:60000:3000 localhost/cyberchef
+//                  -p 127.0.0.1:60001:3000 localhost/cyberchef
 //   * the container is long-lived, so this holds a proc::child rather than
 //     calling proc::run(), which blocks until the child exits.
 //   * if the image is absent it is built from options::project_dir first
@@ -55,8 +55,13 @@ struct options {
   std::string container_name = "cyberchef";
 
   // Published on the loopback only: the server has no authentication.
+  // Port 60001, not 60000: 60000 belongs to the analyzer's own
+  // python/api/server.py (local_api.hpp) and only one of the two can hold
+  // it - the stale exited containers from earlier runs died exactly that
+  // way. net/cyberchef.hpp uses the same default so client and container
+  // stay aligned.
   std::string bind_address   = "127.0.0.1";
-  int         host_port      = 60000;
+  int         host_port      = 60001;
   int         container_port = 3000;
 
   std::chrono::milliseconds inspect_timeout{30000};    // podman image inspect
@@ -93,7 +98,7 @@ class runner {
   // Human-readable reason for state::failed; empty otherwise.
   const std::string& error() const;
 
-  // http://127.0.0.1:60000, from the options the last start() used.
+  // http://127.0.0.1:60001, from the options the last start() used.
   std::string url() const;
 
   // Tail of the container's stdout+stderr (server logs, build output).

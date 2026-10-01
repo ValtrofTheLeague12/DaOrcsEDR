@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "cyberchef.hpp"
 #include "console.hpp"
 #include "ioc_extractor.hpp"
 #include "logging.hpp"
@@ -259,6 +260,51 @@ void run_strings_and_ioc(context& ctx) {
     print_duration(elapsed_ms(started));
   } else {
     print_warn("no candidate strings available for IOC extraction");
+  }
+
+  // CyberChef pass: decode candidate strings through the local
+  // CyberChef-server (if it is running) and flag the ones whose decoded
+  // form hides a launcher / download cradle / shell. Best-effort: the
+  // container is external tooling, so an unreachable server costs one
+  // warning line and the analysis continues.
+  if (!strings_for_ioc.empty()) {
+    const auto started = report_clock::now();
+    cyberchef::scan_result_t scan = cyberchef::scan(strings_for_ioc);
+    if (scan.skipped) {
+      LOG_DEBUG("cyberchef: scan skipped: {}", scan.error);
+    } else if (!scan.server_ok) {
+      print_warn("CyberChef API unreachable (" + scan.error +
+                 "); encoded-string flagging skipped");
+    } else {
+      ctx.ioc_results.encoded_flags = std::move(scan.flagged);
+      print_section("Encoded strings (CyberChef)");
+      print_kv_colored(
+          "Checked",
+          std::to_string(scan.candidates_rot) + " rot + " +
+              std::to_string(scan.candidates_magic) +
+              " encoded candidate(s) in " + std::to_string(scan.calls) +
+              " request(s)",
+          console::green);
+      print_kv_colored("Flagged", std::to_string(scan.flags),
+                       scan.flags != 0 ? console::red : console::green);
+      auto one_line = [](std::string s) {
+        for (char& c : s)
+          if (c == '\n' || c == '\r') c = ' ';
+        if (s.size() > 240) s = s.substr(0, 240) + "...";
+        return s;
+      };
+      for (const auto& f : ctx.ioc_results.encoded_flags) {
+        print_bullet("[" + f.recipe + "] " + one_line(f.original));
+        print_bullet("    decoded: " + one_line(f.decoded));
+        std::string hits;
+        for (const auto& ind : f.indicators) {
+          if (!hits.empty()) hits += ", ";
+          hits += ind;
+        }
+        print_bullet("    indicators: " + hits);
+      }
+    }
+    print_duration(elapsed_ms(started));
   }
 
   // IOC extraction was the last consumer of the extracted strings - release

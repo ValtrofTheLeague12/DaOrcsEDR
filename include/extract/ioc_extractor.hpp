@@ -147,6 +147,14 @@ void findAllGroup12(const RE2& re, std::string_view text,
 std::size_t countMatches(const RE2& re, std::string_view text);
 
 
+struct encoded_flag_t {
+    std::string recipe;      // "ROT13", "ROT47", "From Base64", "From Hex", ...
+    std::string original;    // the candidate as found in the binary
+    std::string decoded;     // what the recipe produced (the server's output)
+    std::vector<std::string> indicators;  // matched suspicious keywords
+    std::vector<std::string> urls;        // URLs inside the decoded text
+};
+
 struct ioc_results_t {
     error_type_t errors{};
 
@@ -175,6 +183,11 @@ struct ioc_results_t {
     std::vector<family_hit> family_hits;
     // DNS lookups performed after IOC extraction, serialized by the exporter.
     std::vector<nlohmann::json> dns_results;
+
+    // CyberChef encoded-string flags: filled by the cyberchef scan during
+    // the "strings + IOC" phase, serialized by the exporter and shown on
+    // the dashboard. Empty when nothing was flagged or the API is down.
+    std::vector<encoded_flag_t> encoded_flags;
 };
 
 

@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
   const std::string url = runner.url();
   std::printf("\n[3] published port answers\n");
   std::printf("  probing %s\n", url.c_str());
-  check(!url.empty() && url.find("127.0.0.1:60000") != std::string::npos,
+  check(!url.empty() && url.find("127.0.0.1:60001") != std::string::npos,
         "url() is the loopback publish");
 
   if (!keep_running) {
