@@ -281,6 +281,9 @@ void run_strings_and_ioc(context& ctx) {
       print_kv_colored(
           "Checked",
           std::to_string(scan.candidates_rot) + " rot + " +
+              std::to_string(scan.candidates_xor) + " xor + " +
+              std::to_string(scan.candidates_rotate) + " bit-rot + " +
+              std::to_string(scan.candidates_hash) + " hash + " +
               std::to_string(scan.candidates_magic) +
               " encoded candidate(s) in " + std::to_string(scan.calls) +
               " request(s)",
