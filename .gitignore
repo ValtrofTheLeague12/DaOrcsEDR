@@ -1,70 +1,27 @@
-# Build output
-build/
-build-*/
-cmake-build-*/
-out/
-*.o
-*.obj
-*.exe
-*.pdb
-*.ilk
-*.idb
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-compile_commands.json
-Makefile
-
-# Analysis output and caches
-exports/
-cache/
-cti-cache/
-logs/
-files/
-python/logs/
-python/cache/
-python/__pycache__/
-__pycache__/
-*.pyc
-
-# Python virtualenv
-.venv/
-venv/
-env/
-
-# Vendored third-party checkouts (each is its own git repository)
-spdlog/
-Cminer/
-capa-exec/
-capa-rules/
-capa-sigs/
-yara-rules/
-node/
-os-libzstd/
-
-# Secrets and local credentials
-# .env holds real values and must never be committed; .env.example is the
-# committed template that documents which keys the project expects.
-.env
-.env.*
-!.env.example
-secrets.json
-bitwarden*.json
-*.pem
-*.key
-*.pfx
-*.p12
-credentials.json
-# Local agent launcher: machine specific, and it holds a gateway token in
-# plain text (ANTHROPIC_AUTH_TOKEN), so it must never be committed.
-claude.ps1
-
-# Editor / OS
-.vscode/
-.kilo/
-.claude/
-.idea/
-*.swp
-Thumbs.db
-desktop.ini
-.DS_Store
+# Created by venv; see https://docs.python.org/3/library/venv.html
+*
+!server.py
+!admin-terminal/
+admin-terminal/*
+!admin-terminal/admin.py
+!admin-terminal/activate.py
+!admin-terminal/builder.py
+!admin-terminal/core.py
+!admin-terminal/qiling_setup.py
+!admin-terminal/vms.py
+!admin-terminal/vms.json
+!admin-terminal/qiling_vm.py
+!qiling_dlls/
+qiling_dlls/*
+!qiling_dlls/_qiling_script.py
+!qiling_dlls/dll_collector.bat
+!qiling_dlls/known_hosts.ssh
+!qiling_dlls/_check_vm_connection.py
+!qiling_dlls/vm_info.json
+!qiling_dlls/_configure_quiling.py
+!tests/
+tests/*
+!tests/test_server_queue.py
+!tests/test_admin_terminal.py
+!tests/test_qiling_setup.py
+!tests/test_pipeline_cli.py

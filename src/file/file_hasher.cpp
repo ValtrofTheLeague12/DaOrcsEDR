@@ -2,8 +2,13 @@
 #include "console.hpp"
 #include "file_analyzer.hpp"
 #include "logging.hpp"
+#include "pgp_wordlist.hpp"
 
-#include <tlsh/tlsh.h>
+#if __has_include(<tlsh/tlsh.h>)
+  #include <tlsh/tlsh.h>
+#else
+  #include <tlsh.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -40,6 +45,15 @@ const char* hash_error_name(hash_error error) {
     case hash_error::fuzzy_hash_failed: return "fuzzy_hash_failed";
   }
   return "unknown";
+}
+
+template <typename T>
+const char* tlsh_hash(const T& tlsh) {
+  if constexpr (requires { tlsh.getHash(0); }) {
+    return tlsh.getHash(0);
+  } else {
+    return tlsh.getHash();
+  }
 }
 
 void add_hash_error(hash_error_t& errors, hash_error error, const std::string& detail) {
@@ -267,7 +281,7 @@ bool fuzzy_hash_file(fuzzy_hash_t& instance, analyzer::file_info_t& info) {
   }
 
   tlsh.final();
-  const char* hash = tlsh.getHash(0);
+  const char* hash = tlsh_hash(tlsh);
   if (hash == nullptr) {
     LOG_WARN("hasher: fuzzy_hash_file: TLSH returned null for '{}' "
              "(file may be too small or too uniform)",
@@ -307,7 +321,7 @@ bool fuzzy_hash_bytes(fuzzy_hash_t& instance,
   tlsh.update(data, static_cast<unsigned int>(size));
   tlsh.final();
 
-  const char* h = tlsh.getHash(0);
+  const char* h = tlsh_hash(tlsh);
   if (h == nullptr) {
     LOG_WARN("hasher: fuzzy_hash_bytes: TLSH returned null (size={})", size);
     add_hash_error(instance.errors, hash_error::fuzzy_hash_failed,
@@ -394,5 +408,30 @@ std::vector<std::string> get_hash_error_messages(const file_hash_t& instance) {
 
 std::vector<std::string> get_fuzzy_hash_error_messages(const fuzzy_hash_t& instance) {
   return instance.errors.messages;
+}
+
+std::string human_words(const std::string& sha256_hex, std::size_t bytes) {
+  // First `bytes` bytes of the hex digest, one PGP word each: even byte
+  // offsets take the two-syllable list, odd offsets the three-syllable one,
+  // so a transposed pair reads differently and is audible aloud.
+  auto nibble = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+  };
+
+  std::string out;
+  const std::size_t pairs = std::min(bytes, sha256_hex.size() / 2);
+  for (std::size_t i = 0; i < pairs; ++i) {
+    const int hi = nibble(sha256_hex[2 * i]);
+    const int lo = nibble(sha256_hex[2 * i + 1]);
+    if (hi < 0 || lo < 0) break;  // "N/A", truncated or non-hex input
+    const auto value = static_cast<unsigned>((hi << 4) | lo);
+    if (!out.empty()) out += '-';
+    out += (i % 2 == 0) ? wordlist::kEvenWords[value]
+                        : wordlist::kOddWords[value];
+  }
+  return out;
 }
   }

@@ -1,6 +1,7 @@
 #include "pipeline.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
@@ -43,7 +44,15 @@ void run_capa(context& ctx) {
 void run_radare2(context& ctx) {
   ctx.r2_opts.executable            = "r2";
   ctx.r2_opts.rabin2                = "rabin2";
+#ifdef _WIN32
   ctx.r2_opts.use_wsl               = true;
+  if (const char* use_wsl = std::getenv("R2_USE_WSL");
+      use_wsl != nullptr && std::string(use_wsl) == "0") {
+    ctx.r2_opts.use_wsl = false;
+  }
+#else
+  ctx.r2_opts.use_wsl               = false;
+#endif
   ctx.r2_opts.quiet                 = true;
   ctx.r2_opts.analysis              = true;
   ctx.r2_opts.timeout               = std::chrono::milliseconds(180000);
@@ -57,8 +66,9 @@ void run_radare2(context& ctx) {
     ctx.r2_opts.rabin2_version = r2::rabin2_version(ctx.r2_opts);
   }
 
-  ctx.stem    = exporter::make_stem(ctx.info, ctx.file_hash);
-  ctx.out_dir = std::string(exporter::dir::radare2);
+  // ctx.stem is computed in run_hashes() now (so pipelines without this phase
+  // have it too); this phase only needs the run directory it owns.
+  ctx.out_dir = exporter::dir::run(ctx.stem, "radare2").string();
 
   phase(ctx, true, "radare2 disassembly");
   const auto started = report_clock::now();
@@ -235,46 +245,51 @@ void run_full_extraction(context& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 17: xxd hex dump
+// Phase 17: hexdump
 // ---------------------------------------------------------------------------
-// The extractor already runs `wsl xxd` and stores the output; surface it as a
-// real report section so it is visible in the terminal and in the PDCurses
-// results browser (it is also exported inside the extraction JSON).
-void run_xxd(context& ctx) {
-  phase(ctx, true, "xxd hex dump");
+// The extractor already read the head of the file into ctx.full.hexdump;
+// surface it as a real report section so it is visible in the terminal and in
+// the PDCurses results browser (it is also exported inside the extraction
+// JSON). The rows are built from the bytes directly, so there is no tool to
+// locate and no text to re-parse.
+void run_hexdump(context& ctx) {
+  phase(ctx, true, "hexdump");
   const auto started = report_clock::now();
-  const auto& xxd = ctx.full.xxd;
-  print_section("Xxd");
-  if (!xxd.attempted) {
-    console::info("xxd was not attempted for this file");
-  } else if (!xxd.available) {
-    print_warn("xxd unavailable: WSL or the xxd binary could not be used");
-    if (!xxd.command.empty()) print_kv("Command", xxd.command);
-    if (!xxd.stderr_tail.empty()) print_kv("Stderr", xxd.stderr_tail);
+  const auto& dump = ctx.full.hexdump;
+  print_section("Hexdump");
+  if (!dump.attempted) {
+    console::info("no hexdump was attempted for this file");
+  } else if (!dump.available) {
+    print_warn("hexdump unavailable: the file could not be read");
+    for (const auto& message : extractor::get_error_messages(dump.errors))
+      console::error(message);
   } else {
-    print_kv("Command", xxd.command);
     std::ostringstream meta;
-    meta << "exit=" << xxd.exit_code << "  seconds=" << std::fixed
-         << std::setprecision(3) << xxd.seconds
-         << "  bytes=" << xxd.output.size();
-    print_kv("Dump", meta.str());
-    print_section("Hex dump");
-    std::istringstream stream(xxd.output);
-    std::string line;
-    std::size_t shown = 0;
-    constexpr std::size_t kMaxLines = 80;   // 0x500 bytes by default
-    while (shown < kMaxLines && std::getline(stream, line)) {
-      print_xxd_line(line);
-      ++shown;
+    meta << dump.bytes.size() << " of " << dump.total_bytes << " byte(s)"
+         << "  base=0x" << std::hex << dump.base << std::dec
+         << "  " << dump.bytes_per_row << "/row"
+         << "  " << std::fixed << std::setprecision(3) << dump.seconds << "s";
+    print_kv("Window", meta.str());
+    print_kv("Truncated", dump.truncated ? "yes (sample is larger)" : "no");
+
+    const std::size_t per_row =
+        dump.bytes_per_row == 0 ? std::size_t{16} : dump.bytes_per_row;
+    const std::size_t rows = dump.bytes.size() / per_row;
+    constexpr std::size_t kMaxRows = 64;
+    const std::size_t shown = std::min(rows, kMaxRows);
+    for (std::size_t r = 0; r < shown; ++r) {
+      print_hexdump_row(dump.base + r * per_row,
+                        dump.bytes.data() + r * per_row, per_row, per_row);
     }
-    // count_if returns a signed difference_type; shown is unsigned, so the
-    // comparison needs an explicit cast.
-    const std::size_t xxd_total = static_cast<std::size_t>(std::count_if(
-        xxd.output.begin(), xxd.output.end(),
-        [](char c) { return c == '\n'; }));
-    if (shown < xxd_total) {
-      print_bullet("... more dump lines follow "
-                   "(the full dump is in the extraction JSON)",
+    // A partial final row still deserves to be shown; it is where the file's
+    // last captured byte lives.
+    const std::size_t tail = dump.bytes.size() - rows * per_row;
+    if (tail > 0 && shown == rows) {
+      print_hexdump_row(dump.base + rows * per_row,
+                        dump.bytes.data() + rows * per_row, tail, per_row);
+    }
+    if (shown < rows) {
+      print_bullet("... more rows follow (the full window is in the extraction JSON)",
                    console::grey);
     }
   }

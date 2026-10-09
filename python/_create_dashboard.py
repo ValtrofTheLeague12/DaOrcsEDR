@@ -47,6 +47,16 @@ except Exception as exc:  # pragma: no cover
 else:
     STIX_IMPORT_ERROR = ""
 
+# D3FEND countermeasures for the tactics capa recovered. Same contract as the
+# import above: a failure here disables only that tab.
+try:
+    import d3fend_map
+except Exception as exc:  # pragma: no cover
+    d3fend_map = None
+    D3FEND_IMPORT_ERROR = f"cannot import python/d3fend_map.py: {exc}"
+else:
+    D3FEND_IMPORT_ERROR = ""
+
 
 def load_json(path: str):
     if not path:
@@ -479,7 +489,7 @@ def clip_eat(eat: dict) -> dict:
 def build_stix_section(args, capa: dict, cti_summary: dict) -> dict:
     """The "ATT&CK / STIX" section: object graph + Navigator layer.
 
-    Prefers the bundle the analyzer wrote (exports/stix/<stem>_stix21.json), so
+    Prefers the bundle the analyzer wrote (exports/<stem>_analysis/stix/<stem>_stix21.json), so
     the panel shows the layer that will actually be shared with other tools.
     When that file is missing - an older run, a skipped export - the techniques
     capa matched are turned into real STIX attack-pattern / x-mitre-tactic
@@ -581,6 +591,199 @@ def build_stix_section(args, capa: dict, cti_summary: dict) -> dict:
     return section
 
 
+def build_d3fend_section(capa: dict) -> dict:
+    """The D3FEND tab: countermeasures for the tactics capa recovered.
+
+    Purely derived data - no analyzer artifact feeds it, which is why there is
+    no --d3fend flag. The technique IDs come from the same capa JSON the STIX
+    section reads, and python/d3fend_map.py answers what defeats them from its
+    cti-cache (fetched on demand, degrading to "reason" when both are empty).
+    """
+    empty = {"available": False, "reason": D3FEND_IMPORT_ERROR,
+             "source": "", "generated_at": "",
+             "totals": {"techniques": 0, "covered": 0, "countermeasures": 0},
+             "tactics": []}
+    if d3fend_map is None:
+        return empty
+    try:
+        return d3fend_map.build_section(capa)
+    except Exception as exc:
+        print(f"warn: d3fend: {exc}", file=sys.stderr)
+        empty["reason"] = str(exc)
+        return empty
+
+
+def _attack_matrix_from_cache(capa: dict) -> list[dict]:
+    """Raw ``attack_matrix`` entries rebuilt from capa ids + the ATT&CK cache.
+
+    Same shape ``cti::build_attack_matrix`` writes into exports/<stem>_analysis/cti, so the
+    normalisation in :func:`build_attack_matrix` stays the only reader the
+    dashboard knows. Used when the CTI phase left no tactic view - CTI_SKIP=1,
+    no provider answered, no CTI artifact written - because capa's technique
+    ids and the ATT&CK knowledge cache are both local: an offline run must
+    still show which tooling ATT&CK associates with what it found.
+    """
+    if stix_graph is None or not isinstance(capa, dict):
+        return []
+    want = {str(t).strip().upper() for t in (capa.get("attack_ids") or [])
+            if str(t).strip()}
+    if not want:
+        return []
+    knowledge = stix_graph.load_tooling_knowledge(want=want)
+    if not knowledge:
+        return []
+
+    hits: dict[str, int] = {}
+    for capability in capa.get("capabilities") or []:
+        if not isinstance(capability, dict):
+            continue
+        for hit in (capability.get("attack") or []):
+            if not isinstance(hit, dict):
+                continue
+            tid = str(hit.get("id") or "").strip().upper()
+            sub = str(hit.get("subtechnique") or "").strip()
+            if sub and "." not in tid:
+                tid = f"{tid}.{sub}"
+            if tid:
+                hits[tid] = hits.get(tid, 0) + 1
+
+    by_tactic: dict[str, list[dict]] = {}
+    for tid, info in knowledge.items():
+        detection = info.get("detection") or ""
+        procedure = {
+            "id": tid,
+            "name": info.get("name") or tid,
+            "url": info.get("url") or "",
+            "is_subtechnique": bool(info.get("is_subtechnique")),
+            "parent": tid.split(".", 1)[0] if "." in tid else "",
+            "platforms": info.get("platforms") or [],
+            "capability_hits": hits.get(tid, 0),
+            "tools": info.get("tools") or [],
+            "malware": info.get("malware") or [],
+            "groups": info.get("groups") or [],
+            "detections": ([{"name": "", "analytics": [{"name": "",
+                                                        "description": detection,
+                                                        "platforms": []}]}]
+                           if detection else []),
+            "subtechniques": [],
+            "mitigations": info.get("mitigations") or 0,
+            "description": info.get("description") or "",
+        }
+        for short in (info.get("tactics") or []):
+            by_tactic.setdefault(short, []).append(dict(procedure))
+
+    return [{"tactic": short, "name": stix_graph.TACTIC_NAMES.get(short, short),
+             "procedures": by_tactic[short]}
+            for short, _ in stix_graph.TACTICS if short in by_tactic]
+
+
+def build_attack_matrix(cti_doc: dict, corr: dict, capa: dict | None = None) -> dict:
+    """The ATT&CK tactic view: per tactic, the techniques seen plus their tooling.
+
+    ``correlation.attack_matrix`` is the source. It carries full procedure
+    records (tools, malware, groups, detection guidance), which is far more than
+    an inline panel wants, so the lists are capped here and the totals are kept
+    alongside - a row reading "Mimikatz +3 more" is honest about what was
+    dropped, and the untouched data is still in exports/<stem>_analysis/cti/<stem>_cti.json.
+
+    When the CTI phase produced no matrix, the same view is rebuilt from capa
+    and the local ATT&CK cache (``source: attack-cache``) rather than hiding
+    the tab - see :func:`_attack_matrix_from_cache`.
+
+    Returns ``{tactics: [...], totals: {...}, available: bool, source: str}``.
+    """
+    raw = (cti_doc.get("attack_matrix") if isinstance(cti_doc, dict) else None) \
+        or (corr.get("attack_matrix") if isinstance(corr, dict) else None) or []
+    source = "cti"
+    if not isinstance(raw, list) or not raw:
+        raw = _attack_matrix_from_cache(capa or {})
+        source = "attack-cache" if raw else ""
+    if not isinstance(raw, list) or not raw:
+        return {"available": False, "tactics": [], "totals": {}, "source": "",
+                "reason": "the CTI report has no tactic view and capa matched "
+                          "no ATT&CK techniques (or the ATT&CK cache is missing)"}
+
+    TOOL_CAP, MALWARE_CAP, GROUP_CAP = 6, 4, 6
+
+    tactics: list[dict] = []
+    totals = {"tactics": 0, "procedures": 0, "tools": 0, "malware": 0,
+              "groups": 0, "detections": 0}
+
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        procs_in = entry.get("procedures")
+        if not procs_in and isinstance(entry.get("techniques"), list):
+            # A run from before the procedure records existed: the old shape was
+            # a flat "T1055.012 Process Hollowing" string per technique.
+            procs_in = [{"id": str(s).split(" ", 1)[0], "name": str(s).split(" ", 1)[-1]}
+                        for s in entry["techniques"] if isinstance(s, str)]
+        if not isinstance(procs_in, list):
+            continue
+
+        procedures: list[dict] = []
+        for p in procs_in:
+            if not isinstance(p, dict):
+                continue
+            tools = [t for t in (p.get("tools") or []) if isinstance(t, dict)]
+            malware = [m for m in (p.get("malware") or []) if isinstance(m, dict)]
+            groups = [g for g in (p.get("groups") or []) if isinstance(g, dict)]
+            detections = []
+            for d in (p.get("detections") or []):
+                if not isinstance(d, dict):
+                    continue
+                analytics = [a for a in (d.get("analytics") or []) if isinstance(a, dict)]
+                # The analytic prose is the whole point, so keep it; only the
+                # strategy-level boilerplate is trimmed.
+                detections.append({
+                    "name": d.get("name") or "",
+                    "analytics": [{"name": a.get("name") or "",
+                                   "description": (a.get("description") or "")[:1200],
+                                   "platforms": a.get("platforms") or []}
+                                  for a in analytics if a.get("description")],
+                })
+            detections = [d for d in detections if d["analytics"]]
+
+            totals["tools"] += len(tools)
+            totals["malware"] += len(malware)
+            totals["groups"] += len(groups)
+            totals["detections"] += len(detections)
+
+            procedures.append({
+                "id": p.get("id") or "",
+                "name": p.get("name") or "",
+                "url": p.get("url") or "",
+                "is_subtechnique": bool(p.get("is_subtechnique")),
+                "parent": p.get("parent") or "",
+                "platforms": p.get("platforms") or [],
+                "hits": p.get("capability_hits") or 0,
+                "tools": tools[:TOOL_CAP],
+                "tools_total": len(tools),
+                "malware": malware[:MALWARE_CAP],
+                "malware_total": len(malware),
+                "groups": groups[:GROUP_CAP],
+                "groups_total": len(groups),
+                "detections": detections[:3],
+                "detections_total": len(detections),
+                "subtechniques": p.get("subtechniques") or [],
+                "mitigations": p.get("mitigations") or 0,
+                "description": (p.get("description") or "")[:900],
+            })
+
+        totals["procedures"] += len(procedures)
+        if not procedures:
+            continue
+        tactics.append({
+            "short": entry.get("tactic") or "",
+            "name": entry.get("name") or entry.get("tactic") or "",
+            "procedures": procedures,
+        })
+
+    totals["tactics"] = len(tactics)
+    return {"available": bool(tactics), "tactics": tactics, "totals": totals,
+            "source": source}
+
+
 def build_payload(args) -> dict:
     fileinfo = load_json(args.fileinfo) or {}
     hashj = load_json(args.hash) or {}
@@ -595,6 +798,9 @@ def build_payload(args) -> dict:
     cti_doc = load_json_maybe_wrapped(getattr(args, "cti", ""))
     cti_index = build_cti_index(cti_doc)
     geo = build_geo(ioc, cti_index, load_country_aliases())
+    # EMBER2024 model score (exports/<stem>_analysis/ml/<stem>_ml.json). Absent when the ML
+    # phase was skipped (no service) — renders as an empty-state section.
+    ml_doc = load_json(getattr(args, "ml", "")) or {}
     files = build_file_catalog(getattr(args, "files_root", ""),
                                max(256 * 1024, args.max_embed_bytes // 8))
 
@@ -867,7 +1073,15 @@ def build_payload(args) -> dict:
             "likely_groups": (cti_doc.get("likely_groups") or corr.get("likely_groups") or [])[:8],
             "malware_families": (cti_doc.get("malware_families")
                                  or corr.get("malware_families") or [])[:12],
+            "attack_matrix": build_attack_matrix(cti_doc, corr, capa),
         }
+
+    if not cti_summary:
+        # No CTI artifact at all (CTI phase skipped, file missing): the payload
+        # still needs a cti object, and the tactic view is rebuilt from capa and
+        # the local ATT&CK cache instead of being left absent - which is what
+        # used to drop the "Procedures & Tooling" tab on offline runs.
+        cti_summary = {"attack_matrix": build_attack_matrix({}, {}, capa)}
 
     packed = bool(extraction.get("packing", {}).get("packed"))
     score = 0
@@ -929,7 +1143,9 @@ def build_payload(args) -> dict:
         "threat_graph": {"nodes": t_nodes, "links": t_links},
         "cti": cti_summary,
         "geo": geo,
+        "ml": ml_doc,
         "stix": build_stix_section(args, capa, cti_summary),
+        "d3fend": build_d3fend_section(capa),
         "charts": charts,
         "files": files,
     }
@@ -962,6 +1178,7 @@ def verify_mappings(args, payload) -> list[str]:
          "payload.geo / payload.cti"),
         ("stix", lambda: payload.get("stix", {}).get("graph", {}).get("nodes"),
          "payload.stix.graph.nodes"),
+        ("ml", lambda: payload.get("ml"), "payload.ml"),
         ("navigator", lambda: payload.get("stix", {}).get("layer", {}).get("techniques"),
          "payload.stix.layer.techniques"),
     ]
@@ -995,7 +1212,7 @@ def verify_mappings(args, payload) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(add_help=True)
     for flag in ("fileinfo", "hash", "ioc", "extraction", "capa", "iat", "got",
-                 "radare2", "malapi", "cti", "stix", "navigator",
+                 "radare2", "malapi", "cti", "stix", "navigator", "ml",
                  "out-dir", "out-name"):
         ap.add_argument("--" + flag, default="")
     ap.add_argument("--asm-json", default="")

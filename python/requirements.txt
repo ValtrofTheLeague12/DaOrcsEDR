@@ -6,5 +6,6 @@ flask
 selectolax
 PyYAML
 stix2
-mitreattack-pyt
-cyclonedx-bom
+mitreattack-python
+cyclonedx-bom==7.5.0
+jinja2

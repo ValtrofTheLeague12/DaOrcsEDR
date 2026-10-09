@@ -15,6 +15,7 @@ inline constexpr std::string_view reset  = "\x1b[0m";
 inline constexpr std::string_view red    = "\x1b[31m";
 inline constexpr std::string_view green  = "\x1b[32m";
 inline constexpr std::string_view yellow = "\x1b[33m";
+inline constexpr std::string_view blue   = "\x1b[34m";
 inline constexpr std::string_view cyan   = "\x1b[36m";
 inline constexpr std::string_view grey   = "\x1b[90m";
 

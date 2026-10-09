@@ -61,9 +61,7 @@ constexpr std::uint32_t kSoftExtractorErrors =
     static_cast<std::uint32_t>(extractor::extractor_error::no_strings)         |
     static_cast<std::uint32_t>(extractor::extractor_error::no_code_section)    |
     static_cast<std::uint32_t>(extractor::extractor_error::no_guards)          |
-    static_cast<std::uint32_t>(extractor::extractor_error::xxd_not_found)     |
-    static_cast<std::uint32_t>(extractor::extractor_error::xxd_failed)        |
-    static_cast<std::uint32_t>(extractor::extractor_error::xxd_timeout)       |
+    static_cast<std::uint32_t>(extractor::extractor_error::hexdump_read_failed) |
     static_cast<std::uint32_t>(extractor::extractor_error::cminer_not_found) |
     static_cast<std::uint32_t>(extractor::extractor_error::cminer_failed)    |
     static_cast<std::uint32_t>(extractor::extractor_error::cminer_timeout);
@@ -112,6 +110,34 @@ std::string artifact_stem(std::string_view stem, std::string_view artifact) {
     out += artifact;
     return out;
 }
+
+// ---------------------------------------------------------------------------
+// dir:: per-run path helpers
+//
+// One run = one directory: exports/<stem>_analysis/<category>/<stem>_<x>.json.
+// The category directories used to be shared across every sample ever
+// analyzed; rooting them per stem means a run never reads (or overwrites)
+// another sample's artifacts.
+// ---------------------------------------------------------------------------
+
+namespace dir {
+
+std::filesystem::path run_root(const std::string& stem) {
+    LOG_TRACE("exporter: dir::run_root: stem='{}'", stem);
+    return std::filesystem::path(root) / (stem + "_analysis");
+}
+
+std::filesystem::path run(const std::string& stem, std::string_view category) {
+    return run_root(stem) / std::string(category);
+}
+
+std::filesystem::path artifact(const std::string& stem,
+                               std::string_view category,
+                               std::string_view artifact_name) {
+    return run(stem, category) / (artifact_stem(stem, artifact_name) + ".json");
+}
+
+} // namespace dir
 
 std::string sanitize_stem(const std::string& raw) {
     LOG_TRACE("exporter: sanitize_stem: raw='{}' ({} chars)", raw, raw.size());
@@ -250,12 +276,17 @@ json to_json(const file_hash_t& sha256, const fuzzy_hash_t& tlsh) {
         return s.substr(0, n) + "...";
     };
 
+    // Read-aloud rendering of the digest (PGP word list), exported next to
+    // the hex so a human can compare it without transcribing 64 characters.
+    const std::string words = hasher::human_words(sha256.hash);
+
     json algorithms = json::array();
     if (!sha256.hash.empty()) {
         algorithms.push_back({
             {"name",      sha256.algo_used.empty() ? "sha256" : sha256.algo_used},
             {"value",     sha256.hash},
             {"short",     short_of(sha256.hash, 16)},
+            {"words",     words},
             {"size_bits", 256},
         });
     } else {
@@ -281,6 +312,7 @@ json to_json(const file_hash_t& sha256, const fuzzy_hash_t& tlsh) {
     return json{
         {"sha256",       sha256.hash},
         {"sha256_short", short_of(sha256.hash, 16)},
+        {"sha256_words", words},
         {"sha256_algo",  sha256.algo_used},
         {"tlsh",         tlsh.fuzzy_hash},
         {"tlsh_short",   short_of(tlsh.fuzzy_hash, 16)},
@@ -307,9 +339,9 @@ json to_json(const file_hash_t& sha256, const fuzzy_hash_t& tlsh) {
 
 json to_json(const ioc::ioc_results_t& r) {
     LOG_TRACE("exporter: to_json(ioc): urls={}, domains={}, ips={}, emails={}, "
-              "hashes={}, family_hits={}",
+              "hashes={}, family_hits={}, string_indicators={}",
               r.num_urls, r.num_domains, r.num_ips, r.num_emails,
-              r.hashes.size(), r.family_hits.size());
+              r.hashes.size(), r.family_hits.size(), r.string_hits.size());
 
     json pie_labels = json::array();
     json pie_values = json::array();
@@ -370,6 +402,18 @@ json to_json(const ioc::ioc_results_t& r) {
     }
     add_slice("encoded", r.encoded_flags.size());
 
+    // EMBER-style string indicators (thrember StringExtractor table): pattern
+    // name, source group, match count and a few evidence strings per hit.
+    json string_indicators = json::array();
+    for (const auto& h : r.string_hits) {
+        string_indicators.push_back({
+            {"name",    h.name},
+            {"group",   h.group},
+            {"count",   h.count},
+            {"samples", h.samples},
+        });
+    }
+
     if (ioc::has_errors(r.errors)) {
         LOG_WARN("exporter: to_json(ioc): extraction errors present "
                  "(flags={}, messages={})",
@@ -389,6 +433,7 @@ json to_json(const ioc::ioc_results_t& r) {
             {"sha512",    r.num_sha512},
             {"hash_tags", r.num_hash_tags},
             {"encoded",   r.encoded_flags.size()},
+            {"string_indicators", r.string_hits.size()},
         }},
         {"pie_data", {
             {"labels", pie_labels},
@@ -403,6 +448,7 @@ json to_json(const ioc::ioc_results_t& r) {
         {"hash_tags",   r.num_hash_tags},
         {"family_hits", std::move(family_hits)},
         {"encoded_flags", std::move(encoded_flags)},
+        {"string_indicators", std::move(string_indicators)},
         {"errors", {
             {"has_errors", ioc::has_errors(r.errors)},
             {"flags",      static_cast<std::uint32_t>(r.errors.flags)},
@@ -508,7 +554,6 @@ json to_json(const capa::report_t& r) {
 // ---------------------------------------------------------------------------
 // to_json(iat_result_t)
 // ---------------------------------------------------------------------------
-
 json to_json(const extractor::iat_result_t& r) {
     LOG_TRACE("exporter: to_json(iat_result_t): entries={}, dlls={}, "
               "named={}, ordinal={}, delay={}",
@@ -759,10 +804,13 @@ json serialize_byte_histogram(const extractor::byte_histogram_t& h) {
               h.total_bytes, h.entropy);
 
     json bins = json::array(), counts = json::array(), frequencies = json::array();
+    json ember_hist = json::array(), ember_be = json::array();
     for (std::size_t i = 0; i < 256; ++i) {
         bins.push_back(static_cast<std::uint32_t>(i));
         counts.push_back(h.counts[i]);
         frequencies.push_back(h.frequencies[i]);
+        ember_hist.push_back(h.ember_histogram[i]);
+        ember_be.push_back(h.ember_byteentropy[i]);
     }
 
     struct byte_entry { std::uint32_t byte; std::uint64_t count; double freq; };
@@ -801,6 +849,11 @@ json serialize_byte_histogram(const extractor::byte_histogram_t& h) {
             {"counts",      std::move(counts)},
             {"frequencies", std::move(frequencies)},
         }},
+        // EMBER2024 thrember ML vectors: ByteHistogram (dim 256) and
+        // ByteEntropyHistogram (dim 256, window=2048, step=1024). Drop-in
+        // for thrember.process_raw_features output.
+        {"ember_histogram",   std::move(ember_hist)},
+        {"ember_byteentropy", std::move(ember_be)},
         {"top_10", std::move(top_json)},
         {"errors", serialize_common_errors(h.errors)},
     };
@@ -958,21 +1011,26 @@ json serialize_guards(const extractor::guard_info_t& g) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// to_json(xxd_result_t)
+// to_json(hexdump_result_t)
 // ---------------------------------------------------------------------------
 
-json to_json(const extractor::xxd_result_t& r) {
-    LOG_TRACE("exporter: to_json(xxd_result_t): attempted={}, available={}, bytes={}",
-              r.attempted, r.available, r.output.size());
+// The bytes go out as a real JSON array of numbers rather than as formatted
+// text. That is what the dashboard's hexdump view consumes, and it means the
+// browser does not have to parse an offset/hex/ASCII table back into the
+// numbers it started from.
+json to_json(const extractor::hexdump_result_t& r) {
+    LOG_TRACE("exporter: to_json(hexdump_result_t): attempted={}, available={}, bytes={}",
+              r.attempted, r.available, r.bytes.size());
     return json{
-        {"attempted",   r.attempted},
-        {"available",   r.available},
-        {"exit_code",   r.exit_code},
-        {"seconds",     r.seconds},
-        {"command",     r.command},
-        {"output",      r.output},
-        {"stderr_tail", r.stderr_tail},
-        {"errors",      serialize_common_errors(r.errors)},
+        {"attempted",     r.attempted},
+        {"available",     r.available},
+        {"base",          r.base},
+        {"total_bytes",   r.total_bytes},
+        {"bytes",         r.bytes},
+        {"bytes_per_row", r.bytes_per_row},
+        {"truncated",     r.truncated},
+        {"seconds",       r.seconds},
+        {"errors",        serialize_common_errors(r.errors)},
     };
 }
 
@@ -1178,7 +1236,7 @@ json to_json(const extractor::extraction_result_t& r) {
         {"debug",           serialize_debug(r.debug_symbols)},
         {"strings_summary", serialize_strings_summary(r.strings)},
         {"iat",             to_json(r.pe.iat)},
-        {"xxd",             to_json(r.xxd)},
+        {"hexdump",         to_json(r.hexdump)},
         {"cminer",          to_json(r.cminer)},
         {"yara",             to_json(r.yara)},
         {"got",             to_json(r.elf.got.entries.empty() ? r.got : r.elf.got)},
@@ -1430,7 +1488,7 @@ std::filesystem::path write_fileinfo_json(const std::string& stem,
     LOG_DEBUG("exporter: write_fileinfo_json: stem='{}', filepath='{}'",
               stem, info.filepath);
     EXPORTER_TRY("write_fileinfo_json", {
-        const auto path = write_json_file(dir::fileinfo,
+        const auto path = write_json_file(dir::run(stem, "fileinfo"),
                                           artifact_stem(stem, "fileinfo"),
                                           to_json(info));
         print_export_line("fileinfo", path, !path.empty());
@@ -1444,7 +1502,7 @@ std::filesystem::path write_hash_json(const std::string& stem,
     LOG_DEBUG("exporter: write_hash_json: stem='{}', sha256_len={}, tlsh_len={}",
               stem, sha256.hash.size(), tlsh.fuzzy_hash.size());
     EXPORTER_TRY("write_hash_json", {
-        const auto path = write_json_file(dir::hash,
+        const auto path = write_json_file(dir::run(stem, "hash"),
                                           artifact_stem(stem, "hash"),
                                           to_json(sha256, tlsh));
         print_export_line("hash", path, !path.empty());
@@ -1457,10 +1515,36 @@ std::filesystem::path write_ioc_json(const std::string& stem,
     LOG_DEBUG("exporter: write_ioc_json: stem='{}', urls={}, domains={}, ips={}",
               stem, r.num_urls, r.num_domains, r.num_ips);
     EXPORTER_TRY("write_ioc_json", {
-        const auto path = write_json_file(dir::ioc,
+        const auto path = write_json_file(dir::run(stem, "ioc"),
                                           artifact_stem(stem, "ioc"),
                                           to_json(r));
         print_export_line("ioc", path, !path.empty());
+        return path;
+    })
+}
+
+std::filesystem::path write_strings_json(const std::string& stem,
+                                         const extractor::strings_result_t& r) {
+    LOG_DEBUG("exporter: write_strings_json: stem='{}', strings={}, truncated={}",
+              stem, r.strings.size(), r.truncated);
+    EXPORTER_TRY("write_strings_json", {
+        json out;
+        out["count"]       = r.strings.size();
+        out["ascii_count"] = r.ascii_count;
+        out["utf16_count"] = r.utf16_count;
+        out["truncated"]   = r.truncated;
+        json arr = json::array();
+        for (const auto& entry : r.strings) {
+            arr.push_back({{"offset",  entry.offset},
+                           {"value",   entry.value},
+                           {"section", entry.section},
+                           {"encoding", entry.encoding}});
+        }
+        out["strings"] = std::move(arr);
+        const auto path = write_json_file(dir::run(stem, "strings"),
+                                          artifact_stem(stem, "strings"),
+                                          out);
+        print_export_line("strings", path, !path.empty());
         return path;
     })
 }
@@ -1470,7 +1554,7 @@ std::filesystem::path write_malapi_json(const std::string& stem,
     const auto n = hits.is_array() ? hits.size() : 0;
     LOG_DEBUG("exporter: write_malapi_json: stem='{}', hits={}", stem, n);
     EXPORTER_TRY("write_malapi_json", {
-        const auto path = write_json_file(dir::malapi,
+        const auto path = write_json_file(dir::run(stem, "malapi"),
                                           artifact_stem(stem, "malapi"),
                                           hits);
         print_export_line("malapi", path, !path.empty());
@@ -1483,7 +1567,7 @@ std::filesystem::path write_extraction_json(const std::string& stem,
     LOG_DEBUG("exporter: write_extraction_json: stem='{}', sections={}, strings={}",
               stem, r.sections.sections.size(), r.strings.strings.size());
     EXPORTER_TRY("write_extraction_json", {
-        const auto path = write_json_file(dir::extraction,
+        const auto path = write_json_file(dir::run(stem, "extraction"),
                                           artifact_stem(stem, "extraction"),
                                           to_json(r));
         print_export_line("extraction", path, !path.empty());
@@ -1496,7 +1580,7 @@ std::filesystem::path write_capa_json(const std::string& stem,
     LOG_DEBUG("exporter: write_capa_json: stem='{}', status={}, capabilities={}",
               stem, capa::to_string(r.st), r.capabilities.size());
     EXPORTER_TRY("write_capa_json", {
-        const auto path = write_json_file(dir::capa,
+        const auto path = write_json_file(dir::run(stem, "capa"),
                                           artifact_stem(stem, "capa"),
                                           to_json(r));
         print_export_line("capa", path, !path.empty());
@@ -1509,7 +1593,7 @@ std::filesystem::path write_iat_json(const std::string& stem,
     LOG_DEBUG("exporter: write_iat_json: stem='{}', entries={}, dlls={}",
               stem, r.entries.size(), r.dll_count);
     EXPORTER_TRY("write_iat_json", {
-        const auto path = write_json_file(dir::iat,
+        const auto path = write_json_file(dir::run(stem, "iat"),
                                           artifact_stem(stem, "iat"),
                                           to_json(r));
         print_export_line("iat", path, !path.empty());
@@ -1517,12 +1601,90 @@ std::filesystem::path write_iat_json(const std::string& stem,
     })
 }
 
+// ---------------------------------------------------------------------------
+// to_json(pe_export_table_t) — EAT
+// ---------------------------------------------------------------------------
+// Dedicated Export Address Table export
+// (`exports/<stem>_analysis/eat/<stem>_eat.json`).
+// Previously the EAT only lived inside the big extraction JSON
+// (`raw.pe.export_table`), so a consumer that wanted exports had to parse the
+// whole extraction blob. Same shape as the extraction-side serialization so
+// the two stay in step, plus an entry_count and a flat `exports` name list
+// for grepping.
+json to_json(const extractor::pe_export_table_t& r) {
+    LOG_TRACE("exporter: to_json(pe_export_table_t): present={}, entries={}",
+              r.present, r.entries.size());
+    json entries = json::array();
+    json names = json::array();
+    for (const auto& e : r.entries) {
+        const bool forwarded = !e.forwarder_library.empty();
+        const std::string kind =
+            forwarded ? "forwarded" : (e.is_extern ? "external" : "normal");
+        entries.push_back({
+            {"name", e.name},
+            {"rva", e.rva},
+            {"ordinal", e.ordinal},
+            {"forwarded", forwarded},
+            {"forwarder_library", e.forwarder_library},
+            {"forwarder_function", e.forwarder_function},
+            {"extern", e.is_extern},
+            {"kind", kind},
+        });
+        if (!e.name.empty()) names.push_back(e.name);
+    }
+    return json{
+        {"present", r.present},
+        {"name", r.name},
+        {"timestamp", r.timestamp},
+        {"major_version", r.major_version},
+        {"minor_version", r.minor_version},
+        {"ordinal_base", r.ordinal_base},
+        {"address_table_rva", r.export_addr_table_rva},
+        {"address_table_count", r.export_addr_table_count},
+        {"name_table_rva", r.names_addr_table_rva},
+        {"name_table_count", r.names_addr_table_count},
+        {"ordinal_table_rva", r.ordinal_addr_table_rva},
+        {"named_count", r.named_count},
+        {"forwarded_count", r.forwarded_count},
+        {"external_count", r.external_count},
+        {"entry_count", r.entries.size()},
+        {"entries", std::move(entries)},
+        {"exports", std::move(names)},
+        // pe_export_table_t carries no errors field: EAT parse failures are
+        // absorbed into the enclosing pe_sections_t.errors, so report an
+        // empty error object here to keep the schema stable.
+        {"errors", serialize_common_errors(extractor::error_type_t{})},
+    };
+}
+
+// ---------------------------------------------------------------------------
+// write_eat_json
+// ---------------------------------------------------------------------------
+// Writes the PE Export Address Table to exports/<stem>_analysis/eat/<stem>_eat.json.
+//
+// Note the raw/pe naming: the IAT file is named `<stem>_iat.json`, so the EAT
+// file is `<stem>_eat.json` (not `_export_table.json`).
+std::filesystem::path write_eat_json(const std::string& stem,
+                                     const extractor::pe_export_table_t& r) {
+    LOG_DEBUG("exporter: write_eat_json: stem='{}', present={}, entries={}",
+              stem, r.present, r.entries.size());
+    EXPORTER_TRY("write_eat_json", {
+        const auto path = write_json_file(dir::run(stem, "eat"),
+                                          artifact_stem(stem, "eat"),
+                                          to_json(r));
+        print_export_line("eat", path, !path.empty());
+        return path;
+    });
+    return {};
+}
+
+
 std::filesystem::path write_got_json(const std::string& stem,
                                      const extractor::got_result_t& r) {
     LOG_DEBUG("exporter: write_got_json: stem='{}', format='{}', entries={}",
               stem, r.format, r.entries.size());
     EXPORTER_TRY("write_got_json", {
-        const auto path = write_json_file(dir::got,
+        const auto path = write_json_file(dir::run(stem, "got"),
                                           artifact_stem(stem, "got"),
                                           to_json(r));
         print_export_line("got", path, !path.empty());
@@ -1535,7 +1697,7 @@ std::filesystem::path write_radare2_json(const std::string& stem,
     LOG_DEBUG("exporter: write_radare2_json: stem='{}', status={}, files={}, functions={}",
               stem, r2::to_string(r.st), r.files.size(), r.functions.size());
     EXPORTER_TRY("write_radare2_json", {
-        const auto path = write_json_file(dir::radare2,
+        const auto path = write_json_file(dir::run(stem, "radare2"),
                                           artifact_stem(stem, "radare2"),
                                           to_json(r));
         print_export_line("radare2", path, !path.empty());
@@ -1550,7 +1712,7 @@ std::filesystem::path write_xref_asm_json(const std::string& stem,
               stem, r2::to_string(r.st), r.slots_input,
               r.xrefs_found, r.functions_dumped);
     EXPORTER_TRY("write_xref_asm_json", {
-        const auto path = write_json_file(dir::radare2,
+        const auto path = write_json_file(dir::run(stem, "radare2"),
                                           artifact_stem(stem, "iat_calls"),
                                           to_json(r));
         print_export_line("iat_calls", path, !path.empty());
@@ -1562,7 +1724,7 @@ std::filesystem::path write_asm_text(const std::string& stem,
                                      const std::string& text) {
     LOG_DEBUG("exporter: write_asm_text: stem='{}', bytes={}", stem, text.size());
     EXPORTER_TRY("write_asm_text", {
-        const auto path = write_text_file(fs::path(dir::radare2),
+        const auto path = write_text_file(fs::path(dir::run(stem, "radare2")),
                                           artifact_stem(stem, "functions"),
                                           ".asm", text);
         print_export_line("asm", path, !path.empty());
@@ -1584,7 +1746,7 @@ std::filesystem::path write_overlay_bin(const std::string& stem,
               stem, overlay.offset, overlay.size, overlay.data.size(),
               overlay.signatures.size());
     EXPORTER_TRY("write_overlay_bin", {
-        const auto path = write_binary_file(fs::path(dir::extraction),
+        const auto path = write_binary_file(fs::path(dir::run(stem, "extraction")),
                                             artifact_stem(stem, "overlay"),
                                             ".bin", overlay.data);
         print_export_line("overlay", path, !path.empty());
@@ -2032,6 +2194,141 @@ void print_export_summary(const export_summary_t& summary) {
 }
 
 // ===========================================================================
+// ml_export.cpp
+// ===========================================================================
+
+// The probability is stored under its own key and never collapsed into a
+// "malicious": true boolean. The service's verdict is banded and can be
+// not_applicable, and a consumer that reads a boolean off a 0.99 score for a
+// non-PE file would be wrong - that combination is exactly the artefact the
+// service refuses to call a detection. `probability_is_calibrated` is written as
+// a literal false so the field cannot be quietly reinterpreted later.
+json to_json(const ml_api::score_result_t& r) {
+    json out = {
+        {"ok", r.ok},
+        {"file", r.file},
+        {"bytes", r.bytes},
+        {"feature_source", r.feature_source},
+        {"malicious_probability", r.probability},
+        {"probability_is_calibrated", false},
+        {"verdict", r.verdict_raw},
+        {"threshold", r.threshold},
+        {"is_pe", r.is_pe},
+        {"model", r.model},
+        {"model_sha256", r.model_sha256},
+        {"trees", r.trees},
+        {"features", r.features},
+        {"http_status", r.http_status},
+    };
+    if (!r.verdict_note.empty()) out["verdict_note"] = r.verdict_note;
+    if (!r.ok) {
+        out["error"]  = r.error;
+        out["detail"] = r.detail;
+        return out;
+    }
+    // Derived by ml_api::level_for(), not re-implemented by any consumer: the
+    // console report, the dashboard and this file must band the same number the
+    // same way, or a reader comparing them sees two different threats.
+    out["threat_level"]     = ml_api::to_string(ml_api::level_for(r));
+    out["threshold_margin"] = ml_api::threshold_margin(r);
+    if (!r.explained) return out;
+
+    json features = json::array();
+    for (const ml_api::feature_evidence_t& f : r.top_features) {
+        features.push_back({
+            {"feature_index", f.feature_index},
+            {"group", f.group},
+            {"label", f.label},
+            {"evidence", f.evidence},
+            {"value", f.value},
+            {"shap_log_odds", f.shap_log_odds},
+            {"direction", f.direction},
+            // Retained because a shared bucket's SHAP is the sum over every name
+            // hashing into it; without these two a reader would attribute one
+            // bucket's whole contribution to a single import.
+            {"bucket_occupancy", f.bucket_occupancy},
+            {"shared_bucket", f.shared_bucket},
+            {"analyzer_implemented", f.analyzer_implemented},
+        });
+    }
+    json groups = json::array();
+    for (const ml_api::group_rollup_t& g : r.group_rollup) {
+        groups.push_back({
+            {"group", g.group},
+            {"shap_log_odds", g.shap_log_odds},
+            {"analyzer_implemented", g.analyzer_implemented},
+        });
+    }
+    out["explanation"] = {
+        {"space", "log-odds (binary objective)"},
+        {"base_log_odds", r.base_log_odds},
+        {"prediction_log_odds", r.prediction_log_odds},
+        {"sum_shap", r.sum_shap},
+        // base + sum(SHAP) must reproduce prediction_log_odds; a non-zero value
+        // would mean the attribution is approximate rather than exact.
+        {"consistency_error", r.consistency_error},
+        {"top_features", std::move(features)},
+        {"group_rollup", std::move(groups)},
+    };
+    return out;
+}
+
+// Writes the model verdict to exports/<stem>_analysis/ml/<stem>_ml.json. Written even when the
+// score failed, so a refused request (non-vectorisable file, oversized sample)
+// leaves a record of why rather than no file at all.
+std::filesystem::path write_ml_json(const std::string& stem,
+                                    const ml_api::score_result_t& score) {
+    LOG_DEBUG("exporter: write_ml_json: stem='{}', ok={}, verdict='{}'",
+              stem, score.ok, score.verdict_raw);
+    EXPORTER_TRY("write_ml_json", {
+        const auto path = write_json_file(dir::run(stem, "ml"), artifact_stem(stem, "ml"),
+                                          to_json(score));
+        print_export_line("ml", path, !path.empty());
+        return path;
+    })
+}
+
+json to_json(const known_pe::result_t& r) {
+    json out = {
+        {"sha256", r.sha256},
+        {"roster", r.index_path},
+        {"roster_entries", r.entries_loaded},
+        {"roster_lines_skipped", r.lines_skipped},
+        {"matched", r.matched},
+        {"lookup_seconds", r.seconds},
+    };
+    if (r.matched) {
+        out["label"]    = r.entry.malicious ? 1 : 0;
+        out["verdict"]  = r.entry.malicious ? "malicious" : "benign";
+        out["family"]   = r.entry.family;
+        out["split"]    = r.entry.split_names();
+    }
+    if (!r.errors.empty()) out["errors"] = r.errors;
+    return out;
+}
+
+// Only a lookup that actually read a roster produces a file. `attempted`
+// distinguishes "the caller never asked" from "the caller asked and there was
+// no roster", and neither should leave an artifact behind - a file recording
+// "matched: false" would read as a real negative finding.
+std::filesystem::path write_known_pe_json(const std::string& stem,
+                                          const known_pe::result_t& match) {
+    LOG_DEBUG("exporter: write_known_pe_json: stem='{}', matched={}, available={}",
+              stem, match.matched, match.available);
+    if (!match.attempted || !match.available) {
+        LOG_DEBUG("exporter: write_known_pe_json: no roster lookup to record, skipping");
+        return {};
+    }
+    EXPORTER_TRY("write_known_pe_json", {
+        const auto path = write_json_file(dir::run(stem, "known_pe"),
+                                          artifact_stem(stem, "known_pe"),
+                                          to_json(match));
+        print_export_line("known_pe", path, !path.empty());
+        return path;
+    })
+}
+
+// ===========================================================================
 // cti_export.cpp
 // ===========================================================================
 
@@ -2039,7 +2336,7 @@ namespace {
 }  // namespace
 
 // Writes the full CTI report (artifacts, verdicts, families, ATT&CK, providers,
-// warnings — everything the pipeline found) to exports/cti/<stem>_cti.json.
+// warnings — everything the pipeline found) to exports/<stem>_analysis/cti/<stem>_cti.json.
 std::filesystem::path write_cti_json(const std::string& stem, const cti::report& r) {
   LOG_DEBUG("exporter: write_cti_json: stem='{}', items={}, warnings={}",
             stem, r.items.size(), r.warnings.size());
@@ -2056,7 +2353,7 @@ std::filesystem::path write_cti_json(const std::string& stem, const cti::report&
                 << ": internal JSON was not parseable\n";
       return {};
     }
-    const auto path = write_json_file(dir::cti, artifact_stem(stem, "cti"), doc);
+    const auto path = write_json_file(dir::run(stem, "cti"), artifact_stem(stem, "cti"), doc);
     print_export_line("cti", path, !path.empty());
     return path;
   })
@@ -2133,7 +2430,7 @@ std::filesystem::path write_stix_bundle(const std::string& stem,
                 << ": internal JSON was not parseable\n";
       return {};
     }
-    const auto path = write_json_file(dir::stix, artifact_stem(stem, "stix21"), doc);
+    const auto path = write_json_file(dir::run(stem, "stix"), artifact_stem(stem, "stix21"), doc);
     print_export_line("stix", path, !path.empty());
     return path;
   })
@@ -2354,7 +2651,7 @@ std::filesystem::path write_navigator_layer(const std::string& stem,
                unassigned);
     }
 
-    const auto path = write_json_file(dir::stix, artifact_stem(stem, "navigator"), layer);
+    const auto path = write_json_file(dir::run(stem, "stix"), artifact_stem(stem, "navigator"), layer);
     print_export_line("navigator", path, !path.empty());
     return path;
   })

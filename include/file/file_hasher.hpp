@@ -62,6 +62,11 @@ bool hash_bytes(file_hash_t& instance,
                 const std::uint8_t* data,
                 std::size_t size);
 
+// PGP word-list rendering of a hex digest (e.g. the SHA-256 above): the
+// first `bytes` bytes, each as its even/odd-list word, "-"-joined so it can
+// be read aloud. Returns "" when the input holds no valid hex bytes.
+std::string human_words(const std::string& sha256_hex, std::size_t bytes = 8);
+
 bool fuzzy_hash_file(fuzzy_hash_t& instance, analyzer::file_info_t& info);
 
 bool fuzzy_hash_bytes(fuzzy_hash_t& instance,

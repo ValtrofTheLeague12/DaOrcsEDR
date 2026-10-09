@@ -10,6 +10,7 @@
 
 #include "console.hpp"          // file_analyzer / extractor / capa / yara types
 #include "cti.hpp"
+#include "ml_api.hpp"
 #include "radare2_runner.hpp"
 #include "secret_store.hpp"
 
@@ -86,6 +87,8 @@ void print_iat_report(const extractor::iat_result_t& r);
 void print_got_report(const extractor::got_result_t& r);
 void print_xref_asm_report(const r2::xref_asm_result_t& r);
 void print_capa_report(const capa::report_t& r);
+void print_ml_score_report(const ml_api::score_result_t& r,
+                           const std::string& skip_reason);
 void print_radare2_report(const r2::bulk_result_t& r);
 void print_render_report(const std::string& format,
                          std::size_t rendered_ok,
@@ -94,5 +97,11 @@ void print_render_report(const std::string& format,
 void print_pe_overlay_report(const extractor::pe_sections_t& result);
 void print_export_report(const extractor::pe_export_table_t& r);
 void print_yara_report(const yara_scanner::result_t& r);
-void print_xxd_line(const std::string& line);
+// One row of a hexdump, rendered from raw bytes. `data` may be shorter than
+// `bytes_per_row` on the final row; the ASCII column is padded so the rows
+// stay aligned.
+void print_hexdump_row(std::uint64_t address,
+                       const std::uint8_t* data,
+                       std::size_t count,
+                       std::size_t bytes_per_row = 16);
 void print_cminer_raw(const std::string& output);

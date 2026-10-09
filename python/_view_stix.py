@@ -2,14 +2,14 @@
 """Render a STIX 2.1 bundle as a self-contained interactive HTML page.
 
 Usage:
-    python/_view_stix.py <bundle.json> [--out-dir exports/stix] [--out-name X]
+    python/_view_stix.py <bundle.json> [--out-dir DIR] [--out-name X]
                          [--navigator] [--navigator-only] [--attack-version 14]
 
 Opens **any** STIX 2.1 file, not just the ones this project writes: bundles
-produced by src/net/cti.cpp (exports/stix/<stem>_stix21.json), by
-python/_extract_stix.py (exports/stix/<stem>.stix21.json), or downloaded from
-OTX / MISP / the MITRE CTI repo.  Parsing is deliberately lenient, so partial
-bundles with dangling references still render.
+produced by src/net/cti.cpp (exports/<stem>_analysis/stix/<stem>_stix21.json), by
+python/_extract_stix.py (<stem>.stix21.json next to its input), or downloaded
+from OTX / MISP / the MITRE CTI repo.  Parsing is deliberately lenient, so
+partial bundles with dangling references still render.
 
 The page has two views:
     ATT&CK Coverage   techniques grouped into their tactics, kill-chain order
@@ -62,8 +62,8 @@ def main() -> int:
                     "(ATT&CK coverage matrix + object graph).")
     ap.add_argument("bundle", nargs="?", default="",
                     help="STIX 2.1 bundle (or bare array of objects) to render")
-    ap.add_argument("--out-dir", default="exports/stix",
-                    help="output directory (default: exports/stix)")
+    ap.add_argument("--out-dir", default="",
+                    help="output directory (default: the bundle's own directory)")
     ap.add_argument("--out-name", default="",
                     help="output stem (default: the bundle file stem)")
     ap.add_argument("--navigator", action="store_true",
@@ -102,7 +102,9 @@ def main() -> int:
         return 2
 
     stem = args.out_name or src.stem.replace(".stix21", "") or "stix"
-    out_dir = Path(args.out_dir)
+    # Default next to the bundle: the analyzer writes bundles under
+    # exports/<stem>_analysis/stix/, so the rendered page stays with its run.
+    out_dir = Path(args.out_dir) if args.out_dir else src.parent
 
     tactic_knowledge: dict = {}
     if not args.no_enrich:

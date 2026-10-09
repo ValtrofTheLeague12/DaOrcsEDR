@@ -9,8 +9,6 @@
 #include <fstream>
 #include <memory>
 
-#define MAGIC_DATABASE "C:/msys64/ucrt64/share/misc/magic.mgc"
-
 namespace {
 constexpr std::array<std::uint8_t, 4> ELF_HEADER = {0x7F, 0x45, 0x4C, 0x46};
 constexpr std::array<std::uint8_t, 2> PE_HEADER = {0x4D, 0x5A};
@@ -162,10 +160,11 @@ void detect_file_magic(const std::string& path, file_info_t& info) {
     add_error(info, file_error::magic_failed, "Could not initialize libmagic");
     return;
   }
-  if (magic_load(magic, MAGIC_DATABASE) != 0) {
+  if (magic_load(magic, STATIC_ANALYZER_MAGIC_DATABASE) != 0) {
     const char* error = magic_error(magic);
     LOG_ERROR("analyzer: detect_file_magic: magic_load('{}') failed: {}",
-              MAGIC_DATABASE, error == nullptr ? "(no detail)" : error);
+              STATIC_ANALYZER_MAGIC_DATABASE,
+              error == nullptr ? "(no detail)" : error);
     add_error(info, file_error::magic_failed,
               error == nullptr ? "Could not load magic database" : error);
     magic_close(magic);

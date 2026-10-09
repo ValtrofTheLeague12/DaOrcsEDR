@@ -94,6 +94,18 @@ public:
         const std::vector<std::pair<std::string, std::string>>& headers = {},
         std::size_t max_response_bytes = 8 * 1024 * 1024);
 
+    // HTTP (POST with a JSON body). Same transport and logging as get(); the
+    // ML scoring service (ml/serve.py) is reached through this, so a REST call
+    // out of the analyzer needs no second HTTP stack.
+    //
+    // `body` is sent verbatim. Callers own JSON serialisation and must set
+    // Content-Type themselves - the header list is passed straight to libcurl.
+    cti::http_response post(
+        const std::string& path,
+        const std::string& body,
+        const std::vector<std::pair<std::string, std::string>>& headers = {},
+        std::size_t max_response_bytes = 8 * 1024 * 1024);
+
     bool healthy();
 
     const std::string& base_url() const { return options_.base_url; }

@@ -19,6 +19,7 @@ std::string trim(std::string value) {
   return value;
 }
 
+#ifdef _WIN32
 std::vector<std::string> wsl_command(const options& opts) {
   std::vector<std::string> command{"wsl.exe"};
   if (!opts.wsl_distro.empty()) {
@@ -27,6 +28,7 @@ std::vector<std::string> wsl_command(const options& opts) {
   }
   return command;
 }
+#endif
 
 void parse_response(result_t& result) {
   std::istringstream input(result.response);
@@ -66,9 +68,14 @@ result_t query(const std::string& domain, const options& opts) {
     return result;
   }
 
-  std::vector<std::string> command = wsl_command(opts);
+  std::vector<std::string> command;
+#ifdef _WIN32
+  command = wsl_command(opts);
   command.push_back("--");
   command.push_back("dig");
+#else
+  command.push_back("dig");
+#endif
   if (!opts.nameserver.empty()) {
     command.push_back("@");
     command.push_back(opts.nameserver);
@@ -78,8 +85,14 @@ result_t query(const std::string& domain, const options& opts) {
   command.push_back("+time=3");
   command.push_back("+tries=1");
 
+#ifdef _WIN32
   result.command = "wsl.exe";
-  for (std::size_t i = 1; i < command.size(); ++i) {
+  const std::size_t first_arg = 1;
+#else
+  result.command = command.front();
+  const std::size_t first_arg = 1;
+#endif
+  for (std::size_t i = first_arg; i < command.size(); ++i) {
     result.command += " ";
     result.command += command[i];
   }

@@ -106,7 +106,12 @@ void run_cti(context& ctx) {
               // wsl.exe, capa and the Python generator - none of them need
               // this variable, and all of them would otherwise inherit it.
               proc::protect_env_var(item.target);
+#ifdef _WIN32
               const bool applied = _putenv_s(item.target.c_str(), item.value.c_str()) == 0;
+#else
+              const bool applied =
+                  ::setenv(item.target.c_str(), item.value.c_str(), 1) == 0;
+#endif
               // Drop the secret from memory once it is in the environment.
               item.value.assign(item.value.size(), '\0');
               item.value.clear();
@@ -242,7 +247,11 @@ void run_cti(context& ctx) {
   // as the phase is over, so none of them can leak into a later phase (or a
   // child process) that happens to read it.
   for (const std::string& target : vault_targets) {
+#ifdef _WIN32
     _putenv_s(target.c_str(), "");
+#else
+    ::unsetenv(target.c_str());
+#endif
   }
   vault_targets.clear();
 

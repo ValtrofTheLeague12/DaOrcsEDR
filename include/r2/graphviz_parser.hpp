@@ -101,10 +101,8 @@ struct dir_result_t {
 // Convert exactly the listed *.dot files into a single JSON object keyed by
 // file stem, written to `out_json_path` atomically. Prefer this over
 // convert_directory whenever the caller knows which files belong to the sample
-// being analyzed: exports/radare2 is one shared directory that accumulates
-// artifacts from every sample ever analyzed, so globbing it folds unrelated
-// samples' graphs into this sample's output (and makes the file identical for
-// every sample).
+// being analyzed: convert_directory globs a whole directory, so any other
+// sample's graphs sitting next to them would fold into this sample's output.
 dir_result_t convert_files(const std::vector<std::string>& dot_paths,
                            const std::string& out_json_path);
 

@@ -119,16 +119,6 @@ tr:hover td{background:rgba(77,141,255,.04)}
 .stat-card .sl{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-top:3px}
 .stat-card .si{font-size:22px;margin-bottom:4px;opacity:.7}
 
-/* hexdump section */
-.hex-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:10px}
-.hexview{overflow:auto;max-height:70vh;font-family:var(--mono);font-size:15px;line-height:1.5}
-.hex-head{display:grid;grid-template-columns:90px 1fr 1fr;gap:14px;padding:6px 10px;color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg2);z-index:2}
-.hexrow{display:grid;grid-template-columns:90px 1fr 1fr;gap:14px;padding:3px 10px;border-bottom:1px solid rgba(28,42,68,.4);align-items:center}
-.hexrow:hover{background:rgba(77,141,255,.04)}
-.h-addr{color:var(--cyan);font-weight:600}
-.h-hex{color:var(--fg);word-spacing:4px;letter-spacing:0.5px}
-.h-ascii{color:var(--dim);letter-spacing:1px}
-
 .search{width:100%;padding:9px 13px;background:var(--bg);border:1px solid var(--line);border-radius:var(--rs);color:var(--fg);font-family:var(--mono);font-size:16px;transition:var(--tr);outline:none}
 .search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,141,255,.12)}
 .search::placeholder{color:var(--dim)}
@@ -208,6 +198,56 @@ svg.graph:active{cursor:grabbing}
 
 /* ═══ ATT&CK / STIX section ═══ */
 .sx-matrix{display:grid;gap:9px;grid-auto-flow:column;grid-auto-columns:minmax(178px,1fr);overflow-x:auto;padding-bottom:6px}
+/* ═══ ATT&CK tactics: procedures, tooling, detection guidance ═══ */
+.tk-wrap{display:grid;gap:10px}
+.tk-filters{display:flex;flex-wrap:wrap;gap:7px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 11px}
+.tk-filters input[type=search]{flex:1;min-width:190px}
+.tk-chips{display:flex;flex-wrap:wrap;gap:5px}
+.tk-chip{padding:4px 10px;border-radius:13px;font-size:11.5px;cursor:pointer;user-select:none;
+  background:var(--panel);border:1px solid var(--line);color:var(--dim);font-weight:600;transition:var(--tr)}
+.tk-chip:hover{border-color:var(--accent);color:var(--fg)}
+.tk-chip.on{background:rgba(46,230,168,.13);border-color:rgba(46,230,168,.5);color:#2ee6a8}
+.tk-chip.tk-tools.on{background:rgba(46,230,168,.13);border-color:rgba(46,230,168,.5);color:#2ee6a8}
+.tk-chip.tk-malware.on{background:rgba(255,77,94,.13);border-color:rgba(255,77,94,.5);color:var(--red)}
+.tk-chip.tk-groups.on{background:rgba(255,209,102,.14);border-color:rgba(255,209,102,.5);color:#ffd166}
+.tk-chip.tk-detect.on{background:rgba(122,162,247,.15);border-color:rgba(122,162,247,.5);color:#7aa2f7}
+.tk-reset{margin-left:auto;padding:4px 10px;border-radius:7px;font-size:11.5px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:var(--dim)}
+.tk-reset:hover{border-color:var(--red);color:var(--red)}
+.tk-count{font-size:11.5px;color:var(--dim);white-space:nowrap}
+.tk-tac{border:1px solid var(--line);border-radius:9px;background:var(--panel2);overflow:hidden}
+.tk-tachead{display:flex;align-items:center;gap:9px;padding:8px 11px;cursor:pointer;background:var(--panel)}
+.tk-tachead:hover{border-color:var(--accent)}
+.tk-tacname{font-size:12.5px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px}
+.tk-tacmeta{font-size:11.5px;color:var(--dim);margin-left:auto;white-space:nowrap}
+.tk-caret{color:var(--dim);font-size:11px;transition:var(--tr)}
+.tk-tac.open .tk-caret{transform:rotate(90deg)}
+.tk-tacbody{display:none;padding:9px 11px 11px;gap:7px;flex-direction:column}
+.tk-tac.open .tk-tacbody{display:flex}
+.tk-proc{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:9px 11px}
+.tk-prochead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.tk-pid{font-family:var(--mono);font-size:12.5px;font-weight:700;color:#ff9f43}
+.tk-pname{font-size:13px;font-weight:600}
+.tk-sub{font-size:10px;background:rgba(167,139,250,.14);border:1px solid rgba(167,139,250,.4);color:#a78bfa;padding:1px 6px;border-radius:9px}
+.tk-hits{font-size:10.5px;background:rgba(255,209,102,.14);border:1px solid rgba(255,209,102,.4);color:#ffd166;padding:1px 6px;border-radius:9px;white-space:nowrap}
+.tk-row{display:flex;gap:7px;align-items:baseline;font-size:12px;margin-top:5px;line-height:1.5}
+.tk-lbl{flex:0 0 60px;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--dim);font-weight:700}
+.tk-lbl.tools{color:#2ee6a8}
+.tk-lbl.malware{color:var(--red)}
+.tk-lbl.groups{color:#ffd166}
+.tk-lbl.detect{color:#7aa2f7}
+.tk-vals{display:flex;flex-wrap:wrap;gap:4px}
+.tk-val{font-size:11.5px;padding:1px 7px;border-radius:5px;background:var(--panel2);border:1px solid var(--line)}
+.tk-val.tools{color:#2ee6a8;border-color:rgba(46,230,168,.35)}
+.tk-val.malware{color:var(--red);border-color:rgba(255,77,94,.35)}
+.tk-val.groups{color:#ffd166;border-color:rgba(255,209,102,.35)}
+.tk-val.id{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.tk-more{font-size:11px;color:var(--dim);font-style:italic}
+.tk-det{font-size:11.5px;color:var(--fg);line-height:1.55;background:rgba(122,162,247,.06);border-left:2px solid rgba(122,162,247,.45);padding:5px 9px;border-radius:0 6px 6px 0}
+.tk-detname{font-size:11px;color:#7aa2f7;font-weight:600;display:block;margin-bottom:2px}
+.tk-none{font-size:11.5px;color:var(--dim);font-style:italic}
+.tk-empty{padding:26px;text-align:center;color:var(--dim);font-size:13px}
+@media (max-width:820px){.tk-lbl{flex-basis:100%}.tk-reset{margin-left:0}}
 .sx-tac{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px}
 .sx-tac h4{font-size:11.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--dim);margin-bottom:7px;display:flex;justify-content:space-between;gap:6px}
 .sx-tac h4 b{color:var(--accent)}
@@ -236,6 +276,19 @@ svg.graph:active{cursor:grabbing}
   border:1px solid var(--line2);border-radius:6px;padding:6px 10px;min-width:200px}
 .sx-toolbar input:focus{outline:none;border-color:var(--accent)}
 .sx-note{color:var(--dim);font-size:11.5px;margin-top:9px;line-height:1.6}
+/* D3FEND: one block per ATT&CK technique, chips for the countermeasures. */
+.d3f-tech{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:7px 8px;margin-bottom:6px}
+.d3f-tech h5{font-size:12.5px;font-family:var(--mono);color:var(--fg);margin-bottom:5px;font-weight:600}
+.d3f-tech h5 code{color:var(--orange);font-weight:700;margin-right:5px}
+.d3f-tech h5 span{color:var(--dim);font-weight:400}
+.d3f-chip{display:inline-flex;align-items:baseline;gap:5px;background:rgba(34,211,238,.08);
+  border:1px solid rgba(34,211,238,.3);border-radius:12px;padding:3px 9px;margin:0 5px 5px 0;
+  font-size:11.5px;color:var(--fg);cursor:default}
+.d3f-chip b{color:var(--cyan);font-family:var(--mono);font-weight:700}
+.d3f-chip i{font-style:normal;color:var(--dim);font-size:10.5px}
+.d3f-chip .d3f-rel{color:var(--dim);font-size:10.5px}
+.d3f-chip .d3f-rel em{font-style:normal;color:var(--green)}
+.d3f-none{font-size:11.5px;color:var(--dim);font-style:italic}
 
 .copy-btn{background:none;border:1px solid var(--line);color:var(--dim);padding:3px 8px;border-radius:5px;cursor:pointer;font-size:13px;font-family:var(--mono);transition:var(--tr);margin-left:8px}
 .copy-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(77,141,255,.06)}
@@ -475,7 +528,7 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
   <button data-t="assembly">Assembly</button>
   <button data-t="graphs">Call Graph / CFG</button>
   <button data-t="charts">Analytics</button>
-  <button data-t="hex">Hexdump</button>
+  <button data-t="ml">ML Score</button>
   <button data-t="tooling">Tooling</button>
 </nav>
 
@@ -534,17 +587,103 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
   </div>
 </section>
 
-<section id="hex">
-  <div class="pi">Section <span>Hexdump</span></div>
-  <div class="stats-row" id="hexStats"></div>
+<section id="ml">
+  <div class="pi">Section <span>ML Score</span> / EMBER2024</div>
+  <div class="stats-row" id="mlStats"></div>
+  {% set ml = payload.ml or {} %}
+  {% if not ml or not ml.ok %}
   <div class="card">
-    <h3>Raw Bytes (hex + ASCII)</h3>
-    <div class="hex-toolbar">
-      <span class="mono" id="hexInfo" style="color:var(--dim)"></span>
-      <button class="copy-btn" id="copyHex" style="margin-left:auto">Copy All</button>
-    </div>
-    <div id="hexBody" class="hexview"></div>
+    <h3>Model Verdict</h3>
+    {% if ml and ml.error %}
+    <div class="kv"><span>Status</span><span>{{ ml.error }}{% if ml.detail %} — {{ ml.detail }}{% endif %}</span></div>
+    {% else %}
+    <div class="dt-empty">ML scoring was skipped for this sample (no scoring service, or ML_SKIP set). The static analysis above is unaffected.</div>
+    {% endif %}
+    {% if ml and ml.verdict_note %}
+    <div class="kv"><span>Note</span><span>{{ ml.verdict_note }}</span></div>
+    {% endif %}
   </div>
+  {% else %}
+  <div class="grid2">
+    <div class="card">
+      <h3>Model Verdict</h3>
+      {% set lvl = (ml.threat_level or '') %}
+      {% set lvl_colors = {'low':'#2ee6a8','moderate':'#ffd166','high':'#ff4d5e','critical':'#ff4d5e','n/a':'#6b7f9e'} %}
+      <div class="kv"><span>Threat level</span><span class="mono" style="color:{{ lvl_colors.get(lvl, '#6b7f9e') }}">{{ lvl or '—' }}</span></div>
+      <div class="kv"><span>Verdict</span><span>{{ ml.verdict or '—' }}</span></div>
+      <div class="kv"><span>P(malicious)</span><span class="mono">{{ '%.6f'|format(ml.malicious_probability or 0) }}</span></div>
+      {% if ml.threshold_margin is defined and ml.threshold_margin is not none %}
+      <div class="kv"><span>vs threshold</span><span class="mono">{{ '%+.4f'|format(ml.threshold_margin) }} (p − t)</span></div>
+      {% endif %}
+      <div class="kv"><span>Threshold</span><span class="mono">{{ ml.threshold }}</span></div>
+      <div class="kv"><span>PE input</span><span>{{ 'yes' if ml.is_pe else 'no' }}</span></div>
+      <div class="kv"><span>Uncalibrated</span><span>yes — banded verdict only, not a confidence</span></div>
+      {% if ml.verdict_note %}
+      <div class="kv"><span>Note</span><span>{{ ml.verdict_note }}</span></div>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h3>Model</h3>
+      <div class="kv"><span>File</span><span class="mono">{{ ml.model or '—' }}</span></div>
+      <div class="kv"><span>SHA-256</span><span class="mono">{{ (ml.model_sha256 or '')[:16] }}…</span></div>
+      <div class="kv"><span>Trees</span><span>{{ ml.trees or 0 }}</span></div>
+      <div class="kv"><span>Features</span><span>{{ ml.features or 0 }}</span></div>
+      <div class="kv"><span>Source</span><span>{{ ml.feature_source or '—' }}</span></div>
+      <div class="kv"><span>Bytes scored</span><span>{{ ml.bytes or 0 }}</span></div>
+    </div>
+  </div>
+
+  <div class="chart-row">
+    <div class="chart-box">
+      <h3>P(malicious) vs threshold</h3>
+      <div id="mlGauge"></div>
+      <div class="dt-desc">Threshold {{ ml.threshold }} · verdict {{ ml.verdict or '—' }} · threat
+        {{ lvl or '—' }} — the probability is uncalibrated, so the level is a band around
+        the threshold, not a confidence.</div>
+    </div>
+    <div class="chart-box">
+      <h3>SHAP by group (log-odds)</h3>
+      <div id="mlGroups"></div>
+      <div class="dt-desc">Red pushes towards malicious, green towards benign; the bar is the summed SHAP of the group.</div>
+    </div>
+  </div>
+  <div class="chart-row single">
+    <div class="chart-box">
+      <h3>Top Features (SHAP log-odds)</h3>
+      <div id="mlFeatures"></div>
+      <div class="dt-desc">Each feature's own contribution to the log-odds, in feature-index order.</div>
+    </div>
+  </div>
+
+  {% set expl = ml.explanation or {} %}
+  {% if expl and expl.group_rollup %}
+  <div class="card">
+    <h3>Group Attribution (SHAP log-odds)</h3>
+    <table>
+      <tr><th>group</th><th>shap</th><th>in analyzer</th></tr>
+      {% for g in expl.group_rollup %}
+      <tr><td class="mono">{{ g.group }}</td><td class="mono">{{ '%.4f'|format(g.shap_log_odds or 0) }}</td>
+          <td>{{ 'yes' if g.analyzer_implemented else 'no' }}</td></tr>
+      {% endfor %}
+    </table>
+    <div class="dt-desc">Base {{ '%.4f'|format(expl.base_log_odds or 0) }} + ΣSHAP {{ '%.4f'|format(expl.sum_shap or 0) }} = prediction {{ '%.4f'|format(expl.prediction_log_odds or 0) }} (consistency error {{ expl.consistency_error or 0 }}).</div>
+  </div>
+  {% endif %}
+  {% if expl and expl.top_features %}
+  <div class="card">
+    <h3>Top Features (SHAP)</h3>
+    <table>
+      <tr><th>#</th><th>group</th><th>label / evidence</th><th>direction</th><th>shap</th></tr>
+      {% for f in expl.top_features %}
+      <tr><td class="mono">{{ f.feature_index }}</td><td class="mono">{{ f.group }}</td>
+          <td class="mono">{{ f.label or f.evidence or '—' }}</td>
+          <td>{{ f.direction or '—' }}</td>
+          <td class="mono">{{ '%.4f'|format(f.shap_log_odds or 0) }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
 </section>
 
 <section id="tooling">
@@ -744,9 +883,45 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
   {% else %}
   <div class="stats-row" id="stixStats"></div>
 
+  {% set am = (payload.cti or {}).get('attack_matrix') or {} %}
   <div class="map-tabs">
     <button class="sxtab on" data-sview="coverage">ATT&amp;CK Coverage</button>
+    <button class="sxtab" data-sview="tactics">Procedures &amp; Tooling</button>
     <button class="sxtab" data-sview="graph">STIX Object Graph</button>
+    {% if payload.d3fend and payload.d3fend.available %}
+    <button class="sxtab" data-sview="d3fend">D3FEND Defenses</button>
+    {% endif %}
+  </div>
+
+  <div id="stixTactics" style="display:none">
+    {% if am.available %}
+    <div class="card">
+      <div class="pi" style="margin-bottom:8px">Tactics <span>procedures observed, with the tooling ATT&amp;CK knows implements them</span></div>
+      <div class="tk-wrap">
+        <div class="tk-filters">
+          <input type="search" id="tkSearch" placeholder="Search technique, tool, malware, group or detection text…">
+          <span class="tk-chips" id="tkTacticChips"></span>
+          <span class="tk-count" id="tkCount"></span>
+          <button class="tk-reset" id="tkReset">Reset</button>
+        </div>
+        <div class="tk-chips">
+          <span class="tk-chip on" data-facet="all">All data</span>
+          <span class="tk-chip tk-tools" data-facet="tools">Tools only</span>
+          <span class="tk-chip tk-malware" data-facet="malware">Malware only</span>
+          <span class="tk-chip tk-groups" data-facet="groups">Groups only</span>
+          <span class="tk-chip tk-detect" data-facet="detect">Detection guidance only</span>
+          <span class="tk-chip" data-facet="sub">Sub-techniques only</span>
+          <span class="tk-chip" data-facet="notool">Has tooling</span>
+        </div>
+        <div id="tkList"></div>
+      </div>
+    </div>
+    {% else %}
+    <div class="card">
+      <div class="dt-empty">No ATT&amp;CK procedure records for this run —
+        {{ am.reason or 'the CTI report carries no tactic view and no ATT&amp;CK-cache fallback was available' }}.</div>
+    </div>
+    {% endif %}
   </div>
 
   <div id="stixCoverage">
@@ -766,6 +941,17 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
     <div class="legend" id="stixLegend"></div>
     <p class="sx-note" id="stixNote"></p>
   </div>
+
+  {% if payload.d3fend and payload.d3fend.available %}
+  <div id="stixD3fend" style="display:none">
+    <div class="card">
+      <div class="pi" style="margin-bottom:8px">D3FEND <span>defensive techniques for the tactics capa recovered</span></div>
+      <div class="stats-row" id="d3fStats"></div>
+      <div id="d3fList"></div>
+      <p class="sx-note" id="d3fNote"></p>
+    </div>
+  </div>
+  {% endif %}
   {% endif %}
 </section>
 
@@ -1099,8 +1285,8 @@ document.querySelectorAll("nav button").forEach(b => {
     if (b.dataset.t === "graphs") {
       try { renderGraphs(); } catch (err) { console.error("Graphs failed", err); }
     }
-    if (b.dataset.t === "hex") {
-      try { renderHexdump(); } catch (err) { console.error("Hexdump failed", err); }
+    if (b.dataset.t === "ml") {
+      try { drawML(); } catch (err) { console.error("ML view failed", err); }
     }
     window.scrollTo({top:0,behavior:"smooth"});
   };
@@ -1116,7 +1302,7 @@ themeBtn.onclick = () => {
   document.documentElement.setAttribute("data-theme", curTheme);
   localStorage.setItem("dash-theme", curTheme);
   themeBtn.textContent = curTheme === "dark" ? "☀" : "🌙";
-  drawAllCharts(); drawThreat(); renderGraphs(); renderHexdump();
+  drawAllCharts(); drawThreat(); renderGraphs(); drawML();
 };
 document.getElementById("topBtn").onclick = () => window.scrollTo({top:0,behavior:"smooth"});
 
@@ -1290,55 +1476,6 @@ function showDetail(title, body, meta) {
   document.getElementById("detailBody").innerHTML = html;
   detailEl.classList.add("open");
 }
-
-/* ═══ Hexdump section ═══ */
-function renderHexdump() {
-  const hd = document.getElementById("hexBody");
-  if (!hd) return;
-  const data = (DATA.hexdump && DATA.hexdump.bytes) ? DATA.hexdump.bytes : null;
-  const base = (DATA.hexdump && DATA.hexdump.base != null) ? DATA.hexdump.base : 0;
-  if (!data || !data.length) {
-    hd.innerHTML = '<div class="dt-empty">No hexdump data available for this sample.</div>';
-    return;
-  }
-  const rows = [];
-  const perRow = 16;
-  for (let i = 0; i < data.length; i += perRow) {
-    const chunk = data.slice(i, i + perRow);
-    const addr = base + i;
-    const hex = chunk.map(b => b.toString(16).padStart(2, "0")).join(" ");
-    const ascii = chunk.map(b => (b >= 0x20 && b <= 0x7e) ? String.fromCharCode(b) : ".").join("");
-    rows.push({addr, hex, ascii});
-  }
-  const max = rows.length;
-  let html = '<div class="hex-head"><span>Addr</span><span>Hex (16 bytes/row)</span><span>ASCII</span></div>';
-  for (const r of rows) {
-    html += '<div class="hexrow">' +
-      '<span class="h-addr">' + HEX(r.addr) + '</span>' +
-      '<span class="h-hex">' + r.hex + '</span>' +
-      '<span class="h-ascii">' + r.ascii + '</span>' +
-      '</div>';
-  }
-  hd.innerHTML = html;
-  document.getElementById("hexInfo").textContent = max + " rows  ·  " + data.length.toLocaleString() + " bytes  ·  base " + HEX(base);
-  const copyBtn = document.getElementById("copyHex");
-  if (copyBtn) copyBtn.onclick = () => {
-    const text = Array.from(document.querySelectorAll("#hexBody .hexrow")).map(r => r.textContent).join("\n");
-    navigator.clipboard.writeText(text).then(() => {
-      copyBtn.classList.add("copied");
-      copyBtn.textContent = "\u2713 Copied";
-      setTimeout(() => {
-        copyBtn.classList.remove("copied");
-        copyBtn.textContent = "Copy All";
-      }, 1500);
-    });
-  };
-}
-(function () {
-  const hexEl = document.getElementById("hexBody");
-  if (!hexEl) return;
-  window.addEventListener("load", () => { renderHexdump(); });
-})();
 
 /* ═══ External tooling: xxd dump (colourised zones + copy) ═══ */
 function renderXxd() {
@@ -3136,6 +3273,153 @@ function chartGauge(containerId, score) {
     .attr("font-size","9").attr("fill","#ff4d5e").text("100");
 }
 
+/* ═══ ML section: probability gauge + SHAP contribution bars ═══ */
+function chartProbGauge(containerId, prob, threshold) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const W = el.clientWidth||400, H = 150;
+  const cx = W/2, cy = H-16, r = Math.min(cx-34, cy-14), ir = r-18;
+  const p = Math.max(0, Math.min(1, +prob||0));
+  const thr = Math.max(0, Math.min(1, +threshold||0));
+  /* d3.arc measures from 12 o'clock clockwise, so -PI/2..PI/2 is the top half;
+     the needle uses the same half via math angles (PI..2PI sweeps left -> up -> right). */
+  const arcAt = t => -Math.PI/2 + Math.max(0, Math.min(1, t))*Math.PI;
+  const needleAt = t => Math.PI + Math.max(0, Math.min(1, t))*Math.PI;
+  el.innerHTML = "";
+  const svg = d3.select(el).append("svg").attr("width",W).attr("height",H);
+  const g = svg.append("g");
+  const band = (t0,t1,color,op) => g.append("path")
+    .attr("d", d3.arc().innerRadius(ir).outerRadius(r).startAngle(arcAt(t0)).endAngle(arcAt(t1)))
+    .attr("fill",color).attr("opacity",op);
+
+  band(0, 1, "currentColor", 0.06);
+  band(0, thr, "#2ee6a8", 0.3);
+  band(thr, 1, "#ff4d5e", 0.3);
+  band(0, p, p>=thr ? "#ff4d5e" : "#2ee6a8", 0.9);
+
+  /* threshold tick */
+  const ta = needleAt(thr);
+  g.append("line")
+    .attr("x1", cx+Math.cos(ta)*(ir-4)).attr("y1", cy+Math.sin(ta)*(ir-4))
+    .attr("x2", cx+Math.cos(ta)*(r+5)).attr("y2", cy+Math.sin(ta)*(r+5))
+    .attr("stroke","#ffd166").attr("stroke-width",2).attr("stroke-linecap","round");
+
+  /* needle */
+  const na = needleAt(p);
+  g.append("line").attr("x1",cx).attr("y1",cy)
+    .attr("x2", cx+Math.cos(na)*(ir-6)).attr("y2", cy+Math.sin(na)*(ir-6))
+    .attr("stroke","#e2eaf6").attr("stroke-width",2).attr("stroke-linecap","round");
+  g.append("circle").attr("cx",cx).attr("cy",cy).attr("r",5).attr("fill","#e2eaf6");
+
+  const color = p>=thr ? "#ff4d5e" : "#2ee6a8";
+  g.append("text").attr("x",cx).attr("y",cy-34).attr("text-anchor","middle")
+    .attr("font-size","26").attr("font-weight","800").attr("fill",color)
+    .attr("font-family","var(--mono)").text(p.toFixed(4));
+  g.append("text").attr("x",cx).attr("y",cy-17).attr("text-anchor","middle")
+    .attr("font-size","9").attr("fill","#6b7f9e").attr("letter-spacing","1.5")
+    .text("P(MALICIOUS)");
+  g.append("text").attr("x",cx-r).attr("y",cy+14).attr("text-anchor","middle")
+    .attr("font-size","9").attr("fill","#2ee6a8").text("0");
+  g.append("text").attr("x",cx+r).attr("y",cy+14).attr("text-anchor","middle")
+    .attr("font-size","9").attr("fill","#ff4d5e").text("1.0");
+}
+
+/* Signed SHAP bars: red towards malicious, green towards benign, zero line kept. */
+function chartShapBars(containerId, labels, values, tips) {
+  const el = document.getElementById(containerId);
+  if (!el || !values.length) return;
+  const W = el.clientWidth||400, rowH = 26, H = values.length*rowH+16;
+  const padL = Math.min(220, Math.max(110, W*0.36)), padR = 62;
+  el.innerHTML = "";
+  const svg = d3.select(el).append("svg").attr("width",W).attr("height",H);
+  const lo = Math.min(0, d3.min(values)), hi = Math.max(0, d3.max(values));
+  const x = d3.scaleLinear().domain([lo===hi?0:lo, lo===hi?1:hi]).range([padL+6, W-padR]);
+  /* index keys, not the labels: two features can share a name and scaleBand
+     would silently collapse them into one row. */
+  const keys = values.map((v,i)=>String(i));
+  const y = d3.scaleBand().domain(keys).range([10, H-8]).padding(0.3);
+  const data = values.map((v,i)=>({v, l:String(labels[i]||""), k:String(i),
+                                   tip:String((tips&&tips[i])||labels[i]||"")}));
+  const g = svg.append("g");
+
+  g.append("line").attr("x1",x(0)).attr("x2",x(0)).attr("y1",6).attr("y2",H-6)
+    .attr("stroke","currentColor").attr("opacity",0.25);
+
+  const bars = g.selectAll("rect.s").data(data).join("rect").attr("class","s")
+    .attr("y",d=>y(d.k)).attr("height",y.bandwidth())
+    .attr("x",x(0)).attr("width",0).attr("rx",3)
+    .attr("fill",d=>d.v>=0?"#ff4d5e":"#2ee6a8").attr("opacity",0.85);
+  bars.transition().duration(600).delay((d,i)=>i*40)
+    .attr("x",d=>Math.min(x(0),x(d.v)))
+    .attr("width",d=>Math.max(2,Math.abs(x(d.v)-x(0))));
+
+  g.selectAll("text.v").data(data).join("text").attr("class","v")
+    .attr("y",d=>y(d.k)+y.bandwidth()/2+4)
+    .attr("x",d=>d.v>=0?x(d.v)+5:x(d.v)-5)
+    .attr("text-anchor",d=>d.v>=0?"start":"end")
+    .attr("font-size","10").attr("fill","#8b9cb5").attr("font-family","var(--mono)")
+    .text(d=>d.v.toFixed(3));
+
+  g.selectAll("text.l").data(data).join("text").attr("class","l")
+    .attr("x",padL-8).attr("y",d=>y(d.k)+y.bandwidth()/2+4)
+    .attr("text-anchor","end").attr("font-size","10").attr("fill","#6b7f9e")
+    .attr("font-family","var(--mono)").text(d=>d.l.slice(0,34));
+
+  bars.on("mousemove", function(ev,d) {
+    let tip = document.getElementById("d3tip");
+    if (!tip) { tip = document.createElement("div"); tip.id="d3tip"; tip.className="d3-tip"; document.body.appendChild(tip); }
+    tip.style.display="block"; tip.style.left=(ev.pageX+12)+"px"; tip.style.top=(ev.pageY-10)+"px";
+    tip.innerHTML = '<div class="dt-l">'+esc(d.tip)+'</div><div class="dt-v">'+d.v.toFixed(4)+'</div>';
+  }).on("mouseleave", ()=>{const t=document.getElementById("d3tip"); if(t)t.style.display="none";});
+}
+
+function drawML() {
+  const ml = DATA.ml || {};
+  const expl = ml.explanation || {};
+  const rollup = expl.group_rollup || [];
+  const tops = expl.top_features || [];
+  /* Same palette as the Jinja card above: one band, one colour, everywhere. */
+  const LEVEL_COLOR = {low:"#2ee6a8", moderate:"#ffd166", high:"#ff4d5e",
+                       critical:"#ff4d5e", "n/a":"#6b7f9e"};
+  const stats = document.getElementById("mlStats");
+  if (stats) {
+    const cards = ml.ok ? [
+      {v: ml.threat_level || "—", l: "threat level", c: LEVEL_COLOR[ml.threat_level]},
+      {v: ml.verdict || "—", l: "verdict"},
+      {v: (typeof ml.malicious_probability === "number") ? ml.malicious_probability.toFixed(4) : "—",
+       l: "P(malicious)"},
+      {v: (typeof ml.threshold_margin === "number")
+            ? (ml.threshold_margin >= 0 ? "+" : "") + ml.threshold_margin.toFixed(4)
+            : "—", l: "vs threshold"},
+      {v: (ml.threshold === undefined || ml.threshold === null) ? "—" : ml.threshold, l: "threshold"},
+      {v: ml.trees || 0, l: "trees"},
+      {v: ml.features || 0, l: "features"},
+      {v: rollup.length, l: "SHAP groups"},
+      {v: tops.length, l: "top features"},
+      {v: Math.round((ml.bytes||0)/1024) + " KB", l: "scored"},
+    ] : [
+      {v: ml.error ? "error" : "skipped", l: "ML status"},
+      {v: "—", l: "P(malicious)"},
+    ];
+    stats.innerHTML = cards.map(c =>
+      '<div class="stat-card"><div class="sv"' +
+      (c.c ? ' style="color:' + c.c + '"' : "") + ">" + c.v +
+      '</div><div class="sl">' + c.l + "</div></div>").join("");
+  }
+  if (!ml.ok) return;
+
+  chartProbGauge("mlGauge", ml.malicious_probability || 0, ml.threshold || 0);
+  if (rollup.length)
+    chartShapBars("mlGroups", rollup.map(x=>x.group), rollup.map(x=>+x.shap_log_odds||0),
+                  rollup.map(x=>x.group + (x.analyzer_implemented ? " (in analyzer)" : "")));
+  if (tops.length)
+    chartShapBars("mlFeatures",
+                  tops.map(x=>(x.label || x.evidence || x.group || "")),
+                  tops.map(x=>+x.shap_log_odds||0),
+                  tops.map(x=>"#" + (x.feature_index ?? "?") + " " + (x.group||"") + ": " +
+                              (x.label || x.evidence || "") + (x.direction ? " · " + x.direction : "")));
+}
+
 function drawAllCharts() {
   const ch = DATA.charts || {};
   chartGauge("chGauge", DATA.verdict.score);
@@ -3351,18 +3635,26 @@ function drawStix() {
   if (st.synthetic_tactics) notes.push(st.synthetic_tactics + " tactic node(s) inferred from kill_chain_phases.");
   if (st.dropped_edges) notes.push(st.dropped_edges + " relationship(s) dropped (endpoint not in the bundle).");
   if (st.truncated_nodes) notes.push(st.truncated_nodes + " object(s) beyond the display cap are not drawn.");
+  const D0 = DATA.d3fend;
+  if (D0 && !D0.available && D0.reason) notes.push("D3FEND: " + D0.reason + ".");
   document.getElementById("stixNote").textContent = notes.join(" ");
 
-  /* --- sub-tabs --- */
-  const showCov = on => {
-    document.getElementById("stixCoverage").style.display = on ? "" : "none";
-    document.getElementById("stixGraph").style.display = on ? "none" : "";
-    document.querySelectorAll("#stix .sxtab").forEach(b => b.classList.toggle("on", (b.dataset.sview === "coverage") === on));
-    if (!on) sxDrawGraph();
+  /* --- sub-tabs: coverage | tactics | graph | d3fend --- */
+  const elTactics = document.getElementById("stixTactics");
+  const elD3fend = document.getElementById("stixD3fend");
+  const showView = view => {
+    document.getElementById("stixCoverage").style.display = view === "coverage" ? "" : "none";
+    if (elTactics) elTactics.style.display = view === "tactics" ? "" : "none";
+    document.getElementById("stixGraph").style.display = view === "graph" ? "" : "none";
+    if (elD3fend) elD3fend.style.display = view === "d3fend" ? "" : "none";
+    document.querySelectorAll("#stix .sxtab").forEach(b => b.classList.toggle("on", b.dataset.sview === view));
+    if (view === "graph") sxDrawGraph();
+    if (view === "d3fend") drawD3fend();
   };
   document.querySelectorAll("#stix .sxtab").forEach(b => {
-    b.onclick = () => { if (b.dataset.sview === "coverage") showCov(true); else showCov(false); };
+    b.onclick = () => showView(b.dataset.sview || "coverage");
   });
+  tkInit();
 
   document.getElementById("sxNav").onclick = () => {
     if (!S.layer || !S.layer.techniques) { alert("No ATT&CK techniques to export."); return; }
@@ -3386,6 +3678,227 @@ function drawStix() {
     a.click();
     URL.revokeObjectURL(a.href);
   };
+}
+
+/* D3FEND countermeasures, grouped by the ATT&CK tactics capa recovered:
+   tactic -> technique -> D3FEND chips (D3-FA File Analysis *analyzes* File).
+   Built once on first open; DATA.d3fend is derived entirely from capa plus
+   the d3fend cache, so it exists even for a run with no STIX bundle. */
+function drawD3fend() {
+  const D = DATA.d3fend;
+  const box = document.getElementById("stixD3fend");
+  if (!D || !box || box.dataset.built) return;
+  box.dataset.built = "1";
+
+  const t = D.totals || {};
+  document.getElementById("d3fStats").innerHTML = [
+    {v: t.countermeasures || 0, l: "D3FEND Techniques"},
+    {v: t.covered || 0, l: "Techniques Covered"},
+    {v: (D.tactics || []).length, l: "ATT&CK Tactics"},
+  ].map(c => '<div class="stat-card"><div class="sv">' + c.v + '</div><div class="sl">' + c.l + "</div></div>")
+   .join("");
+
+  const list = document.getElementById("d3fList");
+  if (!(D.tactics || []).length) {
+    list.innerHTML = '<div class="dt-empty">No D3FEND countermeasures to show.</div>';
+  } else {
+    let html = "";
+    D.tactics.forEach(g => {
+      html += '<div class="sx-tac" style="margin-bottom:8px"><h4>' + esc(g.name) +
+              "<b>" + g.techniques.length + "</b></h4>";
+      g.techniques.forEach(x => {
+        html += '<div class="d3f-tech"><h5><code>' + esc(x.id) + "</code>" +
+                esc(x.name) + (x.sub ? " <span>: " + esc(x.sub) + "</span>" : "") + "</h5>";
+        if (!x.defenses.length) {
+          html += '<div class="d3f-none">no D3FEND mapping for this technique</div>';
+        } else {
+          html += x.defenses.map(d => {
+            const via = d.via ? ' (via ' + esc(d.via) + ")" : "";
+            const rel = (d.rel && d.art)
+              ? ' <span class="d3f-rel"><em>' + esc(d.rel) + "</em> " + esc(d.art) + "</span>"
+              : "";
+            return '<span class="d3f-chip" title="' + esc((d.cat || "") + via) +
+                   '"><b>' + esc(d.id) + "</b> " + esc(d.name) +
+                   (d.cat ? "<i>" + esc(d.cat) + "</i>" : "") + rel + "</span>";
+          }).join("");
+        }
+        html += "</div>";
+      });
+      html += "</div>";
+    });
+    list.innerHTML = html;
+  }
+
+  const notes = [];
+  if (D.source) notes.push("Source: " + D.source + ".");
+  if (D.reason) notes.push(D.reason + ".");
+  notes.push("Countermeasures are matched from the D3FEND ontology to the techniques capa matched on this sample.");
+  document.getElementById("d3fNote").textContent = notes.join(" ");
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Procedures & Tooling: for each observed tactic, the techniques and
+   the tooling / groups / detection guidance ATT&CK attaches to them.
+   The facet chips are a union filter - turning on several narrows to
+   rows matching ANY of them - because an analyst chasing one question
+   ("which of these have tooling?") should not have to undo the chip
+   they picked a moment earlier.
+   ═══════════════════════════════════════════════════════════════════ */
+function tkInit() {
+  const M = (DATA.cti || {}).attack_matrix || {};
+  const list = document.getElementById("tkList");
+  if (!list || !M.available) return;
+
+  const state = { q: "", facets: new Set(), tactic: "" };
+
+  /* One lowercase blob per procedure so a search term only has to match once. */
+  const index = M.tactics.map(t => ({
+    tac: t,
+    procs: t.procedures.map(p => {
+      const detText = (p.detections || [])
+        .map(d => d.name + " " + d.analytics.map(a => a.description).join(" ")).join(" ");
+      const hay = [p.id, p.name, p.url, (p.platforms || []).join(" "),
+                   (p.tools || []).map(x => x.name + " " + x.id).join(" "),
+                   (p.malware || []).map(x => x.name + " " + x.id).join(" "),
+                   (p.groups || []).map(x => x.name + " " + x.id).join(" "),
+                   (p.subtechniques || []).join(" "), detText].join(" ").toLowerCase();
+      return { p, hay };
+    })
+  }));
+
+  const chips = document.getElementById("tkTacticChips");
+  chips.innerHTML = M.tactics.map(t =>
+    '<span class="tk-chip" data-tac="' + esc(t.short) + '">' + esc(t.name) + "</span>").join("");
+
+  const passesFacet = p => {
+    const f = state.facets;
+    if (!f.size) return true;
+    return [...f].some(k => {
+      switch (k) {
+        case "tools":   return (p.tools || []).length > 0;
+        case "malware": return (p.malware || []).length > 0;
+        case "groups":  return (p.groups || []).length > 0;
+        case "detect":  return (p.detections || []).length > 0;
+        case "sub":     return !!p.is_subtechnique;
+        case "notool":  return (p.tools || []).length > 0 || (p.malware || []).length > 0;
+        default:        return true;
+      }
+    });
+  };
+
+  const vals = (items, cls, total) => {
+    if (!items.length) return "";
+    const more = total > items.length
+      ? ' <span class="tk-more">+' + (total - items.length) + " more</span>" : "";
+    return '<span class="tk-vals">' +
+      items.map(x => '<span class="tk-val ' + cls + '" title="' + esc(x.id || "") + '">' + esc(x.name) +
+                     (x.id ? ' <span class="tk-val id">' + esc(x.id) + "</span>" : "") + "</span>").join("") +
+      more + "</span>";
+  };
+
+  const renderProc = p => {
+    let h = '<div class="tk-proc"><div class="tk-prochead">' +
+            '<span class="tk-pid">' + esc(p.id) + "</span>" +
+            '<span class="tk-pname">' + esc(p.name) + "</span>";
+    if (p.is_subtechnique) h += '<span class="tk-sub">sub-technique</span>';
+    if (p.hits > 1) h += '<span class="tk-hits">' + p.hits + " capa hits</span>";
+    h += "</div>";
+
+    if ((p.tools || []).length)
+      h += '<div class="tk-row"><span class="tk-lbl tools">tools</span>' +
+           vals(p.tools, "tools", p.tools_total) + "</div>";
+    if ((p.malware || []).length)
+      h += '<div class="tk-row"><span class="tk-lbl malware">malware</span>' +
+           vals(p.malware, "malware", p.malware_total) + "</div>";
+    if ((p.groups || []).length)
+      h += '<div class="tk-row"><span class="tk-lbl groups">groups</span>' +
+           vals(p.groups, "groups", p.groups_total) + "</div>";
+
+    /* "Has tooling" is the most-asked question, so say it outright when the
+       answer is no rather than leaving the row silently short. */
+    if (!(p.tools || []).length && !(p.malware || []).length)
+      h += '<div class="tk-row"><span class="tk-lbl tools">tooling</span>' +
+           '<span class="tk-none">no known tooling in ATT&amp;CK for this technique</span></div>';
+
+    (p.detections || []).forEach(d => {
+      (d.analytics || []).forEach(a => {
+        h += '<div class="tk-row"><span class="tk-lbl detect">detect</span><span class="tk-det">' +
+             (d.name ? '<span class="tk-detname">' + esc(d.name) + "</span>" : "") +
+             esc(a.description) + "</span></div>";
+      });
+    });
+    if ((p.detections_total || 0) > (p.detections || []).length)
+      h += '<div class="tk-row"><span class="tk-lbl detect"></span><span class="tk-more">+' +
+           (p.detections_total - p.detections.length) +
+           " more detection strategy(ies) in exports/cti</span></div>";
+
+    if ((p.subtechniques || []).length)
+      h += '<div class="tk-row"><span class="tk-lbl">children</span><span class="tk-vals">' +
+           p.subtechniques.map(s => '<span class="tk-val">' + esc(s) + "</span>").join("") + "</span></div>";
+    if (p.mitigations)
+      h += '<div class="tk-row"><span class="tk-lbl">mitigate</span><span class="tk-vals">' +
+           '<span class="tk-val">' + p.mitigations + " mitigation(s)</span></span></div>";
+
+    return h + "</div>";
+  };
+
+  const render = () => {
+    let shownT = 0, shownP = 0, html = "";
+    index.forEach(({ tac, procs }) => {
+      if (state.tactic && tac.short !== state.tactic) return;
+      const hits = procs.filter(x => passesFacet(x.p) &&
+                                    (!state.q || x.hay.indexOf(state.q) !== -1));
+      if (!hits.length) return;
+      shownT++; shownP += hits.length;
+      const nTools = hits.filter(x => (x.p.tools || []).length || (x.p.malware || []).length).length;
+      html += '<div class="tk-tac' + (shownT === 1 ? " open" : "") + '">' +
+              '<div class="tk-tachead"><span class="tk-caret">▶</span>' +
+              '<span class="tk-tacname">' + esc(tac.name) + "</span>" +
+              '<span class="tk-tacmeta">' + hits.length + " technique(s) · " +
+              (nTools ? nTools + " with tooling" : "no tooling") + "</span></div>" +
+              '<div class="tk-tacbody">' + hits.map(x => renderProc(x.p)).join("") + "</div></div>";
+    });
+    if (!html) html = '<div class="tk-empty">No procedure matches these filters.</div>';
+    list.innerHTML = html;
+
+    const t = M.totals || {};
+    document.getElementById("tkCount").textContent =
+      shownP + " of " + (t.procedures || 0) + " procedures · " + shownT + " tactic(s) · " +
+      (t.tools || 0) + " tools · " + (t.detections || 0) + " with detection guidance";
+
+    list.querySelectorAll(".tk-tachead").forEach(hd => {
+      hd.onclick = () => hd.parentElement.classList.toggle("open");
+    });
+  };
+
+  document.getElementById("tkSearch").oninput = e => { state.q = e.target.value.trim().toLowerCase(); render(); };
+  document.querySelectorAll("[data-facet]").forEach(c => {
+    c.onclick = () => {
+      const k = c.dataset.facet;
+      if (k === "all") state.facets.clear();
+      else state.facets.has(k) ? state.facets.delete(k) : state.facets.add(k);
+      document.querySelectorAll("[data-facet]").forEach(o =>
+        o.classList.toggle("on", k === "all" ? state.facets.size === 0 : state.facets.has(o.dataset.facet)));
+      render();
+    };
+  });
+  chips.querySelectorAll(".tk-chip").forEach(c => {
+    c.onclick = () => {
+      const t = c.dataset.tac;
+      state.tactic = (state.tactic === t) ? "" : t;
+      chips.querySelectorAll(".tk-chip").forEach(o => o.classList.toggle("on", o.dataset.tac === state.tactic));
+      render();
+    };
+  });
+  document.getElementById("tkReset").onclick = () => {
+    state.q = ""; state.facets.clear(); state.tactic = "";
+    document.getElementById("tkSearch").value = "";
+    document.querySelectorAll("[data-facet]").forEach(o => o.classList.toggle("on", o.dataset.facet === "all"));
+    chips.querySelectorAll(".tk-chip").forEach(o => o.classList.remove("on"));
+    render();
+  };
+
+  render();
 }
 
 function sxDrawGraph() {

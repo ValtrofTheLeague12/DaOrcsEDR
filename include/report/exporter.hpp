@@ -14,29 +14,36 @@
 #include "file_hasher.hpp"
 #include "extractor.hpp"
 #include "ioc_extractor.hpp"
+#include "known_pe_hashes.hpp"
 #include "capa_runner.hpp"
 #include "radare2_runner.hpp"
 #include "yara_scanner.hpp"
 #include "cti.hpp"
+#include "ml_api.hpp"
 
 namespace exporter {
 
 using nlohmann::json;
 
 namespace dir {
-inline constexpr const char* root       = "exports";
-inline constexpr const char* fileinfo   = "exports/fileinfo";
-inline constexpr const char* hash       = "exports/hash";
-inline constexpr const char* extraction = "exports/extraction";
-inline constexpr const char* ioc        = "exports/ioc";
-inline constexpr const char* capa       = "exports/capa";
-inline constexpr const char* iat        = "exports/iat";
-inline constexpr const char* got        = "exports/got";
-inline constexpr const char* radare2    = "exports/radare2";
-inline constexpr const char* malapi     = "exports/malapi";
-inline constexpr const char* cti        = "exports/cti";
-inline constexpr const char* stix       = "exports/stix";
-}
+// Shared root holding one results directory per run. Everything a run
+// produces lives inside its own `<root>/<stem>_analysis/` directory, so two
+// runs over different samples never share a path (and a re-run over the same
+// sample overwrites its own results only).
+inline constexpr const char* root = "exports";
+
+// exports/<stem>_analysis
+std::filesystem::path run_root(const std::string& stem);
+
+// exports/<stem>_analysis/<category> - created on demand by the writers.
+std::filesystem::path run(const std::string& stem,
+                          std::string_view category);
+
+// exports/<stem>_analysis/<category>/<stem>_<artifact>.json
+std::filesystem::path artifact(const std::string& stem,
+                               std::string_view category,
+                               std::string_view artifact_name);
+} // namespace dir
 
 // ---------------------------------------------------------------------------
 // to_json overloads
@@ -48,12 +55,15 @@ json to_json(const ioc::ioc_results_t& r);
 json to_json(const extractor::extraction_result_t& r);
 json to_json(const capa::report_t& r);
 json to_json(const extractor::iat_result_t& r);
-json to_json(const extractor::xxd_result_t& r);
+json to_json(const extractor::pe_export_table_t& r);
+json to_json(const extractor::hexdump_result_t& r);
 json to_json(const extractor::cminer_result_t& r);
 json to_json(const yara_scanner::result_t& r);
 json to_json(const extractor::got_result_t& r);
 json to_json(const r2::bulk_result_t& r);
 json to_json(const r2::xref_asm_result_t& r);
+json to_json(const ml_api::score_result_t& r);
+json to_json(const known_pe::result_t& r);
 
 // ---------------------------------------------------------------------------
 // Filename helpers
@@ -66,7 +76,7 @@ std::string make_stem(const analyzer::file_info_t& info,
 std::string sanitize_stem(const std::string& raw);
 
 // ---------------------------------------------------------------------------
-// Public writers (each writes one artifact under exports/<dir>/)
+// Public writers (each writes one artifact under exports/<stem>_analysis/<dir>/)
 // ---------------------------------------------------------------------------
 
 std::filesystem::path write_fileinfo_json(const std::string& stem,
@@ -78,6 +88,12 @@ std::filesystem::path write_hash_json(const std::string& stem,
 
 std::filesystem::path write_ioc_json(const std::string& stem,
                                      const ioc::ioc_results_t& r);
+
+// Extracted strings (offset + value + section) for partial pipelines. The
+// full pipeline embeds the same data in the extraction JSON instead, which is
+// why this writer is not part of write_all().
+std::filesystem::path write_strings_json(const std::string& stem,
+                                         const extractor::strings_result_t& r);
 
 // Structured MalAPI lookup hits (function, status, parsed yaml payload) so
 // the dashboard can flag malicious imports. `hits` is a pre-built JSON array.
@@ -92,6 +108,9 @@ std::filesystem::path write_capa_json(const std::string& stem,
 
 std::filesystem::path write_iat_json(const std::string& stem,
                                      const extractor::iat_result_t& r);
+
+std::filesystem::path write_eat_json(const std::string& stem,
+                                     const extractor::pe_export_table_t& r);
 
 std::filesystem::path write_got_json(const std::string& stem,
                                      const extractor::got_result_t& r);
@@ -120,6 +139,30 @@ std::filesystem::path write_overlay_bin(const std::string& stem,
 
 std::filesystem::path write_cti_json(const std::string& stem,
                                      const cti::report& report);
+
+// ---------------------------------------------------------------------------
+// EMBER2024 model score writer
+//
+// Written separately from write_all() because the score is optional: it exists
+// only when the scoring service ran, so folding it into write_all() would have
+// to invent a "skipped" payload for every run that has no model.
+// ---------------------------------------------------------------------------
+
+std::filesystem::path write_ml_json(const std::string& stem,
+                                    const ml_api::score_result_t& score);
+
+// ---------------------------------------------------------------------------
+// Known-PE roster writer
+//
+// Written separately from write_all() for the same reason as write_ml_json:
+// the roster is optional. A run without data/known_pe_hashes.jsonl has nothing
+// to record, and emitting a file that says "matched: false" for every such run
+// would be indistinguishable from a genuine "this PE is not in the roster".
+// Only a lookup that actually consulted a roster produces a file.
+// ---------------------------------------------------------------------------
+
+std::filesystem::path write_known_pe_json(const std::string& stem,
+                                          const known_pe::result_t& match);
 
 // ---------------------------------------------------------------------------
 // STIX 2.1 writers
@@ -159,6 +202,7 @@ struct write_result_t {
   std::filesystem::path extraction;
   std::filesystem::path capa;
   std::filesystem::path iat;
+  std::filesystem::path eat;
   std::filesystem::path got;
   std::filesystem::path radare2;
   std::filesystem::path iat_calls;

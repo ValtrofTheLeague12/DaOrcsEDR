@@ -480,4 +480,63 @@ cti::http_response local_api_server::get(
     return res;
 }
 
+// -----------------------------------------------------------------------------
+// POST
+//
+// Deliberately a near-copy of get() rather than a shared private helper: the two
+// differ only in the verb, and keeping the request construction inline means a
+// change to the timeout/limit/retry handling of one cannot silently alter the
+// other. Duplication of ~25 lines is cheaper than the coupling.
+// -----------------------------------------------------------------------------
+cti::http_response local_api_server::post(
+    const std::string& path,
+    const std::string& body,
+    const std::vector<std::pair<std::string, std::string>>& headers,
+    std::size_t max_response_bytes) {
+
+    if (!http_) {
+        LOG_ERROR("local_api: POST {} called before start()", path);
+        cti::http_response r;
+        r.error = "http client not initialized";
+        return r;
+    }
+
+    cti::http_request req;
+    req.method             = "POST";
+    req.url                = join_url(options_.base_url, path);
+    req.headers            = headers;   // both sides: vector<pair<string,string>>
+    req.body               = body;
+    req.timeout_ms         = options_.request_timeout_ms;
+    req.max_response_bytes = max_response_bytes;
+
+    // The body can carry a filesystem path, so log its size rather than its
+    // content. Never log the payload: it is attacker-controlled input.
+    LOG_DEBUG("local_api: POST {} ({} B body, timeout_ms={}, max_response_bytes={}, "
+              "header_count={})",
+              req.url, req.body.size(), req.timeout_ms, req.max_response_bytes,
+              req.headers.size());
+
+    const auto started = std::chrono::steady_clock::now();
+    const cti::http_response res = http_->perform(req);
+    const double seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - started)
+            .count();
+
+    if (!res.transport_ok) {
+        LOG_ERROR("local_api: POST {} transport error: {} (after {:.3f}s)",
+                  req.url, res.error, seconds);
+    } else if (res.status < 200 || res.status >= 300) {
+        // A 4xx from a JSON API is a *result*, not a failure of the transport:
+        // the body carries the service's {"error", "detail"} envelope and the
+        // caller needs it. Warn, do not error, and do not discard the body.
+        LOG_WARN("local_api: POST {} returned status {} ({} B, {:.3f}s)",
+                 req.url, res.status, res.body.size(), seconds);
+        LOG_DEBUG("local_api: POST {} error body: {}", req.url, res.body);
+    } else {
+        LOG_DEBUG("local_api: POST {} -> {} ({} B, {:.3f}s, attempts={})",
+                  req.url, res.status, res.body.size(), seconds, res.attempts);
+    }
+    return res;
+}
+
 }  // namespace local_api

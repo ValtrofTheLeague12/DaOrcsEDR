@@ -6,7 +6,7 @@ A Windows-oriented static-analysis and threat-intelligence dashboard pipeline wr
 
 ## What the project does
 
-`static_analyzer.exe` takes one binary path as its input and runs a staged static-analysis pipeline. It reports information to the terminal and writes normalized JSON, assembly, graph, CTI, and HTML artifacts under `exports/`. The pipeline has 25 numbered stages, of which a given run executes 20 or 23 depending on the detected format — see [How a run works](#how-a-run-works).
+`static_analyzer.exe` takes one binary path as its input and runs a staged static-analysis pipeline. It reports information to the terminal and writes normalized JSON, assembly, graph, CTI, and HTML artifacts under `exports/<stem>_analysis/` — one directory per run, so samples never share paths. The pipeline has 25 numbered stages, of which a given run executes 20 or 23 depending on the detected format — see [How a run works](#how-a-run-works).
 
 The pipeline is designed around five ideas:
 
@@ -26,6 +26,42 @@ static_analyzer.exe <input-file>
 
 With no argument the analyzer falls back to `a.exe` in the current directory. Results are written relative to the working directory, so run from the repository root unless a different layout is intentional.
 
+### Python API server
+
+The root `server.py` provides a local REST API. Start it from the repository root
+with:
+
+```powershell
+python\.venv\Scripts\python.exe server.py
+```
+
+Set `SA_API_HOST` and `SA_API_PORT` in `.env` to configure its bind address and
+port (defaults: `127.0.0.1:60020`); command-line `--host` and `--port` override
+those settings. The JSON service index is available at the configured address.
+Submit samples with `POST /analyze` as a multipart `file` upload or raw request
+body; use `--analyzer` to select a different analyzer executable.
+During graceful shutdown, GET endpoints remain available for status and task
+inspection, while new POST submissions receive `503`.
+Run `python\.venv\Scripts\python.exe tests\test_server_queue.py` to test queuing
+the included executable fixture and graceful draining without launching the analyzer.
+
+### Qiling Analysis VM
+
+The Analysis VM connection is configured in `admin-terminal/vms.json`
+(`192.168.56.105:22` by default). Set its `username` and, if needed,
+`identity_file`. Before connecting, add the VM's verified SSH host-key entry to
+the current user's `~/.ssh/known_hosts` (override with `known_hosts_file` in
+`vms.json`); connections use strict checking and never accept unknown keys.
+Verify the VM fingerprint out of band before adding it.
+
+In Admin Terminal → Analysis VMs, choose **q** to collect Windows registry/DLL
+files into the local Qiling rootfs (Windows displays a UAC prompt), or **d** to
+prepare the rootfs, upload it only if the VM does not already have it, send
+`_qiling_script.py` and the selected executable over SFTP, run Qiling over SSH,
+and download the result to `qiling_dlls/results/`. If SSH times out, the menu
+offers optional, elevated Windows Firewall rules limited to TCP 22/80 and the
+`192.168.56.0/24` subnet; it does not change the firewall without confirmation.
+
 `main()` owns the process lifecycle and the stage order; the stages themselves live in `src/main/`. Startup is a fixed sequence:
 
 1. `console::enable_utf8_output()`, `logging::init()` (opens the run-id-scoped log under `logs/`), and the process tracing hooks.
@@ -44,6 +80,24 @@ The file type is determined first, from libmagic plus LIEF, and reduced to one o
 The arithmetic starts from 25 stages and subtracts what the format makes inapplicable, giving **23 for a PE**, **20 for an ELF or Mach-O**, and **20 for anything else**. The result becomes the progress total and the denominator in every `[phase n/total]` header. A stage the format excludes prints no header and advances nothing, so the numbering never runs past a format-inapplicable stage. The one exception is Graphviz, which is gated on `R2_RENDER` rather than on the format and keeps its slot in the total either way — see the note under the [phase table](#analysis-phases).
 
 Before stage 1 the banner, the file identity, and the hashes are printed unnumbered; after the last stage the run prints a `summary` banner.
+
+### Known PE hashes
+
+For a PE sample the analyzer looks the computed SHA-256 up in `data/known_pe_hashes.jsonl` — the roster of known PE files built from the EMBER2024 Win64 corpus (train, test, and challenge; 216,310 distinct hashes after removing the repeats the corpus files contain). A hit reports the label the corpus recorded, the malware family, and which split the hash came from:
+
+```text
+    SHA-256:              6773fee7acd3cd311f68283230834a803f1549f20c338717f283bbeae823dfc3
+    TLSH:                 1A343B926ACB4CF...
+    Known PE:             yes
+      Label:              malicious (EMBER label 1)
+      Family:             emotet
+      Split:              challenge
+      Roster:             216310 hashes (C:\...\data\known_pe_hashes.jsonl)
+```
+
+This is a **corpus membership check, not a verdict**. A match means the file is in the reference set and the label is what that set says about it; it is not a fresh judgement about the file in front of you. The roster covers Win64 PEs only, so non-PE samples are never looked up — asking whether an ELF is in a list of PE hashes would be a category error.
+
+The lookup is part of the hash stage rather than a numbered phase of its own, so it adds no `[phase n/total]` work and a run over a sample with no roster installed behaves exactly as before. A missing or unreadable roster is logged and skipped, never reported as an analysis error. Point `KNOWN_PE_HASHES_FILE` at another JSONL to use a different roster; malformed lines are skipped and counted rather than aborting the load. Results are written to `exports/<stem>_analysis/known_pe/<stem>_known_pe.json`, and only when a roster was actually consulted — a file recording `matched: false` for a run that never looked anything up would be indistinguishable from a real negative.
 
 ### Terminal output contract
 
@@ -83,8 +137,8 @@ The bulk pass, in order:
 Two artifacts come out of this, both written atomically and in binary mode so no CRLF translation can corrupt them:
 
 ```text
-exports/radare2/<stem>_functions.json   structured, enriched instruction stream
-exports/radare2/<stem>_functions.asm    flat text rendering, derived from the JSON
+exports/<stem>_analysis/radare2/<stem>_functions.json   structured, enriched instruction stream
+exports/<stem>_analysis/radare2/<stem>_functions.asm    flat text rendering, derived from the JSON
 ```
 
 The dashboard reads the JSON. The `.asm` is for reading by eye.
@@ -125,7 +179,7 @@ cmake --preset ucrt64
 cmake --build --preset ucrt64-release
 ```
 
-There is no `ctest` step: tests are disabled in the `ucrt64` preset, so no test targets are built and no tests are registered. See [Testing and validation](#testing-and-validation) for what remains and how to bring it back.
+The project currently has no automated unit-test targets. Build verification is described in [Validation](#validation).
 
 The convenience script performs the same steps and can analyze a file:
 
@@ -141,12 +195,70 @@ The main executable is written to:
 build-ucrt/static_analyzer.exe
 ```
 
+## Podman container images
+
+For full Docker Compose run, test, custom-sample, and cleanup steps, see
+[Container testing guide](CONTAINER-TESTING.md).
+
+`Containerfile` builds the analyzer as a native Linux CLI image for Podman running
+inside WSL. The build installs the native libraries and tools, builds LIEF and the
+analyzer, and installs the Python dashboard/API dependencies. Build and export an
+OCI archive from PowerShell:
+
+```powershell
+.\build-image.ps1
+```
+
+This creates `artifacts\static-analyzer-linux.oci.tar` and leaves the image in the
+WSL Podman image store as `localhost/static-analyzer:linux`. The analyzer writes
+reports under `/opt/static-analyzer/exports`; mount that directory and mount input
+samples read-only when running it:
+
+```powershell
+wsl.exe -- podman run --rm `
+  --userns=keep-id:uid=10001 `
+  -v /mnt/c/samples:/samples:ro `
+  -v /mnt/c/analyzer-exports:/opt/static-analyzer/exports `
+  -e CYBERCHEF_URL=http://127.0.0.1:3000 `
+  localhost/static-analyzer:linux /samples/sample.exe
+```
+
+The shareable Linux stack is in `compose.yaml`. It builds the analyzer and the
+CyberChef API server, pulls the official CyberChef web UI image, waits for the API
+health check, and runs the sample analyzer. The official `ghcr.io/gchq/cyberchef`
+image serves the web UI but does not implement the `/bake` and `/magic` API used
+by this analyzer, so Compose builds the compatible API server from the upstream
+`gchq/CyberChef-server` source using `Containerfile.cyberchef`.
+
+With Docker Compose, run `docker compose up --build`; with Podman, use a compatible
+Compose provider and run `podman compose up --build`. The CyberChef UI is available
+on port 8081, and analyzer reports are written to `artifacts/compose-exports`.
+The analyzer image defaults `CTI_SKIP=1` to avoid external CTI lookups. Curses is
+disabled; analysis is a one-shot CLI operation.
+
+`Containerfile.windows` is the separate Windows Server Core build definition. It
+installs the MSYS2 UCRT64 compiler/libraries, Python packages, Graphviz, and
+radare2, then builds the Windows executable. `compose.windows.yaml` builds and
+runs that analyzer and uses `CYBERCHEF_URL` to connect to an already-running,
+reachable CyberChef API service (default `http://host.docker.internal:3000`).
+Run it with `docker compose -f compose.windows.yaml up --build` on a Windows
+container-capable engine. Windows and Linux containers cannot be started together
+by the same engine mode; run the Linux Compose stack separately to provide the
+CyberChef API, or point `CYBERCHEF_URL` at another reachable API server.
+Podman inside WSL is Linux-only and cannot build the Windows image.
+
+For a quick resource profile while the Linux stack is running, use
+`podman stats` (or `docker stats`) in another terminal. The CLI analysis is a
+one-shot workload; compare repeat runs on the same sample and machine, and record
+elapsed time together with peak CPU and memory. Image size can be checked with
+`podman image inspect localhost/static-analyzer:linux --format '{{.Size}}'`.
+
 ## Output layout
 
 Typical output directories are:
 
 ```text
-exports/
+exports/<stem>_analysis/
   fileinfo/       file metadata and magic/header information
   hash/           SHA-256 and fuzzy hashes
   extraction/     sections, strings, guards, packing, signatures, opcodes
@@ -157,9 +269,15 @@ exports/
   radare2/        functions, assembly JSON, call graph DOT, section CFG DOT
   malapi/         structured MalAPI hits
   cti/            provider findings, correlation, and CTI summary
+  known_pe/       corpus-membership result for the sample's SHA-256
   stix/           STIX 2.1 bundle and ATT&CK Navigator layer
   dashboard/      final self-contained HTML report
 ```
+
+Every run gets its own `<stem>_analysis/` directory under `exports/`, named after the sample's
+stem, so two runs never read or overwrite each other's artifacts and re-running the same sample
+replaces only its own results. The shared caches (`cache/`, `cti-cache/`, `data/`) stay outside
+the per-run directory.
 
 JSON artifacts are composable. The dashboard generator reads these files and embeds a normalized payload into one HTML document, so the report can be opened locally without a web server or network fetch.
 
@@ -175,7 +293,7 @@ python/templates/dashboard.html.j2
 The C++ `visualizer` component launches the Python generator with artifact paths. The generated report is normally:
 
 ```text
-exports/dashboard/<sample-stem>.html
+exports/<sample-stem>_analysis/dashboard/<sample-stem>.html
 ```
 
 Open that file directly in a browser. It is self-contained and does not require a CDN.
@@ -190,15 +308,21 @@ Dashboard areas include:
 - **Assembly** — function selector, instruction search, category filters, basic blocks, byte-length visualization, call targets, and a control-flow mini-map.
 - **Call Graph / CFG** — ranked call graph and compact section CFG with zoom, search, and neighborhood highlighting.
 - **Analytics** — score gauge, opcode/mnemonic charts, section entropy, function sizes, IOC counts, capability scope, and imports per DLL.
-- **Hexdump** — address, hexadecimal bytes, and printable ASCII columns.
+- **ML Score** — the EMBER2024 verdict, a P(malicious) gauge needle against the model's decision threshold, SHAP log-odds bars for the group attribution and for the top features (red towards malicious, green towards benign), and the model/attribution tables. When no scoring service ran the section degrades to a "skipped" note instead of an empty chart.
 - **Threat Map** — offline world map for CTI-geolocated IOCs, IOC filters, country drill-down, ASN links, and a separate info graph.
-- **ATT&CK / STIX** — every technique capa matched, laid out as a kill-chain coverage matrix, plus a force-directed graph of the STIX 2.1 objects and their relationships. The coverage view can export an ATT&CK Navigator layer.
+- **ATT&CK / STIX** — four views. *Coverage* lays every technique capa matched out as a kill-chain matrix and can export an ATT&CK Navigator layer. *Procedures & Tooling* expands each observed tactic into its techniques and, for each one, the tools and malware ATT&CK records as implementing it, the groups known to use it, its sub-techniques, its mitigation count, and its detection guidance — searchable and filterable by tactic and by data type. *Object Graph* is the force-directed view of the STIX 2.1 objects and their relationships. *D3FEND Defenses* answers the defensive side: for every tactic capa recovered, the D3FEND countermeasures that defeat each technique (technique → D3-FA *File Analysis* *analyzes* *File*), grouped by tactic and labelled with the D3FEND tactic — Detect, Isolate, Harden, Model, Evict, Restore.
+
+  ATT&CK v19 moved detection guidance off the technique object: `attack-pattern` entries no longer carry `x_mitre_detection`, so it is reached through `detects` → `x-mitre-detection-strategy` → `x-mitre-analytic`. All of this comes from the local `cti-cache/knowledge/enterprise-attack.json`, so it is present on an offline run and under `CTI_SKIP=1`.
+
+  The *Procedures & Tooling* tab is always offered once ATT&CK data exists. When the CTI report carries no tactic view (CTI skipped, no provider answered, no CTI artifact written), the dashboard rebuilds it from capa's technique ids against the local ATT&CK cache — `source: attack-cache` in the payload — so the tooling is there offline; if neither source has anything the tab still opens, with the reason instead of missing data.
+
+  D3FEND data comes from the `d3fend.mitre.org` API (the `mitre/d3fend` repo cannot even be checked out on Windows — several of its paths contain `:`), fetched once per technique and cached in `cti-cache/knowledge/d3fend.json`. `D3FEND_OFFLINE=1` forbids the network, so a later run renders from the cache alone; a technique that is neither cached nor reachable simply shows no chip instead of failing the dashboard.
 
 The map uses vendored offline world/country data. CTI country values are distinguished from country values inferred from a TLD. IOCs without a usable country remain in the unmapped list rather than being silently dropped.
 
 ## STIX and ATT&CK
 
-Every run writes two artifacts under `exports/stix/`:
+Every run writes two artifacts under `exports/<stem>_analysis/stix/`:
 
 ```text
 <sample-stem>_stix21.json     STIX 2.1 bundle: identity, indicators, malware
@@ -213,7 +337,7 @@ The Navigator layer can be loaded into the official ATT&CK Navigator.
 A STIX bundle can also be viewed on its own:
 
 ```text
-python/_view_stix.py <bundle.json> [--out-dir exports/stix] [--navigator]
+python/_view_stix.py <bundle.json> [--out-dir DIR] [--navigator]
 ```
 
 This renders any STIX 2.1 file — this project's own bundles, the ones
@@ -243,9 +367,10 @@ python/requirements.txt       Python dependencies
 python/d3.min.js              Vendored dashboard plotting library
 python/world-110m.json        Vendored offline world geometry
 python/country-codes.json     Country code/name/centroid table
-exports/                      Generated analysis artifacts
+exports/                      Generated analysis artifacts, one <stem>_analysis/ per run
 cache/                        Provider/tool caches
 logs/                         Runtime logs
+data/                         Corpus data, including known_pe_hashes.jsonl
 tests/fixtures/               Sample sources and inert test inputs
 ```
 
@@ -253,6 +378,7 @@ Important C++ components:
 
 - `file_analyzer` — file type, magic, and basic metadata.
 - `file_hasher` — cryptographic and fuzzy hashes.
+- `known_pe_hashes` — SHA-256 lookup against the known-PE roster (`data/known_pe_hashes.jsonl`).
 - `extractor` — sections, strings, imports, symbols, guards, packing, opcode data, the export table, and the YARA scan.
 - `ioc_extractor` — strings-to-IOC normalization and classification.
 - `capa_runner` — capa subprocess integration.
@@ -274,7 +400,7 @@ Important C++ components:
 
 ## Safe test fixture
 
-The project includes:
+The project retains defensive sample inputs and fixtures under:
 
 ```text
 tests/fixtures/eicar_ioc_fixture.cpp
@@ -284,38 +410,25 @@ It is a defensive test input generator containing the standard EICAR antivirus t
 
 It does **not** contain a real payload, exploit, downloader, persistence mechanism, credential theft, evasion logic, or network client. It is intended to be compiled and passed to the analyzer for extraction/report testing.
 
-Build the fixture as a separate target:
-
-```powershell
-cmake --build build-ucrt --target eicar_ioc_fixture
-.\build-ucrt\eicar_ioc_fixture.exe
-```
-
 Because the source contains EICAR, antivirus software may flag or quarantine the executable. This is expected for an EICAR test fixture.
 
-## Testing and validation
+## Validation
 
-Test targets are **switched off**, in both places that control them: `STATIC_ANALYZER_ENABLE_TESTS` defaults to `OFF` in `CMakeLists.txt`, and the `ucrt64` preset pins `STATIC_ANALYZER_ENABLE_TESTS` and `BUILD_TESTING` to `OFF`. The `ucrt64-tests` test preset still exists, but with nothing registered behind it a `ctest --preset ucrt64-tests` run reports zero tests, so **a green `ctest` run proves nothing**.
-
-Turning the option on (configure with `-DSTATIC_ANALYZER_ENABLE_TESTS=ON -DBUILD_TESTING=ON`) configures and builds, but what it restores is small: the EICAR fixture target, and one CTest test — the end-to-end smoke run against a stock MSYS2 utility (`ls.exe`, `true.exe`, …) rather than a project source. **The unit and phase tests are disabled.** Their sources, `tests/test_ioc.c++` and `tests/test_pe_overlay.py`, are no longer referenced by the build, so the `test_ioc` target, the `test_ioc_generator` test and the four `test_pe_phase_1`…`test_pe_phase_4` registrations were removed from `CMakeLists.txt` rather than left dangling — a missing source in `add_executable()` is a hard generate-time error, so keeping them would have made `-DSTATIC_ANALYZER_ENABLE_TESTS=ON` impossible to configure at all. `tests/smoke_test.cpp` is gone too; the build never referenced it.
-
-Bringing the suite back means restoring those files (`git checkout HEAD -- tests/`) and re-adding the target and registrations where the comment in `CMakeLists.txt` marks them. The `STATIC_ANALYZER_TEST_SOURCES` guard in that block is kept and still fires if a source it names goes missing.
-
-What can be checked without any of that:
+Automated unit and smoke tests have been removed for now. The analyzer's defensive input fixtures remain available for manual verification. Build and syntax-check the Python dashboard tools with:
 
 ```powershell
 cmake --build --preset ucrt64-release
 py -m py_compile python\_create_dashboard.py python\stix_graph.py python\_view_stix.py
 ```
 
-Then run the analyzer over the tree's own fixtures and confirm the report matches the phase plan for the detected format:
+For a manual end-to-end check, run the analyzer over the included PE fixture:
 
 ```powershell
 $env:STATIC_ANALYZER_CURSES = "0"; $env:CTI_SKIP = "1"
 .\build-ucrt\static_analyzer.exe .\tests\fixtures\suspicious_sample.exe
 ```
 
-`tests/fixtures/suspicious_sample.exe` is the PE fixture, so its run must report **23** stages; `tests/fixtures/suspicious_sample.macho` is the Mach-O fixture and must report **20**, which makes the pair a direct check of the plan arithmetic. `CTI_SKIP=1` keeps the run offline while still exercising every other stage, including the STIX bundle and Navigator layer, which are built from capa's techniques and are not gated on the CTI stage.
+The PE fixture should report **23** stages. `CTI_SKIP=1` keeps the run offline while still exercising the other stages, including STIX and Navigator output.
 
 When changing the dashboard template, regenerate the report and verify that it has no unrendered Jinja markers, valid embedded JSON, working `file://` behavior, expected graph/assembly data, and syntactically valid inline JavaScript.
 
@@ -323,7 +436,7 @@ The STIX viewer has no third-party dependencies — `python/stix_graph.py` and
 `python/templates/stix.html` use only the standard library — so it can be checked on its own:
 
 ```powershell
-py python\_view_stix.py exports\stix\<stem>_stix21.json --navigator
+py python\_view_stix.py exports\<stem>_analysis\stix\<stem>_stix21.json --navigator
 ```
 
 ## Troubleshooting
@@ -344,7 +457,7 @@ Check that the configured runner can find radare2. On Windows it may execute thr
 
 ### Dashboard is stale
 
-The generated HTML is an artifact, not a live view of the source template. After changing `python/templates/dashboard.html.j2` or `python/_create_dashboard.py`, regenerate `exports/dashboard/<stem>.html`.
+The generated HTML is an artifact, not a live view of the source template. After changing `python/templates/dashboard.html.j2` or `python/_create_dashboard.py`, regenerate `exports/<stem>_analysis/dashboard/<stem>.html`.
 
 ### Large sample or empty assembly
 
@@ -370,7 +483,7 @@ External libraries, rule sets, caches, and vendored data retain their own licens
 
 ## CTI and network behavior
 
-CTI collection is enabled in the main build through `CTI_WITH_COLLECT`. Providers can perform DNS, RDAP, certificate transparency, IP reputation, vulnerability, or other configured lookups. Provider results are cached under `cache/` and the CTI report is written under `exports/cti/`.
+CTI collection is enabled in the main build through `CTI_WITH_COLLECT`. Providers can perform DNS, RDAP, certificate transparency, IP reputation, vulnerability, or other configured lookups. Provider results are cached under `cache/` and the CTI report is written under `exports/<stem>_analysis/cti/`.
 
 Common configuration categories include API keys, cache directories, proxy/TLS settings, provider enable/disable settings, timeouts, and retries. Use an isolated analysis environment and review provider configuration before enabling external collection. Offline runs represent missing provider data as unknown/skipped rather than fabricating findings.
 

@@ -155,6 +155,21 @@ struct encoded_flag_t {
     std::vector<std::string> urls;        // URLs inside the decoded text
 };
 
+// ---------------------------------------------------------------------------
+// EMBER-style string indicators
+//
+// Ported from thrember's StringExtractor (EMBER2024); see
+// string_indicator_defs() in the .cpp for the pattern table. One hit per named
+// pattern that fired over the extracted strings; only patterns that matched at
+// least once are reported, in table order.
+// ---------------------------------------------------------------------------
+struct string_indicator_hit_t {
+    std::string name;                  // pattern name ("powershell", "Invoke-Command", ...)
+    std::string group;                 // source table group ("Powershell strings", ...)
+    std::size_t count = 0;             // total matches in the scan buffer
+    std::vector<std::string> samples;  // a few containing strings kept as evidence
+};
+
 struct ioc_results_t {
     error_type_t errors{};
 
@@ -188,6 +203,10 @@ struct ioc_results_t {
     // the "strings + IOC" phase, serialized by the exporter and shown on
     // the dashboard. Empty when nothing was flagged or the API is down.
     std::vector<encoded_flag_t> encoded_flags;
+
+    // EMBER string-indicator hits (thrember StringExtractor pattern table),
+    // in table order. Only patterns that matched appear here.
+    std::vector<string_indicator_hit_t> string_hits;
 };
 
 

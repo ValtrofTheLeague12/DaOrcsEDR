@@ -300,6 +300,24 @@ struct attack_software {
   std::string type;      // "tool" | "malware"
 };
 
+// One ATT&CK analytic: the concrete, prose-level detection logic an analyst
+// actually implements. Reached through a detection strategy, never directly.
+struct attack_analytic {
+  std::string id;        // "AN0001"
+  std::string name;      // "Analytic 0286"
+  std::string description;
+  std::vector<std::string> platforms;
+};
+
+// A detection strategy and the analytics it points at. ATT&CK v19 moved this
+// off the technique: attack-pattern objects no longer carry x_mitre_detection
+// at all, so it has to be walked through `detects` relationships.
+struct attack_detection {
+  std::string id;        // "DET0001" (may be empty - not every object has one)
+  std::string name;
+  std::vector<attack_analytic> analytics;
+};
+
 struct attack_tactic {
   std::string id;        // "TA0005"
   std::string shortname; // "defense-evasion"
@@ -316,7 +334,43 @@ struct attack_technique {
   std::vector<std::string>     platforms;
   std::vector<attack_group>    groups;
   std::vector<attack_software> software;
+  std::vector<attack_detection> detections;   // v19 moved these off the technique
+  std::vector<std::string>     subtechniques;// "T1497.001" - only on parents
   std::size_t                  mitigation_count = 0;
+  std::string                  description;
+};
+
+// ---------------------------------------------------------------------------
+// Tactic view: one technique observed under a tactic, plus the ATT&CK knowledge
+// that hangs off it. This is what build_attack_matrix() returns and what the
+// "Procedures & Tooling" dashboard section renders.
+// ---------------------------------------------------------------------------
+struct tactic_procedure {
+  std::string id;                     // "T1497.001"
+  std::string name;
+  std::string url;
+  std::string parent_id;
+  bool        is_subtechnique = false;
+  std::vector<std::string>      platforms;
+  std::vector<attack_software>  software;      // tools AND malware, ATT&CK "uses"
+  std::vector<attack_group>     groups;        // intrusion-sets that use it
+  std::vector<attack_detection> detections;    // strategy + analytics
+  std::vector<std::string>      subtechniques; // ids, when this technique is a parent
+  std::size_t                   mitigation_count = 0;
+  std::string                   description;
+  std::size_t                   capability_hits = 0;  // capa matches for this technique
+};
+
+struct tactic_coverage {
+  std::string shortname, name;
+  std::vector<tactic_procedure> procedures;
+};
+
+// An ATT&CK group and how many observed techniques it matches.
+struct group_match {
+  std::string id, name;
+  std::size_t techniques_matched = 0;
+  std::vector<std::string> techniques;
 };
 
 class attack_db {
@@ -364,6 +418,42 @@ struct attack_detail {
 // descriptions (most of the file's size) are only held for the wanted techniques.
 std::map<std::string, attack_detail> attack_details_for(const std::set<std::string>& wanted_ids,
                                                         const std::string& bundle_path = {});
+
+// ---------------------------------------------------------------------------
+// Tactic view builders. Free functions over plain ids rather than pipeline
+// members: the matrix needs ATT&CK knowledge (the local cache) and the observed
+// techniques, neither of which involves a provider, so the export phase can call
+// them directly and get a populated view on an offline run / under CTI_SKIP=1
+// instead of only when the CTI phase reached the network.
+// ---------------------------------------------------------------------------
+
+// A process-wide ATT&CK database loaded from the local knowledge cache, for
+// callers outside the CTI pipeline. The bundle is ~50 MB, so it is loaded at
+// most once; loading it twice would double peak memory for no gain. Returns an
+// unloaded database when the cache is missing - callers check loaded(), because
+// an offline run without a cache simply has no ATT&CK detail.
+const attack_db& shared_attack_db();
+
+// Per-tactic view of the observed techniques, with each technique's tooling,
+// groups, sub-techniques, mitigation count and detection guidance attached.
+// Returned in kill-chain order; the unattributed bucket comes last. `hits` maps
+// a technique id to how many capa capabilities matched it and only affects the
+// ordering within a tactic (strongest evidence first, then by id).
+std::vector<tactic_coverage> build_attack_matrix(const attack_db& attack,
+                                                 const std::vector<std::string>& technique_ids,
+                                                 const std::map<std::string, std::size_t>& hits);
+
+// Groups sharing at least two observed techniques: the attribution candidates,
+// strongest match first.
+std::vector<group_match> build_likely_groups(const attack_db& attack,
+                                             const std::vector<std::string>& technique_ids);
+
+#ifdef CTI_WITH_COLLECT
+// How many capa capabilities matched each technique, for the ranking above.
+// Guarded because capa::report_t only exists when extractor.hpp is included,
+// which is what CTI_WITH_COLLECT pulls in - see the include block at the top.
+std::map<std::string, std::size_t> capa_hit_counts(const capa::report_t& capa_report);
+#endif
 
 // ---------------------------------------------------------------------------
 // CISA KEV
@@ -469,17 +559,6 @@ struct family_summary {
   std::string name;
   std::vector<std::string> artifacts;     // artifact keys
   std::vector<std::string> providers;
-};
-
-struct tactic_coverage {
-  std::string shortname, name;
-  std::vector<std::string> techniques;    // "T1055.012 Process Hollowing"
-};
-
-struct group_match {
-  std::string id, name;
-  std::size_t techniques_matched = 0;
-  std::vector<std::string> techniques;
 };
 
 struct shared_host {

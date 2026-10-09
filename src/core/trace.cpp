@@ -1,3 +1,75 @@
+#ifndef _WIN32
+
+#include "trace.hpp"
+
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <string_view>
+#include <unistd.h>
+
+namespace {
+std::atomic<bool> tracing_enabled{false};
+std::mutex trace_mutex;
+std::ofstream trace_file;
+
+std::filesystem::path trace_path() {
+  if (const char* override_path = std::getenv("TRACE_FILE");
+      override_path != nullptr && *override_path != '\0') {
+    return override_path;
+  }
+#ifdef STATIC_ANALYZER_SOURCE_DIR
+  return std::filesystem::path(STATIC_ANALYZER_SOURCE_DIR) / "logs" / "trace.txt";
+#else
+  return std::filesystem::current_path() / "logs" / "trace.txt";
+#endif
+}
+}  // namespace
+
+extern "C" void trace_enable() {
+  std::lock_guard<std::mutex> lock(trace_mutex);
+  if (!trace_file.is_open()) {
+    const std::filesystem::path path = trace_path();
+    std::error_code ec;
+    if (!path.parent_path().empty()) {
+      std::filesystem::create_directories(path.parent_path(), ec);
+    }
+    if (!ec) trace_file.open(path, std::ios::out | std::ios::app);
+  }
+  tracing_enabled.store(trace_file.is_open(), std::memory_order_release);
+}
+
+extern "C" void trace_disable() {
+  tracing_enabled.store(false, std::memory_order_release);
+  std::lock_guard<std::mutex> lock(trace_mutex);
+  if (trace_file.is_open()) trace_file.flush();
+}
+
+extern "C" void trace_write_text(std::string_view text) {
+  if (!tracing_enabled.load(std::memory_order_acquire) || text.empty()) return;
+  std::lock_guard<std::mutex> lock(trace_mutex);
+  if (trace_file.is_open()) {
+    trace_file.write(text.data(), static_cast<std::streamsize>(text.size()));
+  }
+}
+
+extern "C" void __cyg_profile_func_enter(void*, void*) {}
+extern "C" void __cyg_profile_func_exit(void*, void*) {}
+
+std::string PrintMemoryInfo() {
+  char buffer[128];
+  std::snprintf(buffer, sizeof(buffer),
+                "\n=== Memory Info ===\nProcess ID: %ld\n",
+                static_cast<long>(::getpid()));
+  return buffer;
+}
+
+#else
+
 #include "trace.hpp"
 
 #include <windows.h>
@@ -521,3 +593,5 @@ std::string PrintMemoryInfo() {
 
     return buffer;
 }
+
+#endif

@@ -36,9 +36,7 @@ enum class extractor_error : std::uint32_t {
   capa_not_found     = 1u << 13,
   capa_failed        = 1u << 14,
   capa_timeout       = 1u << 15,
-  xxd_not_found      = 1u << 16,
-  xxd_failed         = 1u << 17,
-  xxd_timeout        = 1u << 18,
+  hexdump_read_failed = 1u << 16,
   cminer_not_found   = 1u << 19,
   cminer_failed      = 1u << 20,
   cminer_timeout     = 1u << 21,
@@ -69,8 +67,7 @@ inline constexpr extractor_error soft_errors =
     extractor_error::no_signature | extractor_error::no_guards |
     extractor_error::no_code_section | extractor_error::unsupported_format |
     extractor_error::capa_not_found | extractor_error::capa_failed |
-    extractor_error::capa_timeout | extractor_error::xxd_not_found |
-    extractor_error::xxd_failed | extractor_error::xxd_timeout |
+    extractor_error::capa_timeout | extractor_error::hexdump_read_failed |
     extractor_error::cminer_not_found | extractor_error::cminer_failed |
     extractor_error::cminer_timeout;
 
@@ -469,6 +466,13 @@ struct byte_histogram_t {
   std::uint8_t least_common_byte = 0;
   std::size_t  nonzero_bins      = 0;
   std::size_t  zero_bytes        = 0;
+
+  // EMBER2024 thrember-compatible ML vectors (normalized, sum == 1).
+  // ember_histogram[i] = counts[i] / total_bytes (ByteHistogram.process_raw_features).
+  // ember_byteentropy[Hbin * 16 + (b >> 4)] = joint byte/entropy histogram
+  // (ByteEntropyHistogram: window=2048, step=1024, 16x16, normalized by sum).
+  double ember_histogram[256]   = {};
+  double ember_byteentropy[256] = {};
 };
 
 bool extract_byte_histogram(byte_histogram_t& result,
@@ -615,22 +619,40 @@ bool extract_capa(capa_result_t& result,
                   const analyzer::file_info_t& info,
                   const capa_options_t& options = {});
 
-// Optional WSL xxd dump. The output is bounded to 1 MiB by default and the
-// command is not required for the rest of extraction to succeed.
-struct xxd_result_t {
+// Hexdump of the head of the file, produced natively.
+//
+// This used to shell out to xxd (XXD_PATH, then a vendored tools/bin/xxd.exe,
+// then bare "xxd" on PATH, then a WSL fallback) and keep the formatted text.
+// Reading the bytes here instead is simpler and strictly better on every axis
+// that mattered:
+//
+//   * no external tool to locate, vendor or ship - the vendored xxd.exe alone
+//     was a 63 KiB binary committed to the tree, and on a machine with no
+//     vim/neovim and no WSL the whole feature silently produced nothing;
+//   * no -g/-c/-l flag dialect to get wrong (xxd and hexdump share no flags);
+//   * the dashboard needs bytes, not text, so it had to re-parse the formatted
+//     output back into numbers. `bytes` is exactly what it wanted.
+//
+// The bound is on bytes, not on rendered text, so `truncated` means what it
+// says: the sample is larger than the window we kept.
+struct hexdump_result_t {
   error_type_t errors;
   bool         attempted = false;
   bool         available = false;
-  int          exit_code = -1;
-  double       seconds = 0.0;
-  std::string  output;
-  std::string  command;
-  std::string  stderr_tail;
+
+  // Raw bytes starting at `base`. Bounded by the max_bytes argument.
+  std::vector<std::uint8_t> bytes;
+  std::uint64_t base = 0;          // file offset of bytes[0]
+  std::size_t   total_bytes = 0;   // size of the whole file
+  bool          truncated = false;  // total_bytes > bytes.size()
+  std::size_t   bytes_per_row = 16;
+
+  double seconds = 0.0;
 };
 
-bool extract_xxd(xxd_result_t& result,
-                 const analyzer::file_info_t& info,
-                 std::size_t max_bytes = 1024u * 1024u);
+bool extract_hexdump(hexdump_result_t& result,
+                     const analyzer::file_info_t& info,
+                     std::size_t max_bytes = 4096u);
 
 // Cminer code-cave results. Cminer is a Linux CLI, so the extractor invokes the
 // bundled executable through WSL and parses its structured cave report.
@@ -690,7 +712,7 @@ struct extraction_result_t {
 
   got_result_t        got;             // ELF / Mach-O GOT / PLT
   capa_result_t       capa;
-  xxd_result_t         xxd;
+  hexdump_result_t      hexdump;
   cminer_result_t      cminer;
   yara_scanner::result_t yara;
 

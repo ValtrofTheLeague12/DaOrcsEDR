@@ -556,6 +556,201 @@ std::size_t countMatches(const RE2& re, std::string_view text) {
 
 namespace {
 
+// ---------------------------------------------------------------------------
+// EMBER-style string indicators
+//
+// Verbatim port of thrember's StringExtractor pattern table (EMBER2024,
+// src/thrember/features.py, groups "IOC strings" .. "Miscellaneous strings").
+// The table doubles as the string-block contract for the ML feature work, so
+// upstream quirks are preserved on purpose:
+//   * "email_addr" carries the MAC-address pattern (upstream copy/paste bug)
+//   * "registry_key" matches KHEY_/KHLM (upstream typos of HKEY_/HKLM)
+//   * bare words ("file", "enum", ...) have no \b, so "file" also matches
+//     inside "profile" -- exactly what the EMBER2024 dataset was built with
+// Entries whose pattern is a plain literal are matched with a substring scan
+// (case-insensitive ones against a lower-cased copy of the batch); the rest go
+// through RE2. Most entries are bare words, so this keeps the scan cheap.
+// ---------------------------------------------------------------------------
+
+struct string_indicator_def_t {
+    std::string_view name;
+    std::string_view group;
+    std::string_view pattern;  // RE2 source, translated from thrember's Python
+    bool             ci;       // thrember compiled it with re.IGNORECASE
+    std::string_view literal;  // non-empty: plain needle, searched without RE2
+};
+
+const std::vector<string_indicator_def_t>& string_indicator_defs() {
+    static const std::vector<string_indicator_def_t> defs = {
+        // --- IOC strings ---
+        {"url", "IOC strings",
+         R"re(\b(?:http|https|ftp)://[a-zA-Z0-9\-._~:?#\[\]@!$&'()*+,;=]+)re", false, {}},
+        {"ipv4_addr", "IOC strings",
+         R"re(\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b)re", false, {}},
+        {"ipv6_addr", "IOC strings",
+         R"re(\b(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}\b|\b(?:[A-Fa-f0-9]{1,4}:){1,7}:\b|\b:[A-Fa-f0-9]{1,4}(?::[A-Fa-f0-9]{1,4}){1,6}\b)re", false, {}},
+        {"mac_addr", "IOC strings",
+         R"re(\b(?:[0-9A-Fa-f]{2}[:-]){5}(?:[0-9A-Fa-f]{2})\b)re", false, {}},
+        {"email_addr", "IOC strings",
+         R"re(\b(?:[0-9A-Fa-f]{2}[:-]){5}(?:[0-9A-Fa-f]{2})\b)re", false, {}},
+        {"btc_wallet", "IOC strings",
+         R"re([13][a-km-zA-HJ-NP-Z1-9]{25,34})re", false, {}},
+
+        // --- Windows strings ---
+        {"file_path", "Windows strings", R"re(\bC:/)re", false, {}},
+        {"dos_msg", "Windows strings", R"(!This program )", false, "!This program "},
+        {"registry_key", "Windows strings", R"re(\b(?:KHEY_|KHLM|HKCU))re", false, {}},
+
+        // --- Linux strings ---
+        {"/dev/", "Linux strings", R"(/dev/)", false, "/dev/"},
+        {"/proc/", "Linux strings", R"(/proc/)", false, "/proc/"},
+        {"/bin/", "Linux strings", R"(/bin/)", false, "/bin/"},
+        {"/usr/", "Linux strings", R"(/usr/)", false, "/usr/"},
+        {"/tmp/", "Linux strings", R"(/tmp/)", false, "/tmp/"},
+
+        // --- PDF strings ---
+        {"/URI", "PDF strings", R"(/URI)", false, "/URI"},
+        {"/FlateDecode", "PDF strings", R"(/FlateDecode)", false, "/FlateDecode"},
+        {"/EmbeddedFile", "PDF strings", R"(/EmbeddedFile)", false, "/EmbeddedFile"},
+
+        // --- HTML and JS strings ---
+        {"html", "HTML and JS strings", R"(html)", true, "html"},
+        {"javascript", "HTML and JS strings", R"(javascript)", true, "javascript"},
+        {"<script", "HTML and JS strings", R"(<script)", true, "<script"},
+        {".click(", "HTML and JS strings", R"re(.click)re", true, {}},
+        {"onlick", "HTML and JS strings", R"(onclick)", true, "onclick"},
+
+        // --- Powershell strings ---
+        {"powershell", "Powershell strings", R"(powershell)", true, "powershell"},
+        {"Invoke-Expression", "Powershell strings", R"(Invoke-Expression)", false, "Invoke-Expression"},
+        {"Invoke-Command", "Powershell strings", R"(Invoke-Command)", false, "Invoke-Command"},
+        {"Start-process", "Powershell strings", R"(Start-process)", false, "Start-process"},
+
+        // --- Network strings ---
+        {"get", "Network strings", R"(GET /)", true, "GET /"},
+        {"post", "Network strings", R"(POST /)", true, "POST /"},
+        {"http", "Network strings", R"(HTTP/)", true, "HTTP/"},
+        {"http://", "Network strings", R"(http://)", true, "http://"},
+        {"https://", "Network strings", R"(https://)", true, "https://"},
+        {"ftp", "Network strings", R"(ftp:)", true, "ftp:"},
+        {"useragent", "Network strings", R"(User-Agent)", true, "User-Agent"},
+        {"cookie", "Network strings", R"(cookie)", true, "cookie"},
+        {"internet", "Network strings", R"(internet)", true, "internet"},
+        {"download", "Network strings", R"(download)", true, "download"},
+        {"connect", "Network strings", R"(connect)", true, "connect"},
+
+        // --- Cryptography and encoding strings ---
+        {"base64", "Cryptography and encoding strings", R"(base64)", true, "base64"},
+        {"base64string", "Cryptography and encoding strings",
+         R"(ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/)", false,
+         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"},
+        {"crypt", "Cryptography and encoding strings", R"(crypt)", false, "crypt"},
+        {"encode", "Cryptography and encoding strings", R"(encode)", true, "encode"},
+        {"decode", "Cryptography and encoding strings", R"(decode)", true, "decode"},
+
+        // --- Miscellaneous strings ---
+        {"cache", "Miscellaneous strings", R"(cache)", true, "cache"},
+        {"certificate", "Miscellaneous strings", R"(certificate)", true, "certificate"},
+        {"clipboard", "Miscellaneous strings", R"(clipboard)", true, "clipboard"},
+        {"command", "Miscellaneous strings", R"(command)", true, "command"},
+        {"create", "Miscellaneous strings", R"(create)", true, "create"},
+        {"debug", "Miscellaneous strings", R"(debug)", true, "debug"},
+        {"delete", "Miscellaneous strings", R"(delete)", true, "delete"},
+        {"desktop", "Miscellaneous strings", R"(desktop)", true, "desktop"},
+        {"directory", "Miscellaneous strings", R"(directory)", true, "directory"},
+        {"disk", "Miscellaneous strings", R"(disk)", true, "disk"},
+        {"environment", "Miscellaneous strings", R"(environment)", true, "environment"},
+        {"enum", "Miscellaneous strings", R"(enum)", true, "enum"},
+        {"exit", "Miscellaneous strings", R"(exit)", true, "exit"},
+        {"file", "Miscellaneous strings", R"(file)", true, "file"},
+        {"hostname", "Miscellaneous strings", R"(hostname)", true, "hostname"},
+        {"install", "Miscellaneous strings", R"(install)", true, "install"},
+        {"hidden", "Miscellaneous strings", R"(hidden)", true, "hidden"},
+        {"keyboard", "Miscellaneous strings", R"(keyboard)", true, "keyboard"},
+        {"memory", "Miscellaneous strings", R"(memory)", true, "memory"},
+        {"module", "Miscellaneous strings", R"(module)", true, "module"},
+        {"mutex", "Miscellaneous strings", R"(mutex)", true, "mutex"},
+        {"password", "Miscellaneous strings", R"(password)", true, "password"},
+        {"privilege", "Miscellaneous strings", R"(privilege)", true, "privilege"},
+        {"process", "Miscellaneous strings", R"(process)", true, "process"},
+        {"remote", "Miscellaneous strings", R"(remote)", true, "remote"},
+        {"resource", "Miscellaneous strings", R"(resource)", true, "resource"},
+        {"security", "Miscellaneous strings", R"(security)", true, "security"},
+        {"service", "Miscellaneous strings", R"(service)", true, "service"},
+        {"shell", "Miscellaneous strings", R"(shell)", true, "shell"},
+        {"snapshot", "Miscellaneous strings", R"(snapshot)", true, "snapshot"},
+        {"system", "Miscellaneous strings", R"(system)", true, "system"},
+        {"thread", "Miscellaneous strings", R"(thread)", true, "thread"},
+        {"token", "Miscellaneous strings", R"(token)", true, "token"},
+        {"wallet", "Miscellaneous strings", R"(wallet)", true, "wallet"},
+        {"window", "Miscellaneous strings", R"(window)", true, "window"},
+    };
+    return defs;
+}
+
+// One compiled entry per table row, in table order: the RE2 (compiled even for
+// literal rows, so a bad pattern is reported instead of silently skipped) and
+// the effective literal needle (lower-cased when ci). This RE2 build deletes
+// copy and move, so the compiled pattern lives behind a unique_ptr and is
+// built once, in the row's own constructor path.
+struct compiled_string_indicator_t {
+    const string_indicator_def_t* def = nullptr;
+    std::unique_ptr<RE2> re;
+    std::string needle;
+};
+
+const std::vector<compiled_string_indicator_t>& compiled_string_indicators() {
+    static const std::vector<compiled_string_indicator_t> compiled = [] {
+        const auto& defs = string_indicator_defs();
+        std::vector<compiled_string_indicator_t> out;
+        out.reserve(defs.size());
+        RE2::Options opts(RE2::Quiet);
+        for (const auto& def : defs) {
+            std::string pattern(def.pattern);
+            if (def.ci) pattern = "(?i)" + pattern;
+            compiled_string_indicator_t entry;
+            entry.def = &def;
+            entry.re  = std::make_unique<RE2>(pattern, opts);
+            if (!def.literal.empty()) {
+                entry.needle = def.ci ? to_lower(def.literal)
+                                      : std::string(def.literal);
+            }
+            out.push_back(std::move(entry));
+        }
+        return out;
+    }();
+    return compiled;
+}
+
+constexpr std::size_t kMaxStringIndicatorSamples   = 4;
+constexpr std::size_t kMaxStringIndicatorSampleLen = 160;
+
+// Evidence kept per fired pattern, bounded so a packed binary with 500k strings
+// cannot blow up the report. The scan buffer is the newline-joined string list,
+// so the sample is the whole string around the match (clipped): what an analyst
+// wants to see, not the matched token.
+void add_indicator_sample(string_indicator_hit_t& hit, const std::string& text,
+                          std::size_t pos, std::size_t len) {
+    if (hit.samples.size() >= kMaxStringIndicatorSamples) return;
+    std::size_t begin = text.rfind('\n', pos);
+    begin = (begin == std::string::npos) ? 0 : begin + 1;
+    std::size_t end = text.find('\n', pos + len);
+    if (end == std::string::npos) end = text.size();
+    std::string sample = text.substr(begin, end - begin);
+    if (sample.size() > kMaxStringIndicatorSampleLen) {
+        sample.resize(kMaxStringIndicatorSampleLen);
+        sample += "...";
+    }
+    for (const auto& existing : hit.samples) {
+        if (existing == sample) return;  // the same string matched again
+    }
+    hit.samples.push_back(std::move(sample));
+}
+
+}  // namespace
+
+namespace {
+
 constexpr std::size_t kBatchTargetBytes    = 64 * 1024;
 constexpr std::size_t kSingleStringThreshold = 8 * 1024;
 
@@ -599,12 +794,32 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
                           std::string("regex '") + n.name + "' failed to compile: " + n.re->error());
             }
         }
+        for (const auto& c : compiled_string_indicators()) {
+            if (c.re->ok()) continue;
+            failed = true;
+            LOG_ERROR("ioc: extract_all: string indicator '{}' failed to compile: {}",
+                      c.def->name, c.re->error());
+            add_error(r.errors, extractor_error::regex_compile_fail,
+                      "string indicator '" + std::string(c.def->name) +
+                          "' failed to compile: " + c.re->error());
+        }
         if (failed) return r;
         LOG_TRACE("ioc: extract_all: all {} regexes compiled OK", sizeof(all) / sizeof(all[0]));
     }
 
     std::unordered_set<std::string> seen_urls, seen_domains, seen_ips,
                                     seen_emails, seen_hashes, seen_keywords;
+
+    // EMBER-style string indicators: one accumulator per table entry, kept in
+    // table order so the report is stable. Only non-zero entries are promoted
+    // to r.string_hits at the end.
+    const auto& indicator_defs = string_indicator_defs();
+    const auto& indicator_compiled = compiled_string_indicators();
+    std::vector<string_indicator_hit_t> indicator_hits;
+    indicator_hits.reserve(indicator_defs.size());
+    for (const auto& def : indicator_defs) {
+        indicator_hits.push_back({std::string(def.name), std::string(def.group), 0, {}});
+    }
 
     std::size_t batch_count = 0;
     std::size_t refang_count = 0;
@@ -679,6 +894,47 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
             std::vector<std::string> tmp;
             findAllGroup1(re.hashTag, buf, tmp);
             r.num_hash_tags += tmp.size();
+        }
+
+        // EMBER-style string indicators (see string_indicator_defs). Literal
+        // entries skip RE2 entirely: case-insensitive ones search a lower-cased
+        // copy of the batch (built once, on demand), case-sensitive ones search
+        // the batch itself.
+        {
+            std::string lower_batch;
+            bool lower_ready = false;
+            auto lowered = [&]() -> const std::string& {
+                if (!lower_ready) {
+                    to_lower_into(buf, lower_batch);
+                    lower_ready = true;
+                }
+                return lower_batch;
+            };
+
+            for (std::size_t i = 0; i < indicator_compiled.size(); ++i) {
+                const compiled_string_indicator_t& entry = indicator_compiled[i];
+                string_indicator_hit_t& hit = indicator_hits[i];
+
+                if (!entry.needle.empty()) {
+                    const std::string& hay = entry.def->ci ? lowered() : buf;
+                    const std::string_view hay_view(hay);
+                    const std::string_view needle(entry.needle);
+                    std::size_t pos = hay_view.find(needle);
+                    while (pos != std::string_view::npos) {
+                        ++hit.count;
+                        add_indicator_sample(hit, buf, pos, needle.size());
+                        pos = hay_view.find(needle, pos + needle.size());
+                    }
+                    continue;
+                }
+
+                std::vector<span_t> spans;
+                findAllSpans(*entry.re, buf, spans);
+                for (const auto& s : spans) {
+                    ++hit.count;
+                    add_indicator_sample(hit, buf, s.pos, s.len);
+                }
+            }
         }
     };
 
@@ -767,6 +1023,13 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
             default: break;
         }
     }
+
+    for (auto& hit : indicator_hits) {
+        if (hit.count == 0) continue;
+        r.string_hits.push_back(std::move(hit));
+    }
+    LOG_DEBUG("ioc: extract_all: {} of {} string-indicator pattern(s) fired",
+              r.string_hits.size(), indicator_compiled.size());
 
     const std::size_t total_iocs =
         r.num_urls + r.num_domains + r.num_ips +
@@ -896,6 +1159,24 @@ void print_ioc_results(const ioc_results_t& r) {
             std::cout << "        in: " << hit.matched_string << "\n";
         }
     }
+
+    if (!r.string_hits.empty()) {
+        print_header("String indicators", r.string_hits.size());
+        std::size_t shown = 0;
+        for (const auto& hit : r.string_hits) {
+            if (shown++ >= kMaxPrintPerCategory) {
+                std::cout << console::paint(console::yellow,
+                    "    ... and " + std::to_string(r.string_hits.size() - kMaxPrintPerCategory) + " more") << "\n";
+                break;
+            }
+            std::string line = "    [" + hit.group + "] " + hit.name
+                             + " x" + std::to_string(hit.count);
+            std::cout << console::paint(console::yellow, line) << "\n";
+            if (!hit.samples.empty()) {
+                std::cout << "        e.g. " << hit.samples.front() << "\n";
+            }
+        }
+    }
 }
 
 std::string ioc_results_to_json(const ioc_results_t& r) {
@@ -925,6 +1206,15 @@ std::string ioc_results_to_json(const ioc_results_t& r) {
             {"keyword",        std::string(h.keyword)},
             {"classification", std::string(h.classification)},
             {"in_string",      h.matched_string},
+        });
+    }
+    j["string_indicators"] = json::array();
+    for (const auto& h : r.string_hits) {
+        j["string_indicators"].push_back({
+            {"name",    h.name},
+            {"group",   h.group},
+            {"count",   h.count},
+            {"samples", h.samples},
         });
     }
     j["errors"] = {

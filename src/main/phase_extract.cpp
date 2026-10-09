@@ -11,6 +11,7 @@
 
 #include "console.hpp"
 #include "logging.hpp"
+#include "pipeline_planner.hpp"
 
 namespace pipeline {
 
@@ -21,14 +22,17 @@ namespace pipeline {
 // DLLs (IAT names) instead of heuristic guesses over raw strings.
 void run_iat_and_malapi(context& ctx) {
   // -------- Phase 4: IAT (PE) --------
+  // Extracted straight onto the context: the MalAPI pass below reads it, the
+  // export writes iat/<stem>_iat.json from it when extraction is not in the
+  // pipeline, and it is released again at the end when extraction will
+  // re-derive the same table.
   phase(ctx, ctx.is_pe, "import table (PE)");
-  extractor::iat_result_t iat_result{};
   {
     const auto started = report_clock::now();
     if (ctx.is_pe) {
-      if (extractor::extract_iat(iat_result, ctx.info)) print_iat_report(iat_result);
+      if (extractor::extract_iat(ctx.iat_result, ctx.info)) print_iat_report(ctx.iat_result);
       else {
-        for (const auto& message : extractor::get_error_messages(iat_result))
+        for (const auto& message : extractor::get_error_messages(ctx.iat_result))
           console::error(message);
       }
     }
@@ -47,9 +51,9 @@ void run_iat_and_malapi(context& ctx) {
 
       std::set<std::string> seen;
       std::vector<std::string> queue;
-      queue.reserve(std::min<std::size_t>(kMaxQueries, iat_result.entries.size()));
+      queue.reserve(std::min<std::size_t>(kMaxQueries, ctx.iat_result.entries.size()));
 
-      for (const auto& entry : iat_result.entries) {
+      for (const auto& entry : ctx.iat_result.entries) {
         if (queue.size() >= kMaxQueries) break;
         if (entry.name.empty()) continue;  // ordinal-only import
         if (!looks_like_api_name(entry.name)) continue;
@@ -100,7 +104,14 @@ void run_iat_and_malapi(context& ctx) {
 
     print_duration(elapsed_ms(started));
   }
-  // iat_result released here - before the memory-heavy phases
+  // With extraction in the pipeline the export reads the IAT from ctx.full,
+  // so drop the copy kept for partial pipelines - this phase used to be the
+  // owner of a local result released right here, before the memory-heavy
+  // phases.
+  if (planner::has(ctx, planner::phase_id::extraction)) {
+    extractor::iat_result_t empty{};
+    std::swap(ctx.iat_result, empty);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -108,16 +119,19 @@ void run_iat_and_malapi(context& ctx) {
 // ---------------------------------------------------------------------------
 void run_got(context& ctx) {
   phase(ctx, ctx.is_elf || ctx.is_macho, "GOT / PLT (ELF, Mach-O)");
-  // Scoped to the phase: the exporter re-reads GOT data from `full`, so this
-  // copy does not need to live until the end of the run.
-  extractor::got_result_t got_result{};
+  // Kept on the context so a pipeline without the extraction phase can still
+  // export it; released again below when extraction re-derives the same table.
   const auto started = report_clock::now();
   if (ctx.is_elf || ctx.is_macho) {
-    if (extractor::extract_got(got_result, ctx.info)) print_got_report(got_result);
+    if (extractor::extract_got(ctx.got_result, ctx.info)) print_got_report(ctx.got_result);
     else {
-      for (const auto& message : extractor::get_error_messages(got_result))
+      for (const auto& message : extractor::get_error_messages(ctx.got_result))
         console::error(message);
     }
+  }
+  if (planner::has(ctx, planner::phase_id::extraction)) {
+    extractor::got_result_t empty{};
+    std::swap(ctx.got_result, empty);
   }
   print_duration(elapsed_ms(started));
 }

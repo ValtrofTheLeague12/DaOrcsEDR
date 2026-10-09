@@ -4956,4 +4956,43 @@ def index():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=60000, debug=False)
+    # MALAPI_HOST / MALAPI_PORT: process env, then the repository .env, then
+    # this original loopback default.  A non-loopback host binds every
+    # interface (0.0.0.0 / ::) so the analyzer's own 127.0.0.1 client keeps
+    # answering while the configured IP stays reachable - the same rule as
+    # admin-terminal/core.bind_addr.
+    import ipaddress
+    import os as _os
+
+    def _setting(name, default):
+        if name in _os.environ:
+            return _os.environ[name].strip().strip("\"'")
+        dotenv = Path(__file__).resolve().parents[2] / ".env"
+        try:
+            for line in dotenv.read_text(encoding="utf-8-sig").splitlines():
+                entry = line.strip()
+                if entry and not entry.startswith("#") and "=" in entry:
+                    key, value = entry.split("=", 1)
+                    if key.strip() == name:
+                        return value.strip().strip("\"'")
+        except OSError:
+            pass
+        return default
+
+    def _bind(host):
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return host
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:                  # hostname: bind every interface
+            return "0.0.0.0"
+        if address.is_loopback:
+            return host
+        return "::" if address.version == 6 else "0.0.0.0"
+
+    _host = _setting("MALAPI_HOST", "127.0.0.1")
+    try:
+        _port = int(_setting("MALAPI_PORT", "60000"))
+    except ValueError:
+        _port = 60000
+    app.run(host=_bind(_host), port=_port, debug=False)

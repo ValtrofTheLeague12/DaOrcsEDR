@@ -335,13 +335,11 @@ dir_result_t convert_files(const std::vector<std::string>& dot_paths,
       continue;
     }
     ++res.files_parsed;
-    // Key on the FILE STEM, not the digraph name. r2 names every whole-program
-    // callgraph "digraph code", and exports/radare2 accumulates artifacts from
-    // every sample ever analyzed, so 10 unrelated samples produce 20 files all
-    // named "code". Keying on the graph name would collide them and could
-    // render one sample's callgraph on another sample's dashboard. The stem is
-    // <stem>_callgraph / <stem>_section_<name>, so it is unique per sample.
-    // The digraph name is still recorded inside each graph for display.
+    // Key on the FILE STEM, not the digraph name: r2 names every whole-program
+    // callgraph "digraph code", so keying on the graph name would collide them
+    // and could render one sample's callgraph on another sample's dashboard.
+    // The stem is <stem>_callgraph / <stem>_section_<name>, so it is unique per
+    // sample. The digraph name is still recorded inside each graph for display.
     graphs[stem] = parsed.graph.to_json();
   }
 

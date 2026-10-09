@@ -189,3 +189,136 @@ void print_render_report(const std::string& format,
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// EMBER2024 model verdict
+//
+// The probability is printed with the caveat it deserves. The score is a
+// ranking signal from an uncalibrated LightGBM model, not "there is a 0.99
+// chance this is malware", so the verdict line is the banded one the service
+// computed and the number is labelled as a score. `not_applicable` is a real
+// outcome, not an error: the model only ever saw Win64 PE images.
+// ---------------------------------------------------------------------------
+void print_ml_score_report(const ml_api::score_result_t& r,
+                           const std::string& skip_reason) {
+  if (!skip_reason.empty()) {
+    // The service never came up, or was switched off, so nothing was scored.
+    // Informational, not a failure: an absent optional model is not an analysis
+    // error, and a report full of red would misrepresent that.
+    console::info("ML score: skipped (" + skip_reason + ")");
+    return;
+  }
+
+  if (!r.ok) {
+    console::error(std::string("ML score failed: ") + r.error);
+    if (!r.detail.empty()) console::error("  reason: " + r.detail);
+    return;
+  }
+
+  print_section("EMBER2024 model score");
+
+  std::ostringstream prob;
+  prob << std::fixed << std::setprecision(6) << r.probability;
+  print_kv("Score (p)", prob.str() + "   (ranking signal, not calibrated)");
+
+  // The threat level is the same number read against the threshold that was
+  // applied, so it stays meaningful when ML_THRESHOLD is moved off 0.5. It is
+  // a band over an uncalibrated score, never a confidence - which is why the
+  // margin next to it is printed rather than left to be inferred.
+  const ml_api::threat_level lvl = ml_api::level_for(r);
+  std::string_view lvl_color = console::grey;
+  switch (lvl) {
+    case ml_api::threat_level::low:             lvl_color = console::green;  break;
+    case ml_api::threat_level::moderate:        lvl_color = console::yellow; break;
+    case ml_api::threat_level::high:            lvl_color = console::red;    break;
+    case ml_api::threat_level::critical:        lvl_color = console::red;    break;
+    case ml_api::threat_level::not_applicable:  lvl_color = console::grey;   break;
+  }
+  print_kv_colored("Threat level", ml_api::to_string(lvl), lvl_color);
+
+  {
+    const double margin = ml_api::threshold_margin(r);
+    std::ostringstream mg;
+    mg << std::fixed << std::setprecision(6) << (margin >= 0.0 ? "+" : "")
+       << margin << (margin >= 0.0 ? " above" : " below") << " (p - t)";
+    print_kv_colored("vs threshold", mg.str(),
+                     margin >= 0.0 ? console::red : console::green);
+  }
+
+  std::string_view vcolor = console::yellow;
+  if (r.verdict == ml_api::verdict::malicious)      vcolor = console::red;
+  else if (r.verdict == ml_api::verdict::benign)    vcolor = console::green;
+  print_kv_colored("Verdict", r.verdict_raw.empty()
+                                     ? std::string(ml_api::to_string(r.verdict))
+                                     : r.verdict_raw,
+                   vcolor);
+
+  {
+    std::ostringstream thr;
+    thr << std::fixed << std::setprecision(4) << r.threshold;
+    print_kv("Threshold used", thr.str());
+  }
+  print_kv("PE image", r.is_pe ? "yes" : "no");
+
+  if (!r.verdict_note.empty()) {
+    print_warn(r.verdict_note);
+  }
+
+  print_kv("Features", r.feature_source.empty() ? "thrember (service-side)"
+                                                : r.feature_source);
+  if (!r.model_sha256.empty()) {
+    // Short hash: enough to identify the model build in a log, short enough not
+    // to wrap the report line.
+    print_kv("Model", r.model + "  sha256:" + r.model_sha256.substr(0, 12));
+  }
+  if (r.trees > 0) {
+    print_kv("Model size", std::to_string(r.trees) + " trees, " +
+                             std::to_string(r.features) + " features");
+  }
+
+  if (r.explained && !r.top_features.empty()) {
+    print_section("why (TreeSHAP, log-odds)");
+    std::ostringstream head;
+    head << std::fixed << std::setprecision(3)
+         << "base " << r.base_log_odds << " -> " << r.prediction_log_odds
+         << "   (SHAP sum " << r.sum_shap << ")";
+    print_kv("Attribution", head.str());
+
+    for (const ml_api::feature_evidence_t& f : r.top_features) {
+      // Prefer the concrete evidence (an import/export name) over the generic
+      // label: "library:kernel32.dll" says far more than "hashed bucket".
+      std::string what = f.evidence;
+      if (what.empty()) what = f.label;
+      if (what.empty()) what = "column " + std::to_string(f.feature_index);
+
+      std::ostringstream os;
+      os << (f.shap_log_odds >= 0 ? "+" : "") << std::fixed
+         << std::setprecision(3) << std::setw(7) << f.shap_log_odds << "  "
+         << what;
+      if (f.shared_bucket && f.bucket_occupancy > 1) {
+        // A shared hash bucket's SHAP is the sum over every name in it, so the
+        // number must not be read as this one import's contribution.
+        os << "  [+" << std::to_string(f.bucket_occupancy - 1)
+           << " more in this hash bucket]";
+      }
+      print_bullet(os.str(),
+                   f.shap_log_odds >= 0 ? console::red : console::cyan);
+    }
+  }
+
+  if (r.explained && !r.group_rollup.empty()) {
+    print_section("contribution by EMBER feature group");
+    for (const ml_api::group_rollup_t& g : r.group_rollup) {
+      std::ostringstream os;
+      os << std::left << std::setw(18) << g.group
+         << std::fixed << std::setprecision(3) << std::setw(8)
+         << g.shap_log_odds;
+      if (!g.analyzer_implemented) {
+        // Worth surfacing: these are the groups the C++ exporter cannot
+        // produce yet, i.e. where exporter work would pay off.
+        os << "   (not produced by the C++ exporter)";
+      }
+      print_bullet(os.str());
+    }
+  }
+}

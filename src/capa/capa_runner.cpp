@@ -295,8 +295,8 @@ std::vector<std::string> build_args(const std::string& sample, const options& op
       args.push_back(value);
     }
   };
-  add("-r", "C:/Users/The4thReich/Desktop/IAProject/capa-rules/");
-  add("-s", "C:/Users/The4thReich/Desktop/IAProject/capa-sigs/");
+  add("-r", opts.rules_dir);
+  add("-s", opts.signatures_dir);
   add("-b", opts.backend);
   add("-f", opts.format);
   add("--os", opts.os);

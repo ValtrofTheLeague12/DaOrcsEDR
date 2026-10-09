@@ -1,6 +1,7 @@
 #include "cti.hpp"
 
 #include "console.hpp"
+#include "logging.hpp"
 
 #include <algorithm>
 #include <array>
@@ -957,11 +958,18 @@ namespace fs = std::filesystem;
 namespace {
 
 // Keys that are never used. Dropping them WHILE parsing keeps the ~45 MB ATT&CK bundle small
-// in memory (descriptions and detection texts are most of its size).
+// in memory.
+//
+// "description" is deliberately NOT dropped any more. ATT&CK v19 moved detection guidance
+// into x-mitre-analytic objects, so the description is now the only place the detection
+// prose exists - dropping it left every analytic blank. The whole bundle's descriptions are
+// ~6 MB of the ~53 MB file (the 21k relationship objects are the bulk), which is an
+// acceptable price for the guidance the tactic view exists to show. The other keys below
+// are metadata no consumer reads.
 bool keep_attack_value(int, json::parse_event_t event, json& parsed) {
   if (event != json::parse_event_t::key) return true;
   static const std::set<std::string> dropped = {
-      "description", "x_mitre_detection", "x_mitre_data_sources", "x_mitre_contributors",
+      "x_mitre_detection", "x_mitre_data_sources", "x_mitre_contributors",
       "x_mitre_modified_by_ref", "object_marking_refs", "created_by_ref", "created", "modified",
       "x_mitre_attack_spec_version", "x_mitre_domains", "x_mitre_defense_bypassed",
       "x_mitre_permissions_required", "x_mitre_effective_permissions", "x_mitre_system_requirements",
@@ -1052,6 +1060,12 @@ bool attack_db::load_json_text(std::string_view text, std::string& error) {
   std::unordered_map<std::string, attack_group> group_of;             // STIX id -> group
   std::unordered_map<std::string, attack_software> software_of;
   std::unordered_set<std::string> mitigations;
+  // ATT&CK v19 moved detection guidance off the technique: attack-pattern objects
+  // no longer carry x_mitre_detection, so it is reached through
+  // `detects` -> x-mitre-detection-strategy -> x_mitre_analytic_refs -> analytic.
+  std::unordered_map<std::string, attack_detection> detection_of;     // STIX id -> strategy
+  std::unordered_map<std::string, attack_analytic>   analytic_of;     // STIX id -> analytic
+  std::vector<std::pair<std::string, std::string>>   strategy_order;  // insertion order
 
   const json& objects = doc["objects"];
   for (const json& object : objects) {
@@ -1065,6 +1079,7 @@ bool attack_db::load_json_text(std::string_view text, std::string& error) {
       tech.id = ext_id;
       tech.name = str_of(object, "name");
       tech.url = url;
+      tech.description = str_of(object, "description");
       tech.is_subtechnique = flag_of(object, "x_mitre_is_subtechnique");
       if (tech.is_subtechnique && ext_id.find('.') != std::string::npos) tech.parent_id = ext_id.substr(0, ext_id.find('.'));
       if (const auto phases = object.find("kill_chain_phases"); phases != object.end() && phases->is_array()) {
@@ -1089,17 +1104,66 @@ bool attack_db::load_json_text(std::string_view text, std::string& error) {
       mitigations.insert(stix_id);
     } else if (type == "x-mitre-collection" && version_.empty()) {
       version_ = str_of(object, "x_mitre_version");
+    } else if (type == "x-mitre-detection-strategy") {
+      // The analytics are resolved in the relationship pass below, once every
+      // analytic in the bundle has been seen.
+      attack_detection det;
+      mitre_reference(object, det.id, url);
+      det.name = str_of(object, "name");
+      detection_of[stix_id] = std::move(det);
+      strategy_order.emplace_back(stix_id, str_of(object, "name"));
+    } else if (type == "x-mitre-analytic") {
+      attack_analytic an;
+      mitre_reference(object, an.id, url);
+      an.name = str_of(object, "name");
+      an.description = str_of(object, "description");
+      if (const auto platforms = object.find("x_mitre_platforms"); platforms != object.end() && platforms->is_array()) {
+        for (const json& p : *platforms) if (p.is_string()) an.platforms.push_back(p.get<std::string>());
+      }
+      analytic_of[stix_id] = std::move(an);
     }
   }
   group_count_ = group_of.size();
 
+  // Second pass: resolve each strategy's analytic references. Kept separate from
+  // the object pass because a strategy may name an analytic defined later in the
+  // bundle, and a single pass would drop it.
+  for (const json& object : objects) {
+    if (!object.is_object() || str_of(object, "type") != "x-mitre-detection-strategy") continue;
+    if (flag_of(object, "revoked") || flag_of(object, "x_mitre_deprecated")) continue;
+    const auto it = detection_of.find(str_of(object, "id"));
+    if (it == detection_of.end()) continue;
+    const auto refs = object.find("x_mitre_analytic_refs");
+    if (refs == object.end() || !refs->is_array()) continue;
+    for (const json& ref : *refs) {
+      if (!ref.is_string()) continue;
+      const auto a = analytic_of.find(ref.get<std::string>());
+      if (a != analytic_of.end()) it->second.analytics.push_back(a->second);
+    }
+  }
+
   for (const json& object : objects) {
     if (!object.is_object() || str_of(object, "type") != "relationship" || flag_of(object, "revoked")) continue;
     const std::string kind = str_of(object, "relationship_type");
+    const std::string source = str_of(object, "source_ref");
     const auto target = technique_of.find(str_of(object, "target_ref"));
+
+    if (kind == "detects") {
+      // detection-strategy --detects--> attack-pattern. Handled before the shared
+      // technique lookup below because here `source_ref` is a strategy rather than
+      // a group or software object, and the target still has to resolve.
+      if (target == technique_of.end()) continue;
+      const auto d = detection_of.find(source);
+      if (d == detection_of.end() || d->second.id.empty()) continue;
+      attack_technique& tech = techniques_[target->second];
+      const auto same = [&](const attack_detection& x) { return x.id == d->second.id; };
+      if (std::none_of(tech.detections.begin(), tech.detections.end(), same))
+        tech.detections.push_back(d->second);
+      continue;
+    }
+
     if (target == technique_of.end()) continue;
     attack_technique& tech = techniques_[target->second];
-    const std::string source = str_of(object, "source_ref");
 
     if (kind == "uses") {
       if (const auto g = group_of.find(source); g != group_of.end()) {
@@ -1112,6 +1176,30 @@ bool attack_db::load_json_text(std::string_view text, std::string& error) {
     } else if (kind == "mitigates" && mitigations.count(source) != 0) {
       ++tech.mitigation_count;
     }
+  }
+
+  // Parent -> child ids. Everything above walks edges INTO a technique, so
+  // nothing recorded the reverse direction: without this a parent technique looks
+  // childless even though 475 sub-techniques hang off 101 parents.
+  for (const auto& [id, tech] : techniques_) {
+    if (tech.parent_id.empty()) continue;
+    const auto p = techniques_.find(tech.parent_id);
+    if (p == techniques_.end()) continue;
+    if (std::find(p->second.subtechniques.begin(), p->second.subtechniques.end(), id) ==
+        p->second.subtechniques.end())
+      p->second.subtechniques.push_back(id);
+  }
+
+  // Deterministic ordering so two runs over the same sample emit identical JSON.
+  for (auto& entry : techniques_) {
+    std::sort(entry.second.subtechniques.begin(), entry.second.subtechniques.end());
+    std::sort(entry.second.software.begin(), entry.second.software.end(),
+              [](const attack_software& a, const attack_software& b) {
+                if (a.type != b.type) return a.type == "tool";   // tools before malware
+                return a.id < b.id;
+              });
+    std::sort(entry.second.detections.begin(), entry.second.detections.end(),
+              [](const attack_detection& a, const attack_detection& b) { return a.name < b.name; });
   }
 
   std::sort(tactics_.begin(), tactics_.end(), [](const attack_tactic& a, const attack_tactic& b) {
@@ -3176,6 +3264,165 @@ report pipeline::run(const progress_callback& progress) {
 }
 
 // ---------------------------------------------------------------------------
+// ATT&CK tactic matrix
+// ---------------------------------------------------------------------------
+// Resolves the knowledge cache the same way attack_details_for() does:
+// $CTI_CACHE_DIR (default cti-cache)/knowledge/enterprise-attack.json, with an
+// empty base meaning "caching disabled" -> the temp-dir fallback.
+static fs::path knowledge_bundle_path(const std::string& bundle_path) {
+  if (!bundle_path.empty()) return fs::path(bundle_path);
+  const std::string base = env_or("CTI_CACHE_DIR", "cti-cache");
+  return base.empty() ? fs::temp_directory_path() / "cti-knowledge" / "enterprise-attack.json"
+                      : fs::path(base) / "knowledge" / "enterprise-attack.json";
+}
+
+const attack_db& shared_attack_db() {
+  // Function-local static: thread-safe initialisation, and the bundle is parsed
+  // on first use only. A second load would cost another ~50 MB of peak memory.
+  static attack_db db;
+  static bool attempted = false;
+  if (!attempted) {
+    attempted = true;
+    std::string error;
+    if (!db.load_file(knowledge_bundle_path("").string(), error))
+      LOG_DEBUG("cti: shared ATT&CK db unavailable: {}", error);
+  }
+  return db;
+}
+
+// Builds the per-tactic view from a set of observed technique ids.
+//
+// Deliberately a free function over plain ids rather than a pipeline member: the
+// matrix needs ATT&CK knowledge (local cache) and the observed techniques,
+// neither of which involves a provider. The export phase therefore calls this
+// directly with capa's technique ids, so the tactic view is populated on an
+// offline run and under CTI_SKIP=1 instead of only when the CTI phase ran.
+//
+// `hits` is how many capa capabilities matched each technique; it decides the
+// order within a tactic so the strongest evidence leads.
+std::vector<tactic_coverage> build_attack_matrix(const attack_db& attack,
+                                                 const std::vector<std::string>& technique_ids,
+                                                 const std::map<std::string, std::size_t>& hits) {
+  std::map<std::string, tactic_coverage> matrix;
+
+  const auto lookup_hits = [&](const std::string& id) {
+    const auto it = hits.find(to_upper(id));
+    return it == hits.end() ? std::size_t{1} : it->second;
+  };
+
+  for (const std::string& raw_id : technique_ids) {
+    const std::string wanted = to_upper(raw_id);
+    if (wanted.empty()) continue;
+    const attack_technique* t = attack.technique(wanted);
+    if (t == nullptr) {
+      // ATT&CK does not know this id (a stale cache, or a rule naming a
+      // technique that was never published). Still worth showing, but there is
+      // nothing to expand, so it lands in one bucket instead of a real tactic.
+      tactic_coverage& c = matrix["unknown"];
+      c.shortname = "unknown";
+      c.name = "Unknown tactic";
+      tactic_procedure p;
+      p.id = wanted;
+      p.name = "not in the loaded ATT&CK version";
+      p.capability_hits = lookup_hits(wanted);
+      c.procedures.push_back(std::move(p));
+      continue;
+    }
+    // Everything attached here comes from the local ATT&CK cache, so it is
+    // available offline and under CTI_SKIP=1.
+    tactic_procedure p;
+    p.id = t->id;
+    p.name = t->name;
+    p.url = t->url;
+    p.parent_id = t->parent_id;
+    p.is_subtechnique = t->is_subtechnique;
+    p.platforms = t->platforms;
+    p.software = t->software;
+    p.groups = t->groups;
+    p.detections = t->detections;
+    p.subtechniques = t->subtechniques;
+    p.mitigation_count = t->mitigation_count;
+    p.description = t->description;
+    p.capability_hits = lookup_hits(t->id);
+
+    if (t->tactics.empty()) {
+      tactic_coverage& c = matrix["unknown"];
+      c.shortname = "unknown";
+      c.name = "Unknown tactic";
+      c.procedures.push_back(std::move(p));
+      continue;
+    }
+    for (const std::string& shortname : t->tactics) {
+      tactic_coverage& c = matrix[shortname];
+      c.shortname = shortname;
+      c.name = attack.tactic_name(shortname).empty() ? shortname : attack.tactic_name(shortname);
+      c.procedures.push_back(p);   // one copy per tactic; a technique can sit under several
+    }
+  }
+
+  // Strongest evidence first, then by id so two runs over the same sample emit
+  // identical output. Duplicates collapse because a technique is seeded once
+  // but may be listed under the same tactic twice by two sources.
+  for (auto& [key, cov] : matrix) {
+    std::sort(cov.procedures.begin(), cov.procedures.end(),
+              [](const tactic_procedure& a, const tactic_procedure& b) {
+                if (a.capability_hits != b.capability_hits) return a.capability_hits > b.capability_hits;
+                return a.id < b.id;
+              });
+    cov.procedures.erase(std::unique(cov.procedures.begin(), cov.procedures.end(),
+                                     [](const tactic_procedure& a, const tactic_procedure& b) {
+                                       return a.id == b.id;
+                                     }),
+                         cov.procedures.end());
+  }
+
+  // Kill-chain order, with the unattributed bucket last.
+  std::vector<tactic_coverage> out;
+  for (const attack_tactic& tactic : attack.tactics())
+    if (const auto it = matrix.find(tactic.shortname); it != matrix.end())
+      out.push_back(std::move(it->second));
+  if (const auto it = matrix.find("unknown"); it != matrix.end()) out.push_back(std::move(it->second));
+  return out;
+}
+
+// Groups sharing the most observed techniques: the attribution candidates.
+std::vector<group_match> build_likely_groups(const attack_db& attack,
+                                             const std::vector<std::string>& technique_ids) {
+  std::map<std::string, group_match> groups;
+  for (const std::string& raw_id : technique_ids) {
+    const attack_technique* t = attack.technique(raw_id);
+    if (t == nullptr) continue;
+    for (const attack_group& g : t->groups) {
+      group_match& m = groups[g.id];
+      m.id = g.id;
+      m.name = g.name;
+      ++m.techniques_matched;
+      if (std::find(m.techniques.begin(), m.techniques.end(), t->id) == m.techniques.end())
+        m.techniques.push_back(t->id);
+    }
+  }
+  std::vector<group_match> out;
+  for (auto& [id, m] : groups)
+    if (m.techniques_matched >= 2) out.push_back(std::move(m));
+  std::sort(out.begin(), out.end(), [](const group_match& a, const group_match& b) {
+    return a.techniques_matched != b.techniques_matched ? a.techniques_matched > b.techniques_matched
+                                                        : a.name < b.name;
+  });
+  return out;
+}
+
+#ifdef CTI_WITH_COLLECT
+// How many capa capabilities matched each technique, used to rank within a tactic.
+std::map<std::string, std::size_t> capa_hit_counts(const capa::report_t& capa_report) {
+  std::map<std::string, std::size_t> hits;
+  for (const capa::capability_t& cap : capa_report.capabilities)
+    for (const capa::attack_t& att : cap.attack)
+      if (!att.id.empty()) ++hits[to_upper(att.id)];
+  return hits;
+}
+#endif  // CTI_WITH_COLLECT
+
+// ---------------------------------------------------------------------------
 // scoring + correlation
 // ---------------------------------------------------------------------------
 void pipeline::finalize(report& out) {
@@ -3279,45 +3526,16 @@ void pipeline::finalize(report& out) {
     return a.artifacts.size() != b.artifacts.size() ? a.artifacts.size() > b.artifacts.size() : a.name < b.name;
   });
 
-  // --- ATT&CK matrix and the groups that share the most techniques
-  std::map<std::string, tactic_coverage> matrix;
-  std::map<std::string, group_match> groups;
-  std::size_t technique_total = 0;
-  for (const enrichment& e : items_) {
-    if (e.art.type != artifact_type::technique) continue;
-    ++technique_total;
-    const attack_technique* t = attack_.technique(e.art.value);
-    if (t == nullptr) {
-      tactic_coverage& c = matrix["unknown"];
-      c.shortname = "unknown";
-      c.name = "Unknown tactic";
-      c.techniques.push_back(e.art.value);
-      continue;
-    }
-    for (const std::string& shortname : t->tactics) {
-      tactic_coverage& c = matrix[shortname];
-      c.shortname = shortname;
-      c.name = attack_.tactic_name(shortname).empty() ? shortname : attack_.tactic_name(shortname);
-      c.techniques.push_back(t->id + " " + t->name);
-    }
-    for (const attack_group& g : t->groups) {
-      group_match& m = groups[g.id];
-      m.id = g.id;
-      m.name = g.name;
-      ++m.techniques_matched;
-      m.techniques.push_back(t->id);
-    }
-  }
-  for (const attack_tactic& tactic : attack_.tactics()) {
-    if (const auto it = matrix.find(tactic.shortname); it != matrix.end()) out.attack_matrix.push_back(std::move(it->second));
-  }
-  if (const auto it = matrix.find("unknown"); it != matrix.end()) out.attack_matrix.push_back(std::move(it->second));
-
-  if (technique_total >= 2) {
-    for (auto& [id, m] : groups) if (m.techniques_matched >= 2) out.likely_groups.push_back(std::move(m));
-    std::sort(out.likely_groups.begin(), out.likely_groups.end(), [](const group_match& a, const group_match& b) {
-      return a.techniques_matched != b.techniques_matched ? a.techniques_matched > b.techniques_matched : a.name < b.name;
-    });
+  // --- ATT&CK matrix and the groups that share the most techniques.
+  // Shared with the export phase so an offline run gets the same view: see
+  // build_attack_matrix() for why this is not pipeline-only.
+  {
+    std::vector<std::string> technique_ids;
+    for (const enrichment& e : items_)
+      if (e.art.type == artifact_type::technique && !e.skipped)
+        technique_ids.push_back(e.art.value);
+    out.attack_matrix = build_attack_matrix(attack_, technique_ids, {});
+    out.likely_groups = build_likely_groups(attack_, technique_ids);
     if (out.likely_groups.size() > 8) out.likely_groups.resize(8);
   }
 
@@ -3454,7 +3672,46 @@ std::string to_json(const report& r, const json_export_options& options) {
   json families = json::array();
   for (const family_summary& f : r.families) families.push_back({{"name", f.name}, {"artifacts", f.artifacts}, {"providers", f.providers}});
   json matrix = json::array();
-  for (const tactic_coverage& t : r.attack_matrix) matrix.push_back({{"tactic", t.shortname}, {"name", t.name}, {"techniques", t.techniques}});
+  for (const tactic_coverage& t : r.attack_matrix) {
+    json procedures = json::array();
+    for (const tactic_procedure& p : t.procedures) {
+      json tools = json::array(), malware = json::array();
+      for (const attack_software& s : p.software) {
+        const json entry = {{"id", s.id}, {"name", s.name}};
+        if (s.type == "tool") tools.push_back(entry);
+        else                    malware.push_back(entry);
+      }
+      json procs = json::array();
+      for (const attack_group& g : p.groups) procs.push_back({{"id", g.id}, {"name", g.name}});
+      json detections = json::array();
+      for (const attack_detection& d : p.detections) {
+        json analytics = json::array();
+        for (const attack_analytic& a : d.analytics) {
+          analytics.push_back({{"id", a.id}, {"name", a.name}, {"platforms", a.platforms},
+                               {"description", a.description}});
+        }
+        detections.push_back({{"id", d.id}, {"name", d.name}, {"analytics", analytics}});
+      }
+      json entry = {
+          {"id", p.id},
+          {"name", p.name},
+          {"url", p.url},
+          {"is_subtechnique", p.is_subtechnique},
+          {"parent", p.parent_id},
+          {"platforms", p.platforms},
+          {"tools", tools},
+          {"malware", malware},
+          {"groups", procs},
+          {"detections", detections},
+          {"subtechniques", p.subtechniques},
+          {"mitigations", p.mitigation_count},
+          {"capability_hits", p.capability_hits},
+      };
+      if (!p.description.empty()) entry["description"] = p.description;
+      procedures.push_back(std::move(entry));
+    }
+    matrix.push_back({{"tactic", t.shortname}, {"name", t.name}, {"procedures", procedures}});
+  }
   json groups = json::array();
   for (const group_match& g : r.likely_groups) groups.push_back({{"id", g.id}, {"name", g.name}, {"techniques_matched", g.techniques_matched}, {"techniques", g.techniques}});
   json shared = json::array();
@@ -3516,7 +3773,159 @@ bool stix_pattern(const artifact& a, std::string& pattern) {
 
 }  // namespace
 
+namespace {
+
+// ATT&CK software/group objects, plus the `uses` edges tying them to the
+// techniques observed in this sample.
+//
+// to_stix_bundle() used to emit only identity / attack-pattern / indicator /
+// vulnerability, so the ATT&CK software and intrusion sets the analyzer already
+// resolves (attack_software, attack_group, group_match) never reached the bundle
+// at all. A consumer importing the bundle therefore saw a set of unrelated
+// techniques with nothing saying which tools are known to use them, which group
+// is a candidate, or what any of it means.
+//
+// Three STIX shapes are produced here, keyed by ATT&CK id so two runs over the
+// same sample emit byte-identical bundles:
+//   tool          -- ATT&CK `tool`,        "Mimikatz"
+//   malware       -- ATT&CK `malware`,     "gh0st RAT"   (is_family, per S-id)
+//   intrusion-set -- ATT&CK `group`,       "Mustang Panda"
+// and, for each technique that references them, `uses` relationships in the
+// direction ATT&CK itself uses: tool/malware --uses--> attack-pattern, and
+// attack-pattern --used-by--> intrusion-set.
+//
+// Descriptions come from the ATT&CK bundle where the object graph carries them
+// (tactic_procedure::description for the technique is not needed here); the
+// software/group structs deliberately keep memory small by dropping them, so a
+// short fallback naming the ATT&CK id is written instead of an empty field. A
+// consumer can always resolve the full text from the external_references URL.
+struct attack_graph {
+  // Emitters supplied by the caller.
+  std::function<void(json)> emit;
+  std::function<json(const std::string&, const std::string&)> base;
+  std::string identity_id;
+  // Set by the caller so a throw inside this struct can name the step. Purely
+  // diagnostic; nothing here reads it for control flow.
+  std::string* stage = nullptr;
+  void mark(const std::string& what) { if (stage) *stage = what; }
+
+  std::map<std::string, std::string> software_ids;   // "S0002" -> stix id
+  std::map<std::string, std::string> group_ids;      // "G0007" -> stix id
+  // Tally kept here rather than inferred later: ATT&CK numbers tools and malware
+  // in the same S-series ("S0002" is Mimikatz, a tool; "S0032" is gh0st RAT,
+  // malware), so the id cannot tell them apart.
+  std::size_t tool_count = 0;
+  std::size_t malware_count = 0;
+
+  void relationship(const std::string& type, const std::string& source,
+                    const std::string& target) {
+    // base() takes a finished STIX id, not a seed -- every other caller wraps its
+    // seed in stix_id(). Without the wrap, object["id"] was a bare string rather
+    // than an id and emit()'s push_back threw "cannot use push_back() with
+    // string", which write_stix_bundle swallowed into a missing bundle.
+    json rel = base("relationship",
+                    stix_id("relationship", source + "|" + type + "|" + target));
+    rel["created_by_ref"] = identity_id;
+    rel["relationship_type"] = type;
+    rel["source_ref"] = source;
+    rel["target_ref"] = target;
+    emit(std::move(rel));
+  }
+
+  // One ATT&CK software entry: `tool` or `malware`, depending on how ATT&CK
+  // classified it. `evidence` records why we believe it is present, so the
+  // relationship is not mistaken for an observation of the tool itself.
+  const std::string& software(const attack_software& s, const std::string& technique) {
+    const std::string kind = s.type == "tool" ? "tool" : "malware";
+    const std::string key = s.id.empty() ? to_lower(s.name) : s.id;
+    const auto cached = software_ids.find(key);
+    if (cached != software_ids.end()) return cached->second;
+
+    const std::string id = stix_id(kind, key);
+    json o = base(kind, id);
+    o["created_by_ref"] = identity_id;
+    o["name"] = s.name;
+    if (kind == "malware") {
+      // ATT&CK models malware as families/types; `is_family` is what tells a
+      // consumer this is a class of malware rather than one sample.
+      o["is_family"] = true;
+    }
+    o["description"] =
+        "ATT&CK " + std::string(kind) + " " + (s.id.empty() ? std::string(s.name) : s.id) +
+        ", recorded as using " + technique + " in this sample. The mapping is " +
+        "ATT&CK's, not this tool's detection: it means " + s.name +
+        " is known to employ this technique, not that " + s.name +
+        " was found on the host.";
+    // Triple braces, matching every other external_references in this file.
+    // json::array({json{...}}) is ambiguous: with a single braced argument the
+    // initializer-list ctor can take the object's pairs as the array elements.
+    o["external_references"] = json::array({json{
+        {"source_name", "mitre-attack"},
+        {"external_id", s.id},
+        {"url", "https://attack.mitre.org/software/" + s.id}}});
+    emit(std::move(o));
+    if (kind == "tool") ++tool_count; else ++malware_count;
+    return software_ids.emplace(key, id).first->second;
+  }
+
+  const std::string& intrusion_set(const attack_group& g) {
+    const std::string key = g.id.empty() ? to_lower(g.name) : g.id;
+    const auto cached = group_ids.find(key);
+    if (cached != group_ids.end()) return cached->second;
+
+    const std::string id = stix_id("intrusion-set", key);
+    json o = base("intrusion-set", id);
+    o["created_by_ref"] = identity_id;
+    o["name"] = g.name;
+    o["description"] =
+        "ATT&CK intrusion set " + (g.id.empty() ? std::string(g.name) : g.id) +
+        ", recorded in MITRE ATT&CK as using the techniques observed in this "
+        "sample. Presence here is an ATT&CK catalogue relationship, not "
+        "evidence that this group operated on the host; treat it as a starting "
+        "point for review, never as attribution.";
+    o["external_references"] = json::array({json{
+        {"source_name", "mitre-attack"},
+        {"external_id", g.id},
+        {"url", "https://attack.mitre.org/groups/" + g.id}}});
+    emit(std::move(o));
+    return group_ids.emplace(key, id).first->second;
+  }
+
+  // Walk one technique's ATT&CK relationships and emit the resulting subgraph.
+  void for_procedure(const tactic_procedure& p) {
+    if (p.id.empty()) return;
+    const std::string technique_id = stix_id("attack-pattern", p.id);
+    // Resolve the ids into locals first. software()/intrusion_set() hand back a
+    // reference into their own map, and each of those maps is mutated by the
+    // calls that follow (a later software() can rehash/rebalance the node, and
+    // group_ids is a separate container but the relationship helper may insert
+    // more entries). Holding the reference across another insert is what turned
+    // a dangling-reference read into a string landing in the objects array.
+    for (const attack_software& s : p.software) {
+      if (s.id.empty() && s.name.empty()) continue;
+      mark("software:" + s.id + "/" + s.type);
+      const std::string software_id = software(s, p.id);   // copy, not a reference
+      mark("rel:uses:" + software_id);
+      relationship("uses", software_id, technique_id);
+    }
+    for (const attack_group& g : p.groups) {
+      if (g.id.empty() && g.name.empty()) continue;
+      mark("group:" + g.id);
+      const std::string group_id = intrusion_set(g);       // copy, not a reference
+      mark("rel:used-by:" + group_id);
+      relationship("used-by", technique_id, group_id);
+    }
+  }
+};
+
+}  // namespace
+
 std::string to_stix_bundle(const report& r, const stix_options& options) {
+  // Which section was being built when something threw. Declared outside the
+  // try so the catch below can name it, and reported there so a malformed
+  // enrichment costs one artifact rather than the whole bundle.
+  std::string stage = "setup";
+  try {
   const std::string now = iso8601(now_epoch(), true);
   const std::string identity_id = stix_id("identity", options.producer);
 
@@ -3524,9 +3933,34 @@ std::string to_stix_bundle(const report& r, const stix_options& options) {
   std::vector<std::string> refs;                    // everything the report object references
   std::set<std::string> emitted;                    // avoid duplicate ids
   auto emit = [&](json object) {
+    // Guard: every emitted value must be a STIX *object*. `objects` is an array,
+    // so push_back of anything else throws type_error.308 ("cannot use push_back()
+    // with <type>"), which EXPORTER_TRY swallows into a silently missing bundle.
+    if (!object.is_object()) {
+      std::cout << console::paint(console::red, "[-] stix: non-object emit: ")
+                << object.type_name() << " " << object.dump() << '\n';
+      return;
+    }
     const std::string id = object["id"].get<std::string>();
+    stage = "emit " + id;
     if (!emitted.insert(id).second) return;
-    objects.push_back(std::move(object));
+    // Second guard, on the container rather than the element. `objects` is only
+    // ever json::array() here, so this cannot fire today - it exists so that a
+    // future refactor that reassigns `objects` degrades to a logged skip instead
+    // of aborting the whole bundle through the catch below.
+    if (!objects.is_array()) {
+      std::cout << console::paint(console::red, "[-] stix: objects is not an array: ")
+                << objects.type_name() << '\n';
+      return;
+    }
+    try {
+      objects.push_back(std::move(object));
+    } catch (const std::exception& e) {
+      LOG_ERROR("stix: emit('{}') failed: {}", id, e.what());
+      std::cout << console::paint(console::red, "[-] stix: emit failed for ")
+                << id << ": " << e.what() << '\n';
+      return;
+    }
     if (id != identity_id) refs.push_back(id);
   };
   auto base = [&](const std::string& type, const std::string& id) {
@@ -3548,6 +3982,15 @@ std::string to_stix_bundle(const report& r, const stix_options& options) {
     m["created_by_ref"] = identity_id;
     m["name"] = family;
     m["is_family"] = true;
+    // Without this the family is a bare label in the graph: a consumer sees a
+    // node named e.g. "Emotet" with nothing to read. Say what the name means and
+    // where it came from, and state plainly that a provider naming a family is
+    // not the same as attributing the sample to it.
+    m["description"] =
+        "Malware family named '" + family + "' by threat-intelligence providers "
+        "while analysing this sample's indicators. Provider attribution is "
+        "similarity-based and can be wrong or deliberately spoofed; treat the "
+        "family name as a lead for triage, not a confirmed identification.";
     emit(std::move(m));
     malware_ids[key] = id;
     return id;
@@ -3555,6 +3998,12 @@ std::string to_stix_bundle(const report& r, const stix_options& options) {
 
   for (const enrichment& e : r.items) {
     if (e.skipped) continue;
+    stage = std::string("item:") + to_string(e.art.type);
+    // One malformed enrichment must cost one artifact, not the whole bundle.
+    // The outer catch used to swallow the first bad item and drop every
+    // technique, tool and group along with it, which is why a bundle could be
+    // missing wholesale with no hint which artifact caused it.
+    try {
     const std::string seed = e.art.key();
 
     if (e.art.type == artifact_type::technique) {
@@ -3668,7 +4117,40 @@ std::string to_stix_bundle(const report& r, const stix_options& options) {
       rel["target_ref"] = malware_id;
       emit(std::move(rel));
     }
+    } catch (const std::exception& ex) {
+      std::cout << console::paint(console::red, "[-] stix: artifact skipped: ")
+                << e.art.value << " (" << ex.what() << ")\n";
+      LOG_WARN("stix: artifact '{}' skipped while building the bundle: {}",
+               e.art.value, ex.what());
+    }
   }
+
+  // The ATT&CK object graph: software (tool/malware), intrusion sets, and the
+  // `uses` / `used-by` relationships between them and the techniques observed.
+  // Wired to the same emit/base closures so ids dedupe against everything else
+  // and every object lands in the report's object_refs exactly once.
+  stage = "graph:setup";
+  attack_graph graph;
+  graph.emit = emit;
+  graph.base = base;
+  graph.identity_id = identity_id;
+  graph.stage = &stage;
+  // Only the techniques this run actually observed carry software/group edges --
+  // walk the same attack_matrix the Navigator layer and the console summary use,
+  // so the STIX graph and the rest of the report cannot disagree.
+  for (const tactic_coverage& t : r.attack_matrix)
+    for (const tactic_procedure& p : t.procedures) {
+      stage = "graph:" + p.id;
+      // Same isolation as the enrichment loop: one bad technique subgraph must
+      // not cost the tool/group objects for every other technique.
+      try {
+        graph.for_procedure(p);
+      } catch (const std::exception& ex) {
+        std::cout << console::paint(console::red, "[-] stix: subgraph skipped: ")
+                  << p.id << " (" << ex.what() << ")\n";
+        LOG_WARN("stix: subgraph for '{}' skipped: {}", p.id, ex.what());
+      }
+    }
 
   json bundle = {{"type", "bundle"}, {"id", stix_id("bundle", r.generated_at + "|" + std::to_string(objects.size()))}};
   if (!refs.empty()) {
@@ -3678,13 +4160,47 @@ std::string to_stix_bundle(const report& r, const stix_options& options) {
     report_object["description"] = std::to_string(r.items.size()) + " artifact(s) analysed; " +
         std::to_string(r.counts_by_verdict.count("malicious") ? r.counts_by_verdict.at("malicious") : 0) + " malicious, " +
         std::to_string(r.counts_by_verdict.count("suspicious") ? r.counts_by_verdict.at("suspicious") : 0) + " suspicious.";
+    // Summarise the ATT&CK graph so a consumer that only reads the report object
+    // still learns what the subgraph contains. Counts, not a verdict: which
+    // tools and groups are listed is a property of the ATT&CK catalogue and the
+    // techniques matched, not a claim about this sample.
+    //
+    // Built in a std::string and assigned once, NEVER with `json_string +=`:
+    // nlohmann's operator+= on a json value forwards to push_back(), which
+    // throws type_error.308 ("cannot use push_back() with string") when the
+    // target already holds a string. That throw fired inside this block only
+    // when software/group ids existed, aborting the bundle exactly when the
+    // tool and intrusion-set objects were about to be counted - the STIX
+    // exporter then silently produced no file at all.
+    std::string description =
+        std::to_string(r.items.size()) + " artifact(s) analysed; " +
+        std::to_string(r.counts_by_verdict.count("malicious") ? r.counts_by_verdict.at("malicious") : 0) + " malicious, " +
+        std::to_string(r.counts_by_verdict.count("suspicious") ? r.counts_by_verdict.at("suspicious") : 0) + " suspicious.";
+    if (!graph.software_ids.empty() || !graph.group_ids.empty()) {
+      description += " ATT&CK graph: " +
+          std::to_string(graph.group_ids.size()) + " intrusion set(s), " +
+          std::to_string(graph.tool_count) + " tool(s) and " +
+          std::to_string(graph.malware_count) +
+          " malware entit(ies) linked to the observed techniques.";
+    }
+    report_object["description"] = std::move(description);
     report_object["published"] = now;
     report_object["report_types"] = json::array({"threat-report"});
     report_object["object_refs"] = refs;
-    objects.push_back(std::move(report_object));
+    // Same reasoning as emit(): going through the shared path keeps ids deduped
+    // and, more importantly, means a failure here costs one report object rather
+    // than the whole bundle.
+    emit(std::move(report_object));
   }
+  stage = "report-object";
   bundle["objects"] = std::move(objects);
+  stage = "dump";
   return bundle.dump(2, ' ', false, json::error_handler_t::replace);
+  } catch (const std::exception& e) {
+    std::cout << console::paint(console::red, "[-] stix bundle aborted at stage '")
+              << stage << "': " << e.what() << '\n';
+    throw;
+  }
 }
 
 // ===========================================================================
@@ -3860,12 +4376,67 @@ void print_summary(const report& r, std::ostream& out, std::size_t max_items) {
   if (!r.attack_matrix.empty()) {
     section("MITRE ATT&CK");
     for (const tactic_coverage& t : r.attack_matrix) {
-      std::string techniques;
-      for (std::size_t i = 0; i < t.techniques.size() && i < 6; ++i) {
-        techniques += (i ? "; " : " ") + t.techniques[i];
+      bullet(paint(console::cyan, t.name) +
+                 "  " + paint(console::grey, "(" + std::to_string(t.procedures.size()) + " technique(s))"),
+             console::cyan);
+      // Top procedures per tactic. Ten is the most that stays readable in a
+      // terminal; the full list is always in the JSON and the dashboard.
+      std::size_t shown = 0;
+      for (const tactic_procedure& p : t.procedures) {
+        if (shown++ >= 10) {
+          bullet(paint(console::grey, "    ... " + std::to_string(t.procedures.size() - 10) +
+                                   " more (in the CTI JSON)"),
+                 console::grey);
+          break;
+        }
+        std::string head = "    " + paint(console::white, p.id) + " " + p.name;
+        if (p.capability_hits > 1)
+          head += paint(console::yellow, "  [" + std::to_string(p.capability_hits) + " capa hits]");
+        out << head << '\n';
+
+        // Tooling first: this is what an analyst hunts for. Capped so one
+        // widely-used technique (T1106 native API) cannot flood the report.
+        std::size_t tool_shown = 0, mal_shown = 0;
+        for (const attack_software& s : p.software) {
+          const bool is_tool = (s.type == "tool");
+          if (is_tool ? tool_shown >= 4 : mal_shown >= 2) continue;
+          (is_tool ? tool_shown : mal_shown)++;
+          const std::size_t total = static_cast<std::size_t>(
+              std::count_if(p.software.begin(), p.software.end(),
+                            [&](const attack_software& x) { return (x.type == "tool") == is_tool; }));
+          out << "      " << paint(is_tool ? console::green : console::red,
+                                   is_tool ? "tool    " : "malware ") << "  "
+              << s.name << paint(console::grey, "  (" + s.id + ")")
+              << ((is_tool ? tool_shown : mal_shown) >= (is_tool ? 4u : 2u) && total > 0
+                      ? paint(console::grey, "  +" + std::to_string(total - (is_tool ? 4u : 2u)) + " more")
+                      : "")
+              << '\n';
+        }
+        if (tool_shown == 0 && mal_shown == 0)
+          out << "      " << paint(console::grey, "tool     no known tooling in ATT&CK") << '\n';
+
+        // Groups: attribution rather than capability, so one line, capped.
+        if (!p.groups.empty()) {
+          std::string g;
+          for (std::size_t i = 0; i < p.groups.size() && i < 3; ++i) {
+            if (i) g += ", ";
+            g += p.groups[i].name;
+          }
+          if (p.groups.size() > 3) g += " +" + std::to_string(p.groups.size() - 3) + " more";
+          out << "      " << paint(console::yellow, "group    ") << "  " << g << '\n';
+        }
+
+        // Detection guidance: the analytic prose is the actionable part.
+        for (const attack_detection& d : p.detections) {
+          if (d.analytics.empty()) continue;
+          for (const attack_analytic& a : d.analytics) {
+            if (a.description.empty()) continue;
+            std::string text = a.description;
+            if (text.size() > 220) text = text.substr(0, 217) + "...";
+            out << "      " << paint(console::blue, "detect   ") << "  " << text << '\n';
+          }
+        }
       }
-      if (t.techniques.size() > 6) techniques += "; ...";
-      bullet(t.name + ":" + techniques, console::cyan);
     }
     for (const group_match& g : r.likely_groups) {
       bullet("possible group: " + g.name + " (" + g.id + ") shares " +

@@ -12,6 +12,7 @@
 #include "local_api.hpp"
 #include "logging.hpp"
 #include "pipeline.hpp"
+#include "pipeline_planner.hpp"
 #include "process_runner.hpp"
 #include "trace.hpp"
 
@@ -37,6 +38,31 @@ void trace_process_stop() {
   trace_disable();
 }
 
+namespace {
+
+void print_usage(std::ostream& os) {
+  os << "Usage: static_analyzer [options] [file]\n"
+        "\n"
+        "  file                   sample to analyze (default: a.exe)\n"
+        "  -p, --pipeline <spec>  run a pipeline config instead of the default:\n"
+        "                           a bare name like 'extract_strings' (from\n"
+        "                           .\\pipelines or next to the executable),\n"
+        "                           a .yaml/.yml/.json file path,\n"
+        "                           inline JSON like '[\"strings\",\"model\"]',\n"
+        "                           or 'default'\n"
+        "  --list-phases          list the selectable phases and exit\n"
+        "  --list-pipelines       list the available named pipelines and exit\n"
+        "      --json             with --list-phases: emit JSON\n"
+        "  -h, --help             show this help\n"
+        "\n"
+        "A pipeline selects which analysis phases run and in what order: YAML\n"
+        "with Jenkins-style 'stages', a flat 'phases:' list, or a JSON array.\n"
+        "'export' and 'summary' are appended when missing, and prerequisites\n"
+        "(e.g. extraction for hexdump) are inserted the same way.\n";
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
   console::enable_utf8_output();
   logging::init();
@@ -50,11 +76,87 @@ int main(int argc, char** argv) {
   // whole run, whichever phase goes on to apply a key.
   proc::protect_env_var("BW_SESSION");
 
+  // -------- CLI ---------------------------------------------------------------
+  // Everything before the sample path is an option so a config file can follow
+  // the input: `static_analyzer sample.exe --pipeline pipelines/quick.yaml`.
+  std::string pipeline_spec;
+  std::string input_path;
+  bool list_phases = false;
+  bool list_pipelines = false;
+  bool list_json = false;
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "-h" || arg == "--help") {
+      print_usage(std::cout);
+      return 0;
+    } else if (arg == "-p" || arg == "--pipeline") {
+      if (i + 1 >= argc) {
+        std::cerr << "error: " << arg << " needs a value\n";
+        return 2;
+      }
+      pipeline_spec = argv[++i];
+    } else if (arg == "--list-phases") {
+      list_phases = true;
+    } else if (arg == "--list-pipelines") {
+      list_pipelines = true;
+    } else if (arg == "--json") {
+      list_json = true;
+    } else if (arg.size() > 1 && arg[0] == '-') {
+      std::cerr << "error: unknown option '" << arg << "'\n\n";
+      print_usage(std::cerr);
+      return 2;
+    } else if (input_path.empty()) {
+      input_path = arg;
+    } else {
+      std::cerr << "error: multiple input files ('" << input_path << "', '"
+                << arg << "')\n";
+      return 2;
+    }
+  }
+  if (list_phases && list_pipelines) {
+    std::cerr << "error: --list-phases and --list-pipelines are mutually exclusive\n";
+    return 2;
+  }
+  if (list_phases) {
+    pipeline::planner::print_catalog(list_json);
+    return 0;
+  }
+  if (list_pipelines) {
+    if (list_json) {
+      std::cerr << "error: --json is only valid together with --list-phases\n";
+      return 2;
+    }
+    pipeline::planner::print_pipelines();
+    return 0;
+  }
+  if (list_json) {
+    std::cerr << "error: --json is only valid together with --list-phases\n";
+    return 2;
+  }
+
+  // -------- Pipeline config ---------------------------------------------------
+  // Loaded before anything else starts so a bad config fails fast (exit 2) and
+  // so cfg.environment can be exported before the child services are launched.
+  pipeline::planner::pipeline_config cfg;
+  try {
+    cfg = pipeline::planner::load(pipeline_spec);
+  } catch (const std::exception& e) {
+    std::cerr << "pipeline error: " << e.what() << "\n";
+    return 2;
+  }
+  pipeline::planner::apply_environment(cfg);
+
+  // Lazy service ownership follows the plan: only what the selected phases use
+  // is ever launched (the planner inserts no service for the rest).
+  const bool want_malapi = pipeline::planner::has(cfg, pipeline::planner::phase_id::iat);
+  const bool want_ml     = pipeline::planner::has(cfg, pipeline::planner::phase_id::model);
+  const auto run_started = std::chrono::steady_clock::now();
+
   pipeline::context ctx;
-  ctx.path = argc > 1 ? argv[1] : "a.exe";
+  ctx.path = input_path.empty() ? "a.exe" : input_path;
 
   // Pre-detection placeholder; rescaled by set_total() once the format is known.
-  constexpr int kAllPhases = 25;
+  constexpr int kAllPhases = 26;
   curses_ui::session curses_session;
   const bool curses_started = curses_session.begin(
       ctx.path, static_cast<std::size_t>(kAllPhases));
@@ -75,9 +177,15 @@ int main(int argc, char** argv) {
   // opens yaml/malapi/<Name>.yaml relative to its CWD, so it must be
   // launched from python/ — the directory that contains the yaml/ tree.
   local_api::local_api_server api;
-  {
+  if (!want_malapi) {
+    LOG_INFO("trace: pipeline has no 'iat' phase; not launching the MalAPI service");
+  } else {
     local_api::launch_options api_opts;
-    api_opts.python          = "py";                      // 'py' launcher ('python' is not on PATH)
+#ifdef _WIN32
+    api_opts.python          = "py";
+#else
+    api_opts.python          = "python3";
+#endif
     api_opts.script          = "api/server.py";           // relative to working_dir
     api_opts.working_dir     = "python";                  // contains yaml/malapi/
     api_opts.extra_env       = {"PYTHONUNBUFFERED=1"};
@@ -110,53 +218,124 @@ int main(int argc, char** argv) {
   }
   ctx.api = &api;
 
+  // -------- EMBER2024 ML scoring service -------------------------------------
+  // ml/serve.py is a third local REST service, launched and owned exactly like
+  // the MalAPI server above. Two things are deliberately different:
+  //
+  //   * It runs from its OWN virtualenv (ml/_t/venv). thrember and its
+  //     polars/matplotlib/sklearn tree plus the signify==0.7.1 pin must not leak
+  //     into the interpreter that runs python/api/server.py, so the interpreter
+  //     is the venv's, not `py`.
+  //   * It is OPTIONAL. No model.txt, no venv, no service: the ML phase is
+  //     skipped and the run continues. A missing model must never turn a good
+  //     static analysis into a failed one.
+  //
+  // ML_SKIP=1 skips the launch entirely.
+  local_api::local_api_server ml_server;
+  bool ml_started = false;
+  if (!want_ml) {
+    LOG_INFO("trace: pipeline has no 'model' phase; not launching the ML service");
+  } else {
+    const char* skip = std::getenv("ML_SKIP");
+    const bool ml_skip = skip != nullptr &&
+                         (std::string(skip) == "1" || std::string(skip) == "true");
+
+    // The service binds 127.0.0.1 only, which is what makes it safe to launch
+    // unattended: /score takes a filesystem path, so a reachable port would be
+    // an arbitrary-file parser. serve.py refuses to bind a non-loopback address
+    // without a token, and the host is not configurable here for the same
+    // reason - an env var must not be able to expose a file parser.
+    const std::string ml_python =
+#ifdef _WIN32
+        "ml/_t/venv/Scripts/python.exe";
+#else
+        "ml/_t/venv/bin/python";
+#endif
+
+    if (ml_skip) {
+      LOG_INFO("trace: ML_SKIP set; not launching the scoring service");
+    } else {
+      local_api::launch_options ml_opts;
+      ml_opts.python      = ml_python;
+      ml_opts.script      = "serve.py";   // relative to working_dir
+      ml_opts.working_dir = "ml";          // holds serve.py and model.txt
+      ml_opts.extra_env   = {"PYTHONUNBUFFERED=1"};
+      ml_opts.base_url    = "http://127.0.0.1:60010";  // serve.py's --port default
+      ml_opts.health_path = "/health";
+      // Loading a 39 MB LightGBM model plus thrember's import tree is slow on a
+      // cold start, so the default 10 s budget is too tight here.
+      ml_opts.startup_timeout = std::chrono::milliseconds{60000};
+      ml_opts.request_timeout_ms = 60000;   // scoring parses the file with pefile
+      ml_opts.max_retries        = 1;
+
+      LOG_INFO("trace: starting ML scoring service: '{} {}' (cwd='{}', url={})",
+               ml_opts.python, ml_opts.script, ml_opts.working_dir,
+               ml_opts.base_url);
+
+      const auto st = ml_server.start(ml_opts);
+      if (st != local_api::launch_status::ok) {
+        // Informational, not an error: the phase will skip itself.
+        LOG_WARN("trace: ML scoring service unavailable ({}). The ML phase will "
+                 "be skipped; every other phase is unaffected.",
+                 local_api::to_string(st));
+        const std::string err = ml_server.std_err();
+        if (!err.empty()) {
+          LOG_WARN("trace: ML service stderr:\n{}", err);
+        } else {
+          LOG_WARN("trace: ML service produced no stderr. A 'not_found' status "
+                   "means {} is missing - create it with "
+                   "'python -m venv ml/_t/venv' and "
+                   "'ml/_t/venv/Scripts/pip install -r ml/requirements.txt'. "
+                   "A 'died_early' status means the interpreter started but "
+                   "thrember/lightgbm failed to import - run "
+                   "'ml/_t/venv/Scripts/python ml/serve.py' by hand.",
+                   ml_python);
+        }
+      } else {
+        ml_started = true;
+        LOG_INFO("trace: ML scoring service ready pid={}", ml_server.pid());
+      }
+    }
+  }
+  if (ml_started) ctx.ml_api_server = &ml_server;
+
   // -------- Pipeline ---------------------------------------------------------
-  // The phase order is the whole of the pipeline's control flow; each run_*
-  // owns its own "[phase n/total]" header and its own applicability gate.
-  pipeline::run_preamble(ctx);
-  pipeline::run_hashes(ctx);
-  pipeline::run_sections(ctx);
-  pipeline::run_generic_sections(ctx);
-  pipeline::run_strings_and_ioc(ctx);
-  pipeline::run_iat_and_malapi(ctx);
-  pipeline::run_got(ctx);
-  pipeline::run_byte_histogram(ctx);
-  pipeline::run_packer(ctx);
-  pipeline::run_opcodes(ctx);
-  pipeline::run_debug_symbols(ctx);
-  pipeline::run_signature(ctx);
-  pipeline::run_capa(ctx);
-  pipeline::run_radare2(ctx);
-  pipeline::run_graphviz(ctx);
-  pipeline::run_xref_asm(ctx);
-  pipeline::run_guards(ctx);
-  pipeline::run_full_extraction(ctx);
-  pipeline::run_xxd(ctx);
-  pipeline::run_cminer(ctx);
-  pipeline::run_error_recovery(ctx);
-  pipeline::run_cti(ctx);
-  pipeline::run_export(ctx);
-  pipeline::run_dashboard(ctx);
-  pipeline::run_sanity(ctx);
-  pipeline::run_summary(ctx);
+  // The planner owns the phase order: prologue (preamble + hashes), then every
+  // phase the config selected, in config order. Each run_* still owns its own
+  // "[phase n/total]" header and its own applicability gate.
+  pipeline::planner::run_phases(ctx, cfg);
 
   // -------- Result and shutdown ----------------------------------------------
+  // capa / radare2 are only run-failing when the pipeline selected them: a
+  // ["strings"] run must not exit non-zero because capa never ran.
   int rc = EXIT_SUCCESS;
   if (ctx.failed) {
     print_kv_colored("Result", "FAILED", console::red);
     rc = EXIT_FAILURE;
-  } else if (!ctx.capa_report.ok()) {
+  } else if (pipeline::planner::has(cfg, pipeline::planner::phase_id::capa) &&
+             !ctx.capa_report.ok()) {
     print_kv_colored("Result", "capa failed", console::red);
     rc = EXIT_FAILURE;
-  } else if (ctx.r2_result.st == r2::status::not_found ||
-             ctx.r2_result.st == r2::status::launch_failed ||
-             ctx.r2_result.st == r2::status::timed_out) {
+  } else if (pipeline::planner::has(cfg, pipeline::planner::phase_id::radare2) &&
+             (ctx.r2_result.st == r2::status::not_found ||
+              ctx.r2_result.st == r2::status::launch_failed ||
+              ctx.r2_result.st == r2::status::timed_out)) {
     print_kv_colored("Result",
                      std::string("radare2 ") + r2::to_string(ctx.r2_result.st),
                      console::red);
     rc = EXIT_FAILURE;
   } else {
     print_kv_colored("Result", "success", console::green);
+  }
+
+  // Machine-readable manifest of the run (phases, artifacts, result) for the
+  // API layer; written before the results browser blocks on getch().
+  {
+    const auto run_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - run_started)
+            .count();
+    pipeline::planner::write_run_summary(ctx, cfg, rc, run_ms);
   }
 
   ctx.curses = nullptr;
@@ -174,6 +353,18 @@ int main(int argc, char** argv) {
   api.stop();
   if (api.exit_code() != 0) {
     LOG_DEBUG("trace: local API server exited with code {}", api.exit_code());
+  }
+
+  // Same reasoning for the ML service: stop it before the results browser, not
+  // after. complete() blocks on getch(), and the scoring service holds a 39 MB
+  // LightGBM model plus thrember's import tree in memory - worth reclaiming the
+  // moment the last phase that needed it is done.
+  if (ml_started) {
+    ml_server.stop();
+    if (ml_server.exit_code() != 0) {
+      LOG_DEBUG("trace: ML scoring service exited with code {}",
+                ml_server.exit_code());
+    }
   }
 
   curses_session.complete(rc == EXIT_SUCCESS);

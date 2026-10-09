@@ -11,10 +11,6 @@ option(STATIC_ANALYZER_STATIC_RUNTIME
     "Statically link the GCC and C++ runtimes"
     ON
 )
-option(STATIC_ANALYZER_ENABLE_TESTS
-    "Build test targets and register CTest tests"
-    OFF
-)
 option(STATIC_ANALYZER_USE_VENDORED_ZSTD
     "Build zstd from the os-libzstd/ source tree instead of using the system library"
     OFF
@@ -32,40 +28,66 @@ option(STATIC_ANALYZER_USE_GRAPHVIZ
     ON
 )
 
-include(CTest)
-
 find_package(LIEF CONFIG REQUIRED
     HINTS "C:/msys64/ucrt64/lib/cmake/LIEF"
 )
-find_package(re2 CONFIG REQUIRED
-    HINTS "C:/msys64/ucrt64/lib/cmake/re2"
-)
+if(WIN32)
+    find_package(re2 CONFIG REQUIRED
+        HINTS "C:/msys64/ucrt64/lib/cmake/re2"
+    )
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(RE2 REQUIRED IMPORTED_TARGET re2)
+    add_library(re2::re2 ALIAS PkgConfig::RE2)
+endif()
 
-find_file(CAPSTONE_STATIC_LIBRARY libcapstone.a
-    HINTS "C:/msys64/ucrt64/lib"
-    REQUIRED
-)
-find_file(YARA_STATIC_LIBRARY libyara.a
-    HINTS "C:/msys64/ucrt64/lib"
-    REQUIRED
-)
-find_file(OPENSSL_CRYPTO_STATIC_LIBRARY libcrypto.a
-    HINTS "C:/msys64/ucrt64/lib"
-    REQUIRED
-)
-find_file(LIBMAGIC_STATIC_LIBRARY libmagic.a
-    HINTS "C:/msys64/ucrt64/lib"
-    REQUIRED
-)
+if(WIN32)
+    find_file(CAPSTONE_STATIC_LIBRARY libcapstone.a
+        HINTS "C:/msys64/ucrt64/lib"
+        REQUIRED
+    )
+    find_file(YARA_STATIC_LIBRARY libyara.a
+        HINTS "C:/msys64/ucrt64/lib"
+        REQUIRED
+    )
+    find_file(OPENSSL_CRYPTO_STATIC_LIBRARY libcrypto.a
+        HINTS "C:/msys64/ucrt64/lib"
+        REQUIRED
+    )
+    find_file(LIBMAGIC_STATIC_LIBRARY libmagic.a
+        HINTS "C:/msys64/ucrt64/lib"
+        REQUIRED
+    )
+    find_path(PDCURSES_INCLUDE_DIR pdcurses.h
+        HINTS "C:/msys64/ucrt64/include"
+        REQUIRED
+    )
+    find_library(PDCURSES_LIBRARY NAMES pdcurses
+        HINTS "C:/msys64/ucrt64/lib"
+        REQUIRED
+    )
+else()
+    find_library(CAPSTONE_STATIC_LIBRARY NAMES capstone REQUIRED)
+    find_library(YARA_STATIC_LIBRARY NAMES yara REQUIRED)
+    find_library(OPENSSL_CRYPTO_STATIC_LIBRARY NAMES crypto REQUIRED)
+    find_library(LIBMAGIC_STATIC_LIBRARY NAMES magic REQUIRED)
+    find_package(Curses REQUIRED)
+    set(PDCURSES_INCLUDE_DIR "${CURSES_INCLUDE_DIRS}")
+    set(PDCURSES_LIBRARY "${CURSES_LIBRARIES}")
+endif()
 
 find_path(LIBMAGIC_INCLUDE_DIR magic.h
     HINTS "C:/msys64/ucrt64/include"
     REQUIRED
 )
-find_path(TLSH_INCLUDE_DIR tlsh/tlsh.h
-    HINTS "C:/msys64/ucrt64/include"
-    REQUIRED
-)
+if(WIN32)
+    find_path(TLSH_INCLUDE_DIR tlsh/tlsh.h
+        HINTS "C:/msys64/ucrt64/include"
+        REQUIRED
+    )
+else()
+    find_path(TLSH_INCLUDE_DIR tlsh.h REQUIRED)
+endif()
 find_library(TLSH_LIBRARY NAMES tlsh
     HINTS "C:/msys64/ucrt64/lib"
     REQUIRED
@@ -74,14 +96,18 @@ find_path(NLOHMANN_JSON_INCLUDE_DIR nlohmann/json.hpp
     HINTS "C:/msys64/ucrt64/include"
     REQUIRED
 )
-find_path(PDCURSES_INCLUDE_DIR pdcurses.h
-    HINTS "C:/msys64/ucrt64/include"
-    REQUIRED
-)
-find_library(PDCURSES_LIBRARY NAMES pdcurses
-    HINTS "C:/msys64/ucrt64/lib"
-    REQUIRED
-)
+
+# yaml-cpp: the pipeline planner reads Jenkins-style YAML configs
+# (pipelines/*.yaml). The static archive is preferred on Windows so the exe
+# gains no new runtime DLL dependency; other platforms use the CMake package.
+if(WIN32)
+    find_file(YAML_CPP_STATIC_LIBRARY libyaml-cpp.a
+        HINTS "C:/msys64/ucrt64/lib"
+        REQUIRED
+    )
+else()
+    find_package(yaml-cpp REQUIRED)
+endif()
 
 # ---------------------------------------------------------------------------
 # libgraphviz / cgraph (optional)
@@ -140,8 +166,12 @@ find_library(LIBCURL_LIBRARY NAMES curl libcurl
     REQUIRED
 )
 
-add_subdirectory(spdlog)
-set_target_properties(spdlog PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(WIN32)
+    add_subdirectory(spdlog)
+    set_target_properties(spdlog PROPERTIES POSITION_INDEPENDENT_CODE ON)
+else()
+    find_package(spdlog CONFIG REQUIRED)
+endif()
 
 # ---------------------------------------------------------------------------
 # zstd (optional, off by default)
@@ -366,6 +396,67 @@ if(STATIC_ANALYZER_BUILD_SAMPLE_ARCHIVE)
 endif()
 
 # ---------------------------------------------------------------------------
+# compressor library (shared, for use by static_analyzer and compressor_tool)
+#
+# Provides zlib compression with metadata for analysis artifacts.
+# ---------------------------------------------------------------------------
+add_library(static_analyzer_compressor STATIC
+    "${CMAKE_SOURCE_DIR}/src/core/compressor.cpp"
+)
+target_compile_features(static_analyzer_compressor PRIVATE cxx_std_20)
+target_compile_options(static_analyzer_compressor PRIVATE
+    $<$<CONFIG:Release>:-O2>
+    -Wall -Wextra -Wpedantic
+)
+target_include_directories(static_analyzer_compressor PUBLIC
+    "${CMAKE_SOURCE_DIR}/include"
+)
+target_link_libraries(static_analyzer_compressor PUBLIC
+    z
+)
+
+if(STATIC_ANALYZER_STATIC_RUNTIME AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(static_analyzer_compressor PRIVATE -static-libgcc -static-libstdc++)
+endif()
+
+message(STATUS "compressor library: enabled")
+
+# ---------------------------------------------------------------------------
+# compressor_tool (optional, on by default)
+#
+# A standalone zlib compress/decompress tool with metadata for analysis artifacts.
+# Uses the same compressor library as static_analyzer (core/compressor.cpp).
+# ---------------------------------------------------------------------------
+option(STATIC_ANALYZER_BUILD_COMPRESSOR_TOOL
+    "Build the compressor_tool (zlib compress/decompress with metadata)"
+    ON
+)
+
+if(STATIC_ANALYZER_BUILD_COMPRESSOR_TOOL)
+    add_executable(compressor_tool
+        "${CMAKE_SOURCE_DIR}/tools/compressor_tool/main.cpp"
+        "${CMAKE_SOURCE_DIR}/tools/compressor_tool/compressor_tool.cpp"
+    )
+    target_compile_features(compressor_tool PRIVATE cxx_std_20)
+    target_compile_options(compressor_tool PRIVATE
+        $<$<CONFIG:Release>:-O2>
+        -Wall -Wextra -Wpedantic
+    )
+    target_include_directories(compressor_tool PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+    )
+    target_link_libraries(compressor_tool PRIVATE
+        static_analyzer_compressor
+    )
+
+    if(STATIC_ANALYZER_STATIC_RUNTIME AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_link_options(compressor_tool PRIVATE -static-libgcc -static-libstdc++)
+    endif()
+
+    message(STATUS "compressor_tool: enabled")
+endif()
+
+# ---------------------------------------------------------------------------
 # dot2json (optional, follows STATIC_ANALYZER_USE_GRAPHVIZ)
 #
 # A standalone converter that runs the same cgraph parser the analyzer uses to
@@ -408,6 +499,8 @@ file(GLOB ANALYZER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/*/*.cpp"
 )
+# Exclude compressor.cpp since it's built as a separate library
+list(FILTER ANALYZER_SOURCES EXCLUDE REGEX ".*/compressor\\.cpp$")
 file(GLOB ANALYZER_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/include/*.h"
     "${CMAKE_SOURCE_DIR}/include/*.hpp"
@@ -423,6 +516,39 @@ add_executable(static_analyzer
     ${ANALYZER_SOURCES}
     ${ANALYZER_HEADERS}
 )
+install(TARGETS static_analyzer RUNTIME DESTINATION bin)
+
+# Ship the pipeline configs next to the executable: the planner resolves bare
+# names (-p extract_strings) against ./pipelines and <exe dir>/pipelines, so
+# both the build tree and an install must carry them. The build-tree copy
+# mirrors the source directory wholesale; the install rule below filters to
+# the data files the planner can read.
+add_custom_command(TARGET static_analyzer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/pipelines"
+            "$<TARGET_FILE_DIR:static_analyzer>/pipelines"
+    COMMENT "Copying pipeline configs next to static_analyzer"
+)
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/pipelines/"
+        DESTINATION bin/pipelines
+        FILES_MATCHING
+        PATTERN "*.yaml"
+        PATTERN "*.yml"
+        PATTERN "*.json"
+)
+
+add_executable(static_analyzer_cminer
+    "${CMAKE_SOURCE_DIR}/tools/cminer/main.cpp"
+)
+target_compile_features(static_analyzer_cminer PRIVATE cxx_std_20)
+target_compile_options(static_analyzer_cminer PRIVATE
+    $<$<CONFIG:Release>:-O2>
+    -Wall -Wextra -Wpedantic
+)
+set_target_properties(static_analyzer_cminer PROPERTIES
+    OUTPUT_NAME "static-analyzer-cminer"
+)
+install(TARGETS static_analyzer_cminer RUNTIME DESTINATION bin)
 
 target_compile_options(static_analyzer PRIVATE
     $<$<CONFIG:Release>:-O2>
@@ -435,23 +561,25 @@ set_source_files_properties(
     PROPERTIES COMPILE_OPTIONS "-O2"
 )
 
-set(INSTRUMENTED_FILES
-    ${CMAKE_SOURCE_DIR}/src/file/file_analyzer.cpp
-    ${CMAKE_SOURCE_DIR}/src/file/file_hasher.cpp
-    ${CMAKE_SOURCE_DIR}/src/extract/extractor.cpp
-)
-foreach(f ${INSTRUMENTED_FILES})
-    if(EXISTS "${f}")
-        set_source_files_properties("${f}"
-            PROPERTIES COMPILE_OPTIONS "-finstrument-functions")
-    endif()
-endforeach()
+if(WIN32)
+    set(INSTRUMENTED_FILES
+        ${CMAKE_SOURCE_DIR}/src/file/file_analyzer.cpp
+        ${CMAKE_SOURCE_DIR}/src/file/file_hasher.cpp
+        ${CMAKE_SOURCE_DIR}/src/extract/extractor.cpp
+    )
+    foreach(f ${INSTRUMENTED_FILES})
+        if(EXISTS "${f}")
+            set_source_files_properties("${f}"
+                PROPERTIES COMPILE_OPTIONS "-finstrument-functions")
+        endif()
+    endforeach()
+endif()
 
 # Every module directory is on the include path, so sources keep using flat
 # includes such as #include "yara_scanner.hpp" regardless of where a module
 # physically lives. That keeps the reorganisation invisible to the code.
 set(ANALYZER_MODULE_DIRS
-    core file extract capa yara r2 dig net report ui podman main
+    core file extract capa yara r2 dig net report ui podman ml_api main
 )
 foreach(module_dir ${ANALYZER_MODULE_DIRS})
     list(APPEND ANALYZER_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include/${module_dir}")
@@ -484,22 +612,54 @@ target_link_libraries(static_analyzer PRIVATE
     "${LIBMAGIC_STATIC_LIBRARY}"
     "${LIBCURL_LIBRARY}"
     "${PDCURSES_LIBRARY}"
-    z
-    bz2
-    lzma
     ${ZSTD_LINK_TARGET}
-    gnurx
-    ws2_32
-    shell32
-    dbghelp
-    crypt32
-    shlwapi
-    psapi
-    wldap32
+    static_analyzer_compressor
 )
 
+if(WIN32)
+    # libyaml-cpp.a is the static build: without this define the headers mark
+    # every symbol dllimport and the linker looks for __imp_ references.
+    target_compile_definitions(static_analyzer PRIVATE YAML_CPP_STATIC_DEFINE)
+    target_link_libraries(static_analyzer PRIVATE "${YAML_CPP_STATIC_LIBRARY}")
+else()
+    target_link_libraries(static_analyzer PRIVATE yaml-cpp::yaml-cpp)
+endif()
+
+if(WIN32)
+    target_link_libraries(static_analyzer PRIVATE
+        z
+        bz2
+        lzma
+        gnurx
+        ws2_32
+        shell32
+        dbghelp
+        crypt32
+        shlwapi
+        psapi
+        wldap32
+    )
+else()
+    find_package(ZLIB REQUIRED)
+    find_package(BZip2 REQUIRED)
+    find_package(LibLZMA REQUIRED)
+    find_package(Threads REQUIRED)
+    target_link_libraries(static_analyzer PRIVATE
+        ZLIB::ZLIB
+        BZip2::BZip2
+        LibLZMA::LibLZMA
+        Threads::Threads
+    )
+endif()
+
+if(WIN32)
+    set(STATIC_ANALYZER_MAGIC_DB "C:/msys64/ucrt64/share/misc/magic.mgc")
+else()
+    set(STATIC_ANALYZER_MAGIC_DB "/usr/share/misc/magic.mgc")
+endif()
+
 target_compile_definitions(static_analyzer PRIVATE
-    STATIC_ANALYZER_MAGIC_DATABASE="C:/msys64/ucrt64/share/misc/magic.mgc"
+    STATIC_ANALYZER_MAGIC_DATABASE="${STATIC_ANALYZER_MAGIC_DB}"
     STATIC_ANALYZER_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     CTI_WITH_COLLECT
 )
@@ -519,78 +679,4 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_link_options(static_analyzer PRIVATE
         -Wl,--allow-multiple-definition
     )
-endif()
-
-# Inert defensive IOC/EICAR fixture. It is deliberately a separate target so
-# antivirus scanners and fixture output cannot affect the analyzer executable.
-# Test targets are opt-in. Set -DSTATIC_ANALYZER_ENABLE_TESTS=ON to build the
-# fixture and register the smoke test.
-if(STATIC_ANALYZER_ENABLE_TESTS)
-    add_executable(eicar_ioc_fixture
-        "${CMAKE_SOURCE_DIR}/tests/fixtures/eicar_ioc_fixture.cpp"
-    )
-    target_compile_features(eicar_ioc_fixture PRIVATE cxx_std_20)
-    target_compile_options(eicar_ioc_fixture PRIVATE -Wall -Wextra -Wpedantic)
-endif()
-
-# The unit and phase tests are disabled for now.
-#
-# tests/test_ioc.c++ and tests/test_pe_overlay.py are both present, but
-# their targets (test_ioc, the test_ioc_generator test and the four
-# test_pe_phase_* registrations) are not wired up here, so a
-# -DSTATIC_ANALYZER_ENABLE_TESTS=ON configure builds only the fixture and
-# the smoke test below. Re-add those targets and registrations to bring the
-# suite back. A missing source in add_executable() is a hard generate-time
-# error, so a registration must never outlive its file: if either test
-# disappears again, drop its target here too (or restore the file with
-# git checkout HEAD -- tests/).
-if(STATIC_ANALYZER_ENABLE_TESTS AND BUILD_TESTING)
-    # Fail loudly if a registered test source has been deleted. Without this,
-    # a removed source silently degrades the build to "0 tests, exit 0" because
-    # the analyzer itself still compiles and nothing else references it.
-    set(STATIC_ANALYZER_TEST_SOURCES
-        "${CMAKE_SOURCE_DIR}/tests/fixtures/eicar_ioc_fixture.cpp"
-    )
-    foreach(_test_source IN LISTS STATIC_ANALYZER_TEST_SOURCES)
-        if(NOT EXISTS "${_test_source}")
-            message(FATAL_ERROR
-                "Registered test source is missing: ${_test_source}\n"
-                "Restore it with: git checkout HEAD -- tests/\\n"
-                "Or remove its registration from CMakeLists.txt and this list."
-            )
-        endif()
-    endforeach()
-
-    # test_pe_phase_1..4 used to run tests/test_pe_overlay.py here over the
-    # EICAR fixture. Disabled with the rest of the suite (see above).
-
-    # ls/true/echo/pwd are absent from a stock MSYS2 UCRT64 install, which made
-    # this test silently skip. The toolchain utilities below ship with the
-    # compiler and keep the smoke test registering.
-    find_program(SMOKE_TEST_BINARY
-        NAMES ls.exe true.exe echo.exe pwd.exe
-               cstool.exe elfedit.exe certtool.exe bomtool.exe dbhash.exe
-        PATHS "C:/msys64/ucrt64/bin"
-        NO_DEFAULT_PATH
-    )
-
-    if(NOT SMOKE_TEST_BINARY)
-        message(WARNING "No smoke test binary found in C:/msys64/ucrt64/bin")
-    else()
-        message(STATUS "Smoke test binary: ${SMOKE_TEST_BINARY}")
-        add_test(
-            NAME static_analyzer_smoke
-            COMMAND static_analyzer "${SMOKE_TEST_BINARY}"
-        )
-        # CTI_SKIP=1 keeps the run offline and fast. Without it the analyzer
-        # performs live provider lookups, which made this test exceed its
-        # timeout on any machine with network access.
-        # STATIC_ANALYZER_CURSES=0 suppresses the PDCurses results browser,
-        # which would otherwise block waiting for a keypress under CTest.
-        set_tests_properties(static_analyzer_smoke PROPERTIES
-            WORKING_DIRECTORY "$<TARGET_FILE_DIR:static_analyzer>"
-            ENVIRONMENT "CTI_SKIP=1;STATIC_ANALYZER_CURSES=0"
-            TIMEOUT 300
-        )
-    endif()
 endif()

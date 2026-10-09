@@ -1,13 +1,17 @@
 [CmdletBinding()]
 param(
     [switch]$Clean,
-    [string]$InputFile
+    [string]$InputFile,
+    # Pipeline spec: a bare name (extract_strings), a .yaml/.json path,
+    # 'default', or inline JSON like '["strings","model"]'.
+    [string]$Pipeline,
+    [switch]$ListPipelines
 )
 
 $ErrorActionPreference = 'Stop'
 
 $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
-$env:STATIC_ANALYZER_CURSES = "1"
+$env:STATIC_ANALYZER_CURSES = "0"
 
 Set-Location -LiteralPath $PSScriptRoot
 
@@ -44,14 +48,22 @@ if ($Clean -and (Test-Path -LiteralPath 'build-ucrt')) {
 Invoke-Checked 'cmake' '--preset' 'ucrt64'
 Invoke-Checked 'cmake' '--build' '--preset' 'ucrt64-release'
 
-# No ctest step: STATIC_ANALYZER_ENABLE_TESTS and BUILD_TESTING are both OFF in
-# the ucrt64 preset, so no test targets are built and no tests are registered.
-# Running ctest here would only report "No tests were found".
-
 $Analyzer = Join-Path $PSScriptRoot 'build-ucrt\static_analyzer.exe'
 
 if (-not (Test-Path -LiteralPath $Analyzer)) {
     throw "Analyzer not found at '$Analyzer' (build may have failed)"
+}
+
+if ($ListPipelines) {
+    Write-Host 'Available pipelines:' -ForegroundColor Cyan
+    Invoke-Checked $Analyzer '--list-pipelines'
+    Write-Host "Executable: $Analyzer" -ForegroundColor Green
+    exit 0
+}
+
+$RunArgs = @()
+if ($Pipeline) {
+    $RunArgs += @('--pipeline', $Pipeline)
 }
 
 if ($InputFile) {
@@ -60,7 +72,13 @@ if ($InputFile) {
     }
     $ResolvedInput = (Resolve-Path -LiteralPath $InputFile).Path
     Write-Host "Analyzing: $ResolvedInput" -ForegroundColor Cyan
-    Invoke-Checked $Analyzer $ResolvedInput
+    Invoke-Checked $Analyzer @RunArgs $ResolvedInput
+} elseif ($Pipeline) {
+    # Default sample: a.exe next to the script when present, else the exe itself.
+    $DefaultSample = Join-Path $PSScriptRoot 'a.exe'
+    if (-not (Test-Path -LiteralPath $DefaultSample)) { $DefaultSample = $Analyzer }
+    Write-Host "Analyzing (pipeline $Pipeline): $DefaultSample" -ForegroundColor Cyan
+    Invoke-Checked $Analyzer @RunArgs $DefaultSample
 } else {
     Write-Host "Analyzing (default): $Analyzer" -ForegroundColor Cyan
     Invoke-Checked $Analyzer $Analyzer

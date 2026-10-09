@@ -24,9 +24,9 @@ enum class status {
 const char* to_string(status s);
 
 struct options {
-  std::string executable = "C:/Users/The4thReich/Desktop/IAProject/capa-exec/capa.exe";
-  std::string rules_dir = "C:/Users/The4thReich/Desktop/IAProject/capa-rules";
-  std::string signatures_dir;
+  std::string executable = "capa";
+  std::string rules_dir = "capa-rules";
+  std::string signatures_dir = "capa-sigs";
   std::string backend;
   std::string format;
   std::string os;

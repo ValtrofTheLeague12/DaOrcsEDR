@@ -10,8 +10,10 @@
 
 #include "cyberchef.hpp"
 #include "console.hpp"
+#include "exporter.hpp"
 #include "ioc_extractor.hpp"
 #include "logging.hpp"
+#include "pipeline_planner.hpp"
 
 namespace pipeline {
 
@@ -22,6 +24,9 @@ void run_preamble(context& ctx) {
   print_banner("static analyzer");
   print_kv("Input",  ctx.path);
   print_kv("Run ID", logging::current_run_id());
+  if (ctx.active_plan != nullptr) {
+    print_kv("Pipeline", ctx.active_plan->name + " (" + ctx.active_plan->source + ")");
+  }
 
   ctx.info   = analyzer::get_file_info(ctx.path);
   ctx.failed = analyzer::has_errors(ctx.info);
@@ -54,25 +59,17 @@ void run_preamble(context& ctx) {
 
   print_kv("Format", format_name(ctx.fmt));
 
-  // -------- Format-aware phase plan ----------------------------------------
-  // The PDCurses results screen turns every printed "[phase n/total]" header
-  // into its own section, so a header emitted for a stage that cannot run would
-  // advertise work that never happened (an ELF listing "IAT / Import Table
-  // (PE)", a PE listing "GOT / PLT (ELF, Mach-O)"). Only the stages that
-  // concern this binary are numbered and counted, which also makes the
-  // progress bar reflect real work instead of the fixed 25-stage pipeline.
-  //
-  //   PE / ELF / Mach-O : phase 1 renders the format-specific section table, so
-  //                       the generic LIEF view (phase 2) is a duplicate.
-  //   PE                : import table (4), MalAPI (5), the export address
-  //                       table and the YARA rule scan.
-  //   ELF / Mach-O      : GOT / PLT (6).
-  constexpr int kAllPhases = 25;
-  const int kSkippedGenericSections = (ctx.is_pe || ctx.is_elf || ctx.is_macho) ? 1 : 0;
-  const int kSkippedPeOnly = ctx.is_pe ? 0 : 4;                 // IAT, MalAPI, EAT, YARA
-  const int kSkippedGotOnly = (ctx.is_elf || ctx.is_macho) ? 0 : 1;  // GOT / PLT
-  ctx.total_phases = kAllPhases - kSkippedGenericSections
-                   - kSkippedPeOnly - kSkippedGotOnly;
+  // -------- Phase plan ------------------------------------------------------
+  // The total is whatever the active pipeline config will print: the planner
+  // counts the same format-gated and service-gated headers the run_* functions
+  // emit (see planner::header_count), so a partial config like
+  // ["sections","strings"] shows "[phase n/2]" and the progress bar reflects
+  // real work instead of the classic fixed-size pipeline.
+  if (ctx.active_plan != nullptr) {
+    ctx.total_phases = planner::header_count(*ctx.active_plan, ctx);
+  } else {
+    ctx.total_phases = 26;  // defensive: run_phases() always sets active_plan
+  }
   if (ctx.curses != nullptr) {
     ctx.curses->set_total(static_cast<std::size_t>(ctx.total_phases));
   }
@@ -80,10 +77,19 @@ void run_preamble(context& ctx) {
 
 // ---------------------------------------------------------------------------
 // Hashes - printed before phase 1, not numbered as a phase of their own
+//
+// The known-PE lookup rides along here because this is the first stage that has
+// a SHA-256 to look up. It is deliberately NOT a numbered phase: it is a roster
+// check, not an analysis stage, and giving it a phase number would make the
+// "[phase n/total]" plan promise work for every ELF and Mach-O sample too.
+// Only PEs are looked up - the roster is Win64 PE hashes, so asking whether an
+// ELF is in it would be a category error.
 // ---------------------------------------------------------------------------
 void run_hashes(context& ctx) {
   if (hasher::hash_file(ctx.file_hash, ctx.info)) {
     print_kv("SHA-256", ctx.file_hash.hash);
+    const std::string words = hasher::human_words(ctx.file_hash.hash);
+    if (!words.empty()) print_kv("Words", words);
   } else {
     print_kv_colored("SHA-256", "failed", console::red);
     for (const auto& message : hasher::get_hash_error_messages(ctx.file_hash))
@@ -97,6 +103,42 @@ void run_hashes(context& ctx) {
     for (const auto& message : hasher::get_fuzzy_hash_error_messages(ctx.fuzzy_hash))
       console::error(message);
   }
+
+  // ---- known-PE roster lookup ----
+  const bool hash_usable = !ctx.failed && !ctx.file_hash.hash.empty() &&
+                           ctx.file_hash.hash != "N/A";
+  if (ctx.is_pe && !hash_usable) {
+    LOG_WARN("known_pe: no usable SHA-256 for '{}', skipping roster lookup",
+             ctx.info.filename);
+  } else if (ctx.is_pe) {
+    known_pe::lookup(ctx.known_pe_match, ctx.file_hash.hash);
+
+    if (ctx.known_pe_match.matched) {
+      print_kv_colored("Known PE", "yes", console::red);
+      print_kv("  Label", ctx.known_pe_match.entry.malicious
+                              ? "malicious (EMBER label 1)"
+                              : "benign (EMBER label 0)");
+      if (!ctx.known_pe_match.entry.family.empty())
+        print_kv("  Family", ctx.known_pe_match.entry.family);
+      print_kv("  Split", ctx.known_pe_match.entry.split_names());
+      print_kv("  Roster", std::to_string(ctx.known_pe_match.entries_loaded) +
+                           " hashes (" + ctx.known_pe_match.index_path + ")");
+    } else if (ctx.known_pe_match.available) {
+      print_kv("Known PE", "no (not in the " +
+                            std::to_string(ctx.known_pe_match.entries_loaded) +
+                            "-hash roster)");
+    }
+    // available == false means there was no roster to consult. That is a
+    // missing optional data file, not a finding about the sample, so it stays
+    // out of the report and only lands in the log.
+  }
+
+  // The exporter stem is the run's directory identity
+  // (exports/<stem>_analysis). Computed here, right after the hash, so every
+  // pipeline - including one with no radare2 phase - has it before the first
+  // artifact is written. This used to live inside run_radare2(), which left
+  // partial pipelines with an empty stem.
+  ctx.stem = exporter::make_stem(ctx.info, ctx.file_hash);
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +167,10 @@ void run_sections(context& ctx) {
         console::print_entropy_and_chi2(section.entropy, section.chi2);
       }
       print_pe_overlay_report(result);
+      // Keep the result for the export: it carries the EAT, and a pipeline
+      // without the extraction phase has no other source for it. Released
+      // again below when extraction will re-derive the same data.
+      ctx.pe_sections_result = std::move(result);
     } else {
       for (const auto& message : extractor::get_error_messages(result))
         console::error(message);
@@ -168,6 +214,13 @@ void run_sections(context& ctx) {
     }
   } else {
     console::info("no format-specific section view for " + std::string(format_name(ctx.fmt)));
+  }
+  // With extraction in the pipeline the export reads the EAT (and sections)
+  // from ctx.full instead, so the duplicate copy is dropped here - the same
+  // lifetime the phase had before it was stored.
+  if (planner::has(ctx, planner::phase_id::extraction)) {
+    extractor::pe_sections_t empty{};
+    std::swap(ctx.pe_sections_result, empty);
   }
   print_duration(elapsed_ms(started));
 }
@@ -227,12 +280,15 @@ void run_strings_and_ioc(context& ctx) {
       if (result.strings.size() > shown)
         print_bullet("... and " + std::to_string(result.strings.size() - shown) + " more");
 
-      // Move (not copy) the values into the IOC/MalAPI working set: the
-      // preview above is already printed, so keeping a second full copy of
-      // every extracted string is pure overhead. Halves peak memory here.
-      strings_for_ioc.reserve(result.strings.size());
-      for (auto& entry : result.strings)
-        strings_for_ioc.push_back(std::move(entry.value));
+      // Park the strings on the context: a pipeline without the extraction
+      // phase exports them from here (exporter::write_strings_json), and the
+      // IOC pass below works off copies of the values. When extraction is also
+      // in the plan the values land in the extraction JSON too, so the copy on
+      // ctx is released again at the end of this function.
+      ctx.strings_result = std::move(result);
+      strings_for_ioc.reserve(ctx.strings_result.strings.size());
+      for (const auto& entry : ctx.strings_result.strings)
+        strings_for_ioc.push_back(entry.value);
     } else {
       for (const auto& message : extractor::get_error_messages(result))
         console::error(message);
@@ -311,9 +367,16 @@ void run_strings_and_ioc(context& ctx) {
   }
 
   // IOC extraction was the last consumer of the extracted strings - release
-  // them before the memory-heavy capa / radare2 phases.
+  // the working copy before the memory-heavy capa / radare2 phases.
   strings_for_ioc.clear();
   strings_for_ioc.shrink_to_fit();
+
+  // With extraction in the pipeline the export reads the strings from
+  // ctx.full, so drop the duplicate kept for partial pipelines.
+  if (planner::has(ctx, planner::phase_id::extraction)) {
+    extractor::strings_result_t empty{};
+    std::swap(ctx.strings_result, empty);
+  }
 }
 
 }  // namespace pipeline

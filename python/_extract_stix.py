@@ -3,7 +3,7 @@
 
 Usage:
     python/_extract_stix.py T1129 T1497.001 [--out <file>] [--capa <capa.json>]
-    python/_extract_stix.py --capa exports/capa/suspicious_sample_capa.json
+    python/_extract_stix.py --capa exports/<stem>_analysis/capa/suspicious_sample_capa.json
 
 Technique IDs come as plain argv params (space and/or comma separated,
 case-insensitive, with or without a leading 'T'). Alternatively --capa reads
@@ -217,8 +217,9 @@ def main():
                     help="only emit the attack-pattern objects, no tactics/mitigations")
     ap.add_argument("--out", default="",
                     help="output bundle path (default: <out-dir>/<out-name>.stix21.json)")
-    ap.add_argument("--out-dir", default="exports/stix",
-                    help="output directory (default: exports/stix)")
+    ap.add_argument("--out-dir", default="",
+                    help="output directory (default: next to --capa, else the "
+                         "current directory)")
     ap.add_argument("--out-name", default="",
                     help="output stem (default: joined technique IDs)")
     ap.add_argument("--full-navigator", action="store_true",
@@ -227,6 +228,12 @@ def main():
     ap.add_argument("--full-navigator-only", action="store_true",
                     help="write only the full ATT&CK Navigator layer, no STIX bundle")
     args = ap.parse_args()
+
+    # Default next to the input: the analyzer writes capa reports under
+    # exports/<stem>_analysis/capa/, so the recovered bundle stays with its run
+    # instead of landing in a shared tree.
+    out_dir = Path(args.out_dir) if args.out_dir else (
+        Path(args.capa).parent if args.capa else Path("."))
 
     tids = split_ids(args.technique)
 
@@ -276,7 +283,6 @@ def main():
             if full_note:
                 print(f"[!] {full_note}", file=sys.stderr)
             try:
-                out_dir = Path(args.out_dir)
                 out_dir.mkdir(parents=True, exist_ok=True)
                 full_nav_path = out_dir / "mitre_attack_enterprise_full_matrix.navigator.json"
                 full_nav_path.write_text(json.dumps(full_layer, indent=2), encoding="utf-8")
@@ -289,7 +295,7 @@ def main():
         return 0
 
     stem = args.out_name or "_".join(tids).replace(".", "p")
-    out = Path(args.out) if args.out else Path(args.out_dir) / f"{stem}.stix21.json"
+    out = Path(args.out) if args.out else out_dir / f"{stem}.stix21.json"
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("w", encoding="utf-8") as fh:

@@ -11,36 +11,51 @@
 #include <utility>
 
 // ---------------------------------------------------------------------------
-// xxd hex dump rendering
+// Hexdump rendering
 // ---------------------------------------------------------------------------
 
-// xxd emits: "<offset>: <hex bytes...> |<ascii>|". Colorize the three zones so
-// the dump is readable in both the plain terminal and the PDCurses browser.
-void print_xxd_line(const std::string& line) {
-  const std::size_t colon = line.find(':');
-  if (colon == std::string::npos) {
-    print_bullet(line, console::grey);
-    return;
-  }
+// Renders one row of a hexdump straight from the bytes, in the classic
+// "offset  hex bytes  |ascii|" shape. Building the row here rather than
+// re-parsing a formatted dump means the zones are known by construction, so
+// they can be colored without having to rediscover where one ends and the next
+// begins (the old xxd-text parser had to hunt for the pipes, and got it wrong
+// whenever a byte happened to render as '|').
+void print_hexdump_row(std::uint64_t address,
+                       const std::uint8_t* data,
+                       std::size_t count,
+                       std::size_t bytes_per_row) {
+  if (count == 0) return;
+  if (bytes_per_row == 0) bytes_per_row = 16;
 
+  std::ostringstream addr_os;
+  addr_os << std::hex << std::setfill('0') << std::setw(8) << address;
   std::cout << console::paint(console::cyan, "      * ")
-            << console::paint(console::yellow, line.substr(0, colon + 1));
+            << console::paint(console::yellow, addr_os.str())
+            << "  ";
 
-  // Locate the "|...|" ASCII column so the hex and text zones can be styled
-  // separately even when a line contains extra pipes.
-  const std::size_t last_pipe = line.rfind('|');
-  const std::size_t first_pipe = line.find('|', colon + 1);
-  if (first_pipe == std::string::npos || last_pipe == first_pipe) {
-    std::cout << console::paint(console::green, line.substr(colon + 1)) << '\n';
-    return;
+  // Two groups of eight, separated by the extra space the classic layout uses.
+  for (std::size_t i = 0; i < count; ++i) {
+    if (i == 8) std::cout << ' ';
+    std::ostringstream byte_os;
+    byte_os << std::hex << std::setfill('0') << std::setw(2)
+            << static_cast<unsigned>(data[i]);
+    std::cout << console::paint(console::green, byte_os.str()) << ' ';
   }
 
-  std::cout << console::paint(console::green, line.substr(colon + 1, first_pipe - colon - 1))
-            << console::paint(console::cyan, "|")
-            << console::paint(console::white, line.substr(first_pipe + 1, last_pipe - first_pipe - 1))
-            << console::paint(console::cyan, "|")
-            << console::paint(console::grey, line.substr(last_pipe + 1))
-            << '\n';
+  // Pad a short final row so the ASCII column stays aligned with the rows above.
+  for (std::size_t i = count; i < bytes_per_row; ++i) {
+    std::cout << (i == 8 ? "   " : "  ");
+  }
+
+  std::cout << console::paint(console::cyan, "|");
+  std::string ascii;
+  ascii.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const unsigned char c = data[i];
+    ascii += (c >= 0x20 && c <= 0x7e) ? static_cast<char>(c) : '.';
+  }
+  std::cout << console::paint(console::white, ascii)
+            << console::paint(console::cyan, "|") << '\n';
 }
 
 // ---------------------------------------------------------------------------

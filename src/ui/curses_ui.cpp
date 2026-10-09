@@ -16,7 +16,11 @@
 #include <thread>
 #include <vector>
 
-#include <pdcurses.h>
+#ifdef _WIN32
+  #include <pdcurses.h>
+#else
+  #include <curses.h>
+#endif
 
 #ifdef _WIN32
   #include <io.h>
@@ -311,16 +315,19 @@ line_style_t result_style(const std::string& line) {
     return {kPairMuted, false};
   }
 
-  // xxd rows: colour the offset, the hex bytes and the ASCII column separately.
-  // The leading bullet from print_bullet() is stripped with the rest of the
-  // padding, so the offset field starts at the first hex digit.
-  if (line.find(':') != std::string::npos) {
-    const std::size_t colon = line.find(':');
-    bool hexish = colon >= 4;
-    for (std::size_t i = 0; hexish && i < colon; ++i) {
-      if (!std::isxdigit(static_cast<unsigned char>(line[i]))) hexish = false;
+  // Hexdump rows: an 8-digit offset field, then hex bytes, then "|ascii|".
+  // print_hexdump_row() pads the offset to 8 and separates it with two
+  // spaces, so the field width is what distinguishes a dump row from any other
+  // line that happens to start with hex digits.
+  {
+    std::size_t digits = 0;
+    while (digits < line.size() &&
+           std::isxdigit(static_cast<unsigned char>(line[digits]))) {
+      ++digits;
     }
-    if (hexish) {
+    const bool offset_then_space =
+        digits >= 8 && digits < line.size() && std::isspace(static_cast<unsigned char>(line[digits]));
+    if (offset_then_space) {
       if (line.find('|') != std::string::npos) return {kPairJsonValue, false};  // green
       return {kPairPhase, false};                                               // yellow
     }
@@ -930,12 +937,21 @@ struct session::impl {
       const int page = std::max(1, visible - 1);
       switch (key) {
         case KEY_MOUSE: {
+#ifdef _WIN32
           getmouse();
-          if (filesystem_view && MOUSE_X_POS >= right_x + 2 &&
-              MOUSE_X_POS < file_content_x && MOUSE_Y_POS >= 6 &&
-              MOUSE_Y_POS < 6 + static_cast<int>(file_list_rows)) {
+          const int mouse_x = MOUSE_X_POS;
+          const int mouse_y = MOUSE_Y_POS;
+#else
+          MEVENT mouse_event{};
+          if (getmouse(&mouse_event) != OK) break;
+          const int mouse_x = mouse_event.x;
+          const int mouse_y = mouse_event.y;
+#endif
+          if (filesystem_view && mouse_x >= right_x + 2 &&
+              mouse_x < file_content_x && mouse_y >= 6 &&
+              mouse_y < 6 + static_cast<int>(file_list_rows)) {
             const std::size_t index = export_top +
-                static_cast<std::size_t>(MOUSE_Y_POS - 6);
+                static_cast<std::size_t>(mouse_y - 6);
             if (index < export_files.size()) {
               if (index != selected_export) export_preview_top = 0;
               selected_export = index;
@@ -945,12 +961,12 @@ struct session::impl {
             // Clicking the preview scrollbar jumps through the selected file.
             const int preview_content_w =
                 std::max(8, right_x + right_width - file_content_x - 2);
-            if (MOUSE_X_POS == file_content_x + preview_content_w - 1 &&
-                MOUSE_Y_POS >= 5 && MOUSE_Y_POS < 5 + preview_rows_now) {
+            if (mouse_x == file_content_x + preview_content_w - 1 &&
+                mouse_y >= 5 && mouse_y < 5 + preview_rows_now) {
               reading = true;
               const std::size_t pmax = preview_max();
               if (pmax > 0) {
-                const int frac = MOUSE_Y_POS - 5;
+                const int frac = mouse_y - 5;
                 const int denom = preview_rows_now - 1 < 1 ? 1 : preview_rows_now - 1;
                 export_preview_top = static_cast<std::size_t>(
                     (static_cast<long long>(frac) * static_cast<long long>(pmax)) /
@@ -961,19 +977,19 @@ struct session::impl {
           } else if (!filesystem_view) {
             // Clicking the sidebar selects that section; clicking the scrollbar
             // jumps the current section to the corresponding offset.
-            if (MOUSE_X_POS < right_x && MOUSE_Y_POS >= 4 &&
-                MOUSE_Y_POS < 4 + body_rows - 1) {
+            if (mouse_x < right_x && mouse_y >= 4 &&
+                mouse_y < 4 + body_rows - 1) {
               const std::size_t index =
-                  static_cast<std::size_t>(MOUSE_Y_POS - 4);
+                  static_cast<std::size_t>(mouse_y - 4);
               if (index < sections.size()) {
                 selected = index;
                 reading = false;
               }
-            } else if (MOUSE_X_POS == right_x + right_width - 1 && max_top > 0 &&
-                       MOUSE_Y_POS >= 5 && MOUSE_Y_POS < 5 + content_rows) {
+            } else if (mouse_x == right_x + right_width - 1 && max_top > 0 &&
+                       mouse_y >= 5 && mouse_y < 5 + content_rows) {
               reading = true;
               const int track_rows = std::max(1, content_rows);
-              const int frac = MOUSE_Y_POS - 5;
+              const int frac = mouse_y - 5;
               section_top[selected] = static_cast<std::size_t>(
                   (static_cast<long long>(frac) * static_cast<long long>(max_top)) /
                   static_cast<long long>(track_rows - 1 < 1 ? 1 : track_rows - 1));

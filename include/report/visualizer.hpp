@@ -51,6 +51,7 @@ struct options {
     std::string cti;           // CTI report JSON (per-IOC geo / ASN / verdicts)
     std::string stix;          // STIX 2.1 bundle (ATT&CK techniques, indicators)
     std::string navigator;     // ATT&CK Navigator layer JSON
+    std::string ml;            // EMBER2024 model score JSON (exports/<stem>_analysis/ml/...)
     std::string files_root;    // read-only artifact tree embedded in dashboard
 
     // Hard cap on the total bytes of embedded JSON, so a huge sample cannot

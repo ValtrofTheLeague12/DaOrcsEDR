@@ -528,13 +528,14 @@ json post_json(api_client& a, const std::string& path, const json& body) {
 // WSL eth0 addresses, for the loopback-relay fallback:
 // `wsl.exe -- hostname -I`. Empty when WSL is not reachable.
 std::vector<std::string> discover_wsl_ips() {
+  std::vector<std::string> ips;
+#ifdef _WIN32
   proc::run_options ro;
   ro.timeout = std::chrono::milliseconds(3000);
   ro.max_stdout_bytes = 4096;
   ro.max_stderr_bytes = 1024;
   const proc::run_result run =
       proc::run("wsl.exe", std::vector<std::string>{"--", "hostname", "-I"}, ro);
-  std::vector<std::string> ips;
   if (run.status != proc::launch_status::ok || run.exit_code != 0) return ips;
   std::istringstream in(run.std_out);
   std::string token;
@@ -543,6 +544,7 @@ std::vector<std::string> discover_wsl_ips() {
         token.find_first_of("0123456789") != std::string::npos)
       ips.push_back(token);
   }
+#endif
   return ips;
 }
 

@@ -314,6 +314,117 @@ def load_attack_knowledge(path=None, want: set[str] | None = None) -> dict[str, 
     return index
 
 
+def load_tooling_knowledge(path=None, want: set[str] | None = None) -> dict[str, dict]:
+    """What ATT&CK knows implements the given techniques.
+
+    Returns ``{tid: {name, url, tactics, platforms, description, detection,
+    is_subtechnique, mitigations, tools, malware, groups}}`` where each of
+    ``tools`` / ``malware`` / ``groups`` is a list of ``{id, name}`` sorted by
+    name - the same shape ``cti::build_attack_matrix`` hands the dashboard, so
+    a run whose CTI phase never produced a tactic view can still answer
+    "which tooling does ATT&CK associate with this technique?" from the local
+    cache alone.
+
+    One pass over the bundle: the ``uses`` relationships that carry the
+    tooling sit one hop from the technique, so the wanted technique objects,
+    the tool/malware/intrusion-set sources and the relationships are all that
+    is retained.  ``want`` restricts it the way ``load_attack_knowledge()``
+    does, and a missing or unreadable cache is simply ``{}``.
+    """
+    p = Path(path) if path else DEFAULT_ATTACK_CACHE
+    try:
+        if not p.is_file():
+            return {}
+        with p.open("r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except Exception:
+        return {}
+    objs = doc.get("objects") if isinstance(doc, dict) else doc
+    if not isinstance(objs, list):
+        return {}
+
+    buckets = {"tool": "tools", "malware": "malware", "intrusion-set": "groups"}
+    techniques: dict[str, dict] = {}
+    id_to_tid: dict[str, str] = {}
+    sources: dict[str, tuple[str, dict]] = {}
+
+    for obj in objs:
+        if not isinstance(obj, dict):
+            continue
+        stix_type = obj.get("type")
+        if stix_type == "attack-pattern":
+            tid = external_id(obj)
+            if not tid:
+                continue
+            oid = obj.get("id")
+            if isinstance(oid, str):
+                id_to_tid[oid] = tid
+            if want is None or tid in want:
+                techniques.setdefault(tid, obj)
+        elif stix_type in buckets:
+            oid = obj.get("id")
+            if not isinstance(oid, str):
+                continue
+            name = str(obj.get("name") or "").strip()
+            eid = external_id(obj)
+            if not name and not eid:
+                continue
+            label = {"name": name or eid, "id": eid}
+            if eid and eid.lower() not in name.lower():
+                label["name"] = f"{name} ({eid})" if name else eid
+            sources[oid] = (buckets[stix_type], label)
+
+    out: dict[str, dict] = {}
+    for tid, obj in techniques.items():
+        detection = obj.get("x_mitre_detection")
+        out[tid] = {
+            "name": str(obj.get("name") or tid),
+            "url": _ref_url(obj),
+            "tactics": phases_of(obj),
+            "platforms": [str(x) for x in (obj.get("x_mitre_platforms") or [])
+                          if isinstance(x, str)],
+            "description": (str(obj.get("description") or "").strip()
+                            or ""),
+            "detection": (str(detection).strip() if isinstance(detection, str) else ""),
+            "is_subtechnique": bool(obj.get("x_mitre_is_subtechnique")),
+            "mitigations": 0,
+            "tools": [],
+            "malware": [],
+            "groups": [],
+        }
+    if not out:
+        return out
+
+    for obj in objs:
+        if not isinstance(obj, dict) or obj.get("type") != "relationship":
+            continue
+        rel = obj.get("relationship_type")
+        if rel not in ("uses", "mitigates"):
+            continue
+        entry = out.get(id_to_tid.get(obj.get("target_ref") or "") or "")
+        if entry is None:
+            continue
+        if rel == "mitigates":
+            entry["mitigations"] += 1
+            continue
+        found = sources.get(obj.get("source_ref") or "")
+        if not found:
+            continue
+        kind, label = found
+        bucket = entry[kind]
+        if len(bucket) >= 40:
+            continue
+        if label not in bucket:
+            bucket.append(label)
+
+    for entry in out.values():
+        entry["description"] = entry["description"][:MAX_DETAIL_STRING]
+        entry["detection"] = entry["detection"][:MAX_DETAIL_STRING]
+        for key in ("tools", "malware", "groups"):
+            entry[key].sort(key=lambda d: str(d.get("name") or "").lower())
+    return out
+
+
 def load_tactic_knowledge(path=None) -> dict[str, dict]:
     """Index a MITRE ATT&CK bundle's tactics by shortname.
 

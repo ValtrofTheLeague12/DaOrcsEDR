@@ -1,0 +1,21 @@
+{
+  "qiling": {
+    "name": "Qiling",
+    "host": "192.168.56.105",
+    "port": 22,
+    "kind": "ssh",
+    "username": "kali",
+    "remote_dir": "qiling_dlls",
+    "remote_python": "python3",
+    "known_hosts_file": "~/.ssh/known_hosts",
+    "hint": "Analysis VM SSH; verify its key in ~/.ssh/known_hosts"
+  },
+  "capev2": {
+    "name": "CAPEv2",
+    "host": "127.0.0.1",
+    "port": 8090,
+    "kind": "http",
+    "path": "/apiv2/",
+    "hint": "CAPE API endpoint (edit vms.json)"
+  }
+}

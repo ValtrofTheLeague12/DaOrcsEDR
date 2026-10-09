@@ -60,9 +60,7 @@ const char* error_name(extractor_error error) {
     case extractor_error::capa_not_found:     return "capa_not_found";
     case extractor_error::capa_failed:        return "capa_failed";
     case extractor_error::capa_timeout:       return "capa_timeout";
-    case extractor_error::xxd_not_found:      return "xxd_not_found";
-    case extractor_error::xxd_failed:         return "xxd_failed";
-    case extractor_error::xxd_timeout:        return "xxd_timeout";
+    case extractor_error::hexdump_read_failed: return "hexdump_read_failed";
     case extractor_error::cminer_not_found:   return "cminer_not_found";
     case extractor_error::cminer_failed:      return "cminer_failed";
     case extractor_error::cminer_timeout:     return "cminer_timeout";
@@ -223,9 +221,13 @@ bool resolve_capstone_arch(const LIEF::Header& header, cs_arch& arch, cs_mode& m
       mode = static_cast<cs_mode>(CS_MODE_BIG_ENDIAN);
       return true;
     case LIEF::Header::ARCHITECTURES::RISCV:
+#if CS_API_MAJOR >= 5
       arch = CS_ARCH_RISCV;
       mode = static_cast<cs_mode>(mode | (header.is_32() ? CS_MODE_RISCV32 : CS_MODE_RISCV64));
       return true;
+#else
+      return false;
+#endif
     case LIEF::Header::ARCHITECTURES::XCORE:
       arch = CS_ARCH_XCORE;
       mode = CS_MODE_LITTLE_ENDIAN;
@@ -1841,6 +1843,8 @@ void finalize_histogram(byte_histogram_t& result) {
   for (std::size_t i = 0; i < 256; ++i) {
     const std::uint64_t count = result.counts[i];
     result.frequencies[i] = static_cast<double>(count) / total;
+    // EMBER ByteHistogram: normalized counts (process_raw_features).
+    result.ember_histogram[i] = result.frequencies[i];
     const double diff = static_cast<double>(count) - expected;
     chi2 += (diff * diff) / expected;
     if (count == 0) continue;
@@ -1880,7 +1884,35 @@ bool histogram_impl(byte_histogram_t& result, const analyzer::file_info_t& info)
   }
 
   // Stream in chunks so very large samples never need a full copy in RAM.
+  // The byte/entropy pass needs 2048-byte windows at 1024 stride; keep a
+  // rolling window buffer alongside the chunk stream. Feed the entropy pass
+  // byte-by-byte (cheap shift of a 2048-slot ring); accumulate only window
+  // starts (every 1024 bytes) plus the tail remainder, exactly like processing
+  // the whole file at once.
   std::array<char, 65536> buffer{};
+  std::array<std::uint8_t, 2048> ring{};
+  std::size_t ring_fill = 0;   // bytes seen so far in current window cycle
+  std::uint64_t stream_pos = 0;
+  std::uint64_t joint[256] = {};
+  auto accumulate_ring = [&]() {
+    std::uint64_t coarse[16] = {};
+    for (std::size_t k = 0; k < 2048; ++k) coarse[ring[k] >> 4]++;
+    double h = 0.0;
+    for (int b = 0; b < 16; ++b) {
+      if (coarse[b] == 0) continue;
+      const double p = static_cast<double>(coarse[b]) / 2048.0;
+      h -= p * std::log2(p);
+    }
+    h *= 2.0;
+    int hbin = static_cast<int>(h * 2.0);
+    if (hbin < 0) hbin = 0;
+    if (hbin > 15) hbin = 15;
+    for (int b = 0; b < 16; ++b) {
+      if (coarse[b] == 0) continue;
+      joint[static_cast<std::size_t>(hbin) * 16 +
+            static_cast<std::size_t>(b)] += coarse[b];
+    }
+  };
   bool any = false;
   while (input) {
     input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
@@ -1888,8 +1920,21 @@ bool histogram_impl(byte_histogram_t& result, const analyzer::file_info_t& info)
     if (got <= 0) break;
     any = true;
     for (std::streamsize i = 0; i < got; ++i) {
-      result.counts[static_cast<std::uint8_t>(buffer[static_cast<std::size_t>(i)])]++;
+      const std::uint8_t b =
+          static_cast<std::uint8_t>(buffer[static_cast<std::size_t>(i)]);
+      result.counts[b]++;
       ++result.total_bytes;
+      // Ring holds the last up-to-2048 bytes ending at stream_pos.
+      if (ring_fill < 2048) {
+        ring[ring_fill++] = b;
+      } else {
+        std::memmove(ring.data(), ring.data() + 1, 2047);
+        ring[2047] = b;
+      }
+      ++stream_pos;
+      // Window starts at offsets 0, 1024, 2048, ... once 2048 bytes seen.
+      if (ring_fill == 2048 && (stream_pos - 2048) % 1024 == 0)
+        accumulate_ring();
     }
   }
 
@@ -1897,6 +1942,39 @@ bool histogram_impl(byte_histogram_t& result, const analyzer::file_info_t& info)
     add_error(result.errors, extractor_error::empty_file,
               "File has no bytes for byte histogram: " + info.filepath);
     return false;
+  }
+
+  // Tail: files shorter than one window. thrember divides the coarse histogram
+  // by self.window (2048) unconditionally -- including for a short file, where
+  // the block is the whole file -- so the denominator stays 2048 here even
+  // though the block holds fewer bytes. Using ring_fill instead silently lands
+  // the result in a different entropy bin.
+  if (result.total_bytes < 2048) {
+    std::uint64_t coarse[16] = {};
+    for (std::size_t k = 0; k < ring_fill; ++k) coarse[ring[k] >> 4]++;
+    double h = 0.0;
+    for (int b = 0; b < 16; ++b) {
+      if (coarse[b] == 0) continue;
+      const double p = static_cast<double>(coarse[b]) / 2048.0;
+      h -= p * std::log2(p);
+    }
+    h *= 2.0;
+    int hbin = static_cast<int>(h * 2.0);
+    if (hbin < 0) hbin = 0;
+    if (hbin > 15) hbin = 15;
+    for (int b = 0; b < 16; ++b) {
+      if (coarse[b] == 0) continue;
+      joint[static_cast<std::size_t>(hbin) * 16 +
+            static_cast<std::size_t>(b)] += coarse[b];
+    }
+  }
+
+  std::uint64_t grand = 0;
+  for (int i = 0; i < 256; ++i) grand += joint[i];
+  if (grand != 0) {
+    const double g = static_cast<double>(grand);
+    for (int i = 0; i < 256; ++i)
+      result.ember_byteentropy[i] = static_cast<double>(joint[i]) / g;
   }
 
   finalize_histogram(result);
@@ -1972,7 +2050,7 @@ bool run_pipeline(extraction_result_t& result, const analyzer::file_info_t& info
       });
     }
   }
-  run_stage(result, "xxd", [&] { extract_xxd(result.xxd, info); });
+  run_stage(result, "hexdump", [&] { extract_hexdump(result.hexdump, info); });
   run_stage(result, "cminer", [&] {
     extract_cminer(result.cminer, info, options.cminer_min_cave_size);
   });
@@ -1993,7 +2071,7 @@ bool run_pipeline(extraction_result_t& result, const analyzer::file_info_t& info
       &result.got.errors,       &result.sections.errors,    &result.strings.errors,
       &result.histogram.errors, &result.packer.errors,     &result.opcodes.errors,
       &result.debug_symbols.errors,
-      &result.signature.errors, &result.capa.errors, &result.xxd.errors,
+      &result.signature.errors, &result.capa.errors, &result.hexdump.errors,
       &result.cminer.errors};
   for (const error_type_t* errors : stage_errors) {
     if (errors->flags == extractor_error::none) continue;
@@ -2160,41 +2238,49 @@ std::string wsl_path(const std::string& path) {
   return path;
 }
 
-bool extract_xxd(xxd_result_t& result, const analyzer::file_info_t& info,
-                 std::size_t max_bytes) {
+bool extract_hexdump(hexdump_result_t& result, const analyzer::file_info_t& info,
+                     std::size_t max_bytes) {
   result = {};
   result.attempted = true;
   if (!check_file_ok(info, result.errors)) return false;
 
-  const std::string wsl_file = wsl_path(info.filepath);
-  const std::string byte_limit = std::to_string(max_bytes);
-  result.command = "wsl.exe -- xxd -g 1 -c 16 -l " + byte_limit + " " + wsl_file;
+  const auto started = std::chrono::steady_clock::now();
 
-  proc::run_options options;
-  options.timeout = std::chrono::seconds(60);
-  options.max_stdout_bytes = std::min<std::size_t>(max_bytes * 4u + 4096u, 8u * 1024u * 1024u);
-  options.max_stderr_bytes = 64u * 1024u;
-  const proc::run_result run = proc::run(
-      "wsl.exe", {"--", "xxd", "-g", "1", "-c", "16", "-l", byte_limit, wsl_file}, options);
-  result.exit_code = run.exit_code;
-  result.seconds = run.seconds;
-  result.stderr_tail = run.std_err.substr(0, 4096);
-  if (run.status != proc::launch_status::ok) {
-    const extractor_error code = run.status == proc::launch_status::timed_out
-                                     ? extractor_error::xxd_timeout
-                                     : extractor_error::xxd_not_found;
-    add_error(result.errors, code, run.error.empty() ? proc::to_string(run.status) : run.error);
+  std::ifstream input(info.filepath, std::ios::binary);
+  if (!input) {
+    LOG_ERROR("extractor: extract_hexdump: cannot open '{}'", info.filepath);
+    add_error(result.errors, extractor_error::hexdump_read_failed,
+              "Could not open file for hexdump: " + info.filepath);
     return false;
   }
-  if (run.exit_code != 0) {
-    add_error(result.errors, extractor_error::xxd_failed,
-              "WSL xxd failed with exit code " + std::to_string(run.exit_code) +
-                  (result.stderr_tail.empty() ? "" : ": " + result.stderr_tail));
+
+  result.total_bytes = info.size;
+
+  // Read exactly the window we want. `truncated` then compares what we got
+  // against the size file_analyzer measured, which is a fact about the file
+  // rather than an inference from a byte we happened to probe for.
+  const std::size_t want = max_bytes;
+  result.bytes.resize(want);
+  input.read(reinterpret_cast<char*>(result.bytes.data()),
+             static_cast<std::streamsize>(want));
+  const std::streamsize got = input.gcount();
+  if (got < 0) {
+    result.bytes.clear();
+    LOG_ERROR("extractor: extract_hexdump: read error on '{}'", info.filepath);
+    add_error(result.errors, extractor_error::hexdump_read_failed,
+              "Read error while dumping " + info.filepath);
     return false;
   }
+  result.bytes.resize(static_cast<std::size_t>(got));
   result.available = true;
-  result.output = run.std_out.substr(0, max_bytes * 4u);
-  if (run.std_out.size() > result.output.size()) result.stderr_tail += "\n[xxd output truncated]";
+  result.truncated = static_cast<std::size_t>(got) < info.size;
+
+  LOG_DEBUG("extractor: extract_hexdump: '{}' -> {} of {} byte(s) in {:.4f}s",
+            info.filename, result.bytes.size(), info.size,
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
+
+  result.seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - started).count();
   return true;
 }
 
@@ -2241,22 +2327,38 @@ bool extract_cminer(cminer_result_t& result, const analyzer::file_info_t& info,
   if (!check_file_ok(info, result.errors)) return false;
 
   const char* configured = std::getenv("CMINER_PATH");
-  const std::string local_path = configured && *configured
-                                     ? std::string(configured)
-                                     : std::string(STATIC_ANALYZER_SOURCE_DIR) + "/Cminer/Cminer";
+  std::string local_path;
+  if (configured != nullptr && *configured != '\0') {
+    local_path = configured;
+  } else {
+    local_path = proc::find_in_path("static-analyzer-cminer");
+    if (local_path.empty()) {
+      local_path = std::string(STATIC_ANALYZER_SOURCE_DIR) + "/Cminer/Cminer";
+    }
+  }
+#ifdef _WIN32
   const std::string wsl_cminer = wsl_path(local_path);
   std::error_code path_ec;
   const std::filesystem::path absolute_file = std::filesystem::absolute(info.filepath, path_ec);
   const std::string wsl_file = wsl_path(path_ec ? info.filepath : absolute_file.string());
   const std::string minimum = std::to_string(result.minimum_cave_size);
   result.command = "wsl.exe -- " + wsl_cminer + " " + wsl_file + " " + minimum;
+#else
+  const std::string minimum = std::to_string(result.minimum_cave_size);
+  result.command = local_path + " " + info.filepath + " " + minimum;
+#endif
 
   proc::run_options options;
   options.timeout = std::chrono::seconds(120);
   options.max_stdout_bytes = 16u * 1024u * 1024u;
   options.max_stderr_bytes = 256u * 1024u;
+#ifdef _WIN32
   const proc::run_result run = proc::run(
       "wsl.exe", {"--", wsl_cminer, wsl_file, minimum}, options);
+#else
+  const proc::run_result run = proc::run(
+      local_path, {info.filepath, minimum}, options);
+#endif
   result.exit_code = run.exit_code;
   result.seconds = run.seconds;
   result.output = strip_ansi(run.std_out);
@@ -2458,8 +2560,8 @@ std::vector<stage_errors_t> recover_errors(const extraction_result_t& result) {
     push("signature", result.signature.errors.messages);
   if (result.capa.errors.flags != extractor_error::none)
     push("capa", result.capa.errors.messages);
-  if (result.xxd.errors.flags != extractor_error::none)
-    push("xxd", result.xxd.errors.messages);
+  if (result.hexdump.errors.flags != extractor_error::none)
+    push("hexdump", result.hexdump.errors.messages);
   if (result.cminer.errors.flags != extractor_error::none)
     push("cminer", result.cminer.errors.messages);
   if (!result.yara.errors.empty())
