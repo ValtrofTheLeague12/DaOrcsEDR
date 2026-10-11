@@ -1,0 +1,6 @@
+# PE export address table extraction - the section pass reads the export
+# directory and writes eat/<stem>_eat.json (PE only; no-op on ELF/Mach-O).
+name: extract_eat
+description: PE export address table (EAT) + format-specific section table
+
+phases: [sections]

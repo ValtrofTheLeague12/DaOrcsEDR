@@ -1377,6 +1377,209 @@ std::map<std::string, attack_detail> attack_details_for(const std::set<std::stri
 }
 
 // ===========================================================================
+// mbc_details_for: name / objective / description for a few MBC ids
+// ---------------------------------------------------------------------------
+// The Malware Behavior Catalog ships in-repo as a STIX 2.1 bundle
+// (mbc-stix2.1/mbc/mbc.json, ~2.5 MB: malware-behavior, malware-method and
+// malware-objective objects). This turns the bare MBC ids capa tags onto its
+// matches (C0007, B0032, E1056, ...) into the catalog entry behind them, so
+// the terminal, the exported capa.json and the dashboard can show
+// "C0007 Virtual Memory Operations" instead of a cryptic code. Offline by
+// construction - a missing bundle is an empty result, never an error.
+// ===========================================================================
+namespace {
+
+// Candidate locations, in order: explicit argument, $MBC_BUNDLE, the
+// knowledge cache (mirroring enterprise-attack.json), then the vendored STIX
+// tree that ships in the repo. Empty return means "bundle not found".
+fs::path resolve_mbc_bundle(const std::string& bundle_path) {
+  if (!bundle_path.empty()) return bundle_path;
+  if (const std::string env = env_or("MBC_BUNDLE", ""); !env.empty()) return env;
+  const std::string base = env_or("CTI_CACHE_DIR", "cti-cache");
+  if (!base.empty()) {
+    const fs::path cached = fs::path(base) / "knowledge" / "mbc.json";
+    std::error_code ec;
+    if (fs::exists(cached, ec) && !ec) return cached;
+  }
+  for (const char* candidate : {"mbc-stix2.1/mbc/mbc.json"}) {
+    std::error_code ec;
+    if (fs::exists(candidate, ec) && !ec) return candidate;
+  }
+  return {};
+}
+
+// T-ids embedded in MBC prose ("See ATT&CK: **Input Capture ([T1056](...))**").
+// A tiny fixed-shape scanner rather than <regex>: it runs once per process on
+// a few KB of description text, and the boundary check keeps ids inside longer
+// tokens ("STIX1056") from matching.
+std::vector<std::string> scrape_attack_ids(std::string_view text) {
+  std::vector<std::string> out;
+  const auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
+  const auto is_alnum = [](char c) {
+    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+  };
+  for (std::size_t i = 0;; ++i) {
+    if (i + 4 >= text.size()) break;
+    if (text[i] != 'T') continue;
+    if (!is_digit(text[i + 1]) || !is_digit(text[i + 2]) ||
+        !is_digit(text[i + 3]) || !is_digit(text[i + 4]))
+      continue;
+    if (i > 0 && is_alnum(text[i - 1])) continue;   // part of a longer token
+    std::size_t len = 5;
+    if (i + 8 < text.size() && text[i + 5] == '.' && is_digit(text[i + 6]) &&
+        is_digit(text[i + 7]) && is_digit(text[i + 8]))
+      len = 9;
+    out.emplace_back(text.substr(i, len));
+    i += len - 1;
+  }
+  return out;
+}
+
+// Builds the full upper-case-id -> detail index from the bundle. Behaviors
+// overwrite (their entries carry objectives directly); methods only fill gaps
+// and inherit objectives through behavior_ref, so a stray id collision keeps
+// the behavior entry.
+std::map<std::string, mbc_detail> build_mbc_index(const fs::path& path) {
+  std::map<std::string, mbc_detail> index;
+  std::string text;
+  if (!read_file(path.string(), text) || text.empty()) {
+    LOG_WARN("mbc: build_mbc_index: cannot read '{}'", path.string());
+    return index;
+  }
+  const json doc = json::parse(text.begin(), text.end(), nullptr, /*allow_exceptions=*/false);
+  if (doc.is_discarded() || !doc.is_object() || !doc.contains("objects") ||
+      !doc["objects"].is_array()) {
+    LOG_WARN("mbc: build_mbc_index: '{}' is not a STIX bundle", path.string());
+    return index;
+  }
+  const json& objects = doc["objects"];
+
+  // Pass 1a: objectives (STIX id -> "Execution"). Must complete before
+  // behaviors are read - objective_refs are STIX ids resolved by name here.
+  std::map<std::string, std::string> objective_names;
+  for (const json& object : objects) {
+    if (!object.is_object() || str_of(object, "type") != "malware-objective") continue;
+    const std::string stix_id = str_of(object, "id");
+    const std::string name = str_of(object, "name");
+    if (!stix_id.empty() && !name.empty()) objective_names[stix_id] = name;
+  }
+
+  // Pass 1b: behaviors' STIX id -> objective names / external id / name, so
+  // methods (parsed in pass 2) can inherit through behavior_ref.
+  std::map<std::string, std::vector<std::string>> behavior_objectives;
+  std::map<std::string, std::string> behavior_ids;    // STIX id -> "B0012"
+  std::map<std::string, std::string> behavior_names;  // STIX id -> name
+  for (const json& object : objects) {
+    if (!object.is_object() || str_of(object, "type") != "malware-behavior") continue;
+    const std::string stix_id = str_of(object, "id");
+    if (stix_id.empty()) continue;
+    behavior_names[stix_id] = str_of(object, "name");
+    const auto defn = object.find("obj_defn");
+    if (defn != object.end() && defn->is_object())
+      behavior_ids[stix_id] = str_of(*defn, "external_id");
+    if (const auto refs = object.find("objective_refs");
+        refs != object.end() && refs->is_array()) {
+      for (const json& ref : *refs) {
+        if (!ref.is_string()) continue;
+        const auto it = objective_names.find(ref.get<std::string>());
+        if (it != objective_names.end()) behavior_objectives[stix_id].push_back(it->second);
+      }
+    }
+  }
+
+  // Pass 2: behaviors, then methods.
+  for (int pass = 0; pass < 2; ++pass) {
+    const char* want = pass == 0 ? "malware-behavior" : "malware-method";
+    for (const json& object : objects) {
+      if (!object.is_object() || str_of(object, "type") != want) continue;
+      const auto defn = object.find("obj_defn");
+      if (defn == object.end() || !defn->is_object()) continue;
+      const std::string ext_id = str_of(*defn, "external_id");
+      if (ext_id.empty()) continue;
+
+      mbc_detail d;
+      d.id = to_upper(ext_id);
+      d.kind = pass == 0 ? "behavior" : "method";
+      d.name = str_of(object, "name");
+      d.description = str_of(*defn, "description");
+      d.url = str_of(*defn, "url");
+
+      const std::string stix_id = str_of(object, "id");
+      if (pass == 0) {
+        d.objectives = behavior_objectives[stix_id];
+      } else if (const auto ref = object.find("behavior_ref");
+                 ref != object.end() && ref->is_string()) {
+        const std::string parent = ref->get<std::string>();
+        d.objectives = behavior_objectives[parent];
+        const auto pid = behavior_ids.find(parent);
+        if (pid != behavior_ids.end() && !pid->second.empty()) {
+          d.parent = pid->second;
+          const auto pname = behavior_names.find(parent);
+          if (pname != behavior_names.end() && !pname->second.empty())
+            d.parent += " " + pname->second;
+          // methods carry no obj_defn.url of their own - reuse the parent
+          // behavior's mbc-markdown page so the dashboard chip stays linkable.
+          if (d.url.empty()) {
+            const auto found = index.find(to_upper(pid->second));
+            if (found != index.end()) d.url = found->second.url;
+          }
+        }
+      }
+      if (const auto rules = object.find("detection_rules");
+          rules != object.end() && rules->is_array())
+        d.detection_rules = rules->size();
+
+      d.attack_ids = scrape_attack_ids(d.description);
+      std::sort(d.attack_ids.begin(), d.attack_ids.end());
+      d.attack_ids.erase(std::unique(d.attack_ids.begin(), d.attack_ids.end()),
+                         d.attack_ids.end());
+
+      if (pass == 0) index[d.id] = std::move(d);        // behaviors win collisions
+      else          index.try_emplace(d.id, std::move(d));
+    }
+  }
+  LOG_DEBUG("mbc: build_mbc_index: indexed {} entr(y|ies) from '{}'",
+            index.size(), path.string());
+  return index;
+}
+
+}  // namespace
+
+std::map<std::string, mbc_detail> mbc_details_for(const std::set<std::string>& wanted_ids,
+                                                  const std::string& bundle_path) {
+  std::map<std::string, mbc_detail> out;
+  if (wanted_ids.empty()) return out;
+
+  // The catalog is small enough to index fully; the index is built once per
+  // process. An explicit bundle_path bypasses the shared cache so a caller
+  // (tests, one-off tools) can point at a fixture without poisoning it.
+  static std::map<std::string, mbc_detail> index;
+  static bool loaded = false;
+
+  const std::map<std::string, mbc_detail>* source = nullptr;
+  std::map<std::string, mbc_detail> scratch;
+  if (!bundle_path.empty()) {
+    scratch = build_mbc_index(resolve_mbc_bundle(bundle_path));
+    source = &scratch;
+  } else {
+    if (!loaded) {
+      const fs::path path = resolve_mbc_bundle(bundle_path);
+      if (!path.empty()) index = build_mbc_index(path);
+      else LOG_DEBUG("mbc: mbc_details_for: no MBC bundle found (set $MBC_BUNDLE)");
+      loaded = true;
+    }
+    source = &index;
+  }
+
+  for (const std::string& raw : wanted_ids) {
+    const auto it = source->find(to_upper(raw));
+    if (it != source->end()) out.emplace(it->first, it->second);
+  }
+  LOG_TRACE("mbc: mbc_details_for: {} wanted, {} resolved", wanted_ids.size(), out.size());
+  return out;
+}
+
+// ===========================================================================
 // CISA KEV
 // ===========================================================================
 bool kev_db::load_file(const std::string& path, std::string& error) {

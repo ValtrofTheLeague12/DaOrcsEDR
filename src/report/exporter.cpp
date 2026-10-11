@@ -506,8 +506,35 @@ json to_json(const capa::report_t& r) {
 
     json attack_ids = json::array();
     for (const auto& id : capa::attack_ids(r)) attack_ids.push_back(id);
+    const std::vector<std::string> mbc_id_list = capa::mbc_ids(r);
     json mbc_ids = json::array();
-    for (const auto& id : capa::mbc_ids(r)) mbc_ids.push_back(id);
+    json mbc_details = json::object();
+    {
+      // Enrich the bare MBC ids with the local catalog entry (name, kind,
+      // objective, description, URL, ATT&CK cross-links, detection-rule
+      // count) so consumers of capa.json - the dashboard above all - can
+      // render them without shipping the STIX bundle themselves. A missing
+      // catalog leaves the object empty; the ids above stay authoritative.
+      const std::set<std::string> wanted(mbc_id_list.begin(), mbc_id_list.end());
+      const auto details = cti::mbc_details_for(wanted);
+      for (const auto& id : mbc_id_list) mbc_ids.push_back(id);
+      for (const auto& [id, d] : details) {
+        json objectives = json::array();
+        for (const auto& o : d.objectives) objectives.push_back(o);
+        json attack = json::array();
+        for (const auto& t : d.attack_ids) attack.push_back(t);
+        mbc_details[id] = {
+            {"kind",            d.kind},
+            {"name",            d.name},
+            {"description",     d.description},
+            {"url",             d.url},
+            {"parent",          d.parent},
+            {"objectives",      std::move(objectives)},
+            {"attack_ids",      std::move(attack)},
+            {"detection_rules", d.detection_rules},
+        };
+      }
+    }
     json warnings = json::array();
     for (const auto& w : r.warnings) warnings.push_back(w);
 
@@ -548,6 +575,7 @@ json to_json(const capa::report_t& r) {
         {"capabilities", std::move(capabilities)},
         {"attack_ids",   std::move(attack_ids)},
         {"mbc_ids",      std::move(mbc_ids)},
+        {"mbc_details",  std::move(mbc_details)},
     };
 }
 
@@ -1085,6 +1113,10 @@ json to_json(const yara_scanner::result_t& r) {
         matches.push_back({
             {"identifier", rule.identifier},
             {"tags", rule.tags},
+            {"namespace", rule.ns},
+            {"rule_set", rule.rule_set},
+            {"quality", rule.quality},
+            {"weight", rule.weight},
             {"strings", std::move(strings)},
         });
     }
@@ -1098,8 +1130,15 @@ json to_json(const yara_scanner::result_t& r) {
         {"rule_files_found", r.rule_files_found},
         {"rule_files_loaded", r.rule_files_loaded},
         {"rule_files_failed", r.rule_files_failed},
+        {"rule_files_skipped", r.rule_files_skipped},
         {"rules_directory", r.rules_directory},
         {"rules_matched", r.rules_matched},
+        {"rules_deduped", r.rules_deduped},
+        {"compile_errors", r.compile_errors},
+        {"memory_cache_hit", r.memory_cache_hit},
+        {"disk_cache_hit", r.disk_cache_hit},
+        {"compile_seconds", r.compile_seconds},
+        {"errors_log", r.errors_log},
         {"worker_threads", r.worker_threads},
         {"matches", std::move(matches)},
         {"errors", r.errors},
@@ -2221,6 +2260,27 @@ json to_json(const ml_api::score_result_t& r) {
         {"http_status", r.http_status},
     };
     if (!r.verdict_note.empty()) out["verdict_note"] = r.verdict_note;
+    // Trust markers: a consumer that switches on `verdict` must be able to
+    // see, without parsing prose, that this score was not built from a fresh
+    // thrember vector or failed the train/serve skew check.
+    out["low_confidence"] = r.low_confidence;
+    if (!r.confidence_note.empty()) out["confidence_note"] = r.confidence_note;
+    if (r.skew.present) {
+        json groups = json::object();
+        for (const auto& [name, g] : r.skew.groups) {
+            groups[name] = {
+                {"max_abs_diff", g.max_abs_diff},
+                {"n", g.n},
+                {"first_diff_index", g.first_diff_index},
+                {"ok", g.ok},
+            };
+        }
+        out["feature_skew"] = {
+            {"ok", r.skew.ok},
+            {"tolerance", r.skew.tolerance},
+            {"groups", std::move(groups)},
+        };
+    }
     if (!r.ok) {
         out["error"]  = r.error;
         out["detail"] = r.detail;

@@ -1,0 +1,39 @@
+{
+  "params": {
+    "num_iterations": 500,
+    "learning_rate": 0.05,
+    "num_leaves": 1024,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "device": "cpu"
+  },
+  "trees": 500,
+  "n_features": 2568,
+  "max_fpr_target": 0.005,
+  "test": {
+    "n": 120000,
+    "roc_auc": 0.9974903533333332,
+    "average_precision": 0.9976217799665571,
+    "tpr_at_max_fpr": 0.9249666666666667,
+    "max_fpr": 0.005,
+    "note": "official EMBER2024 Win64 test split (120k rows), matches test_metrics.json"
+  },
+  "train_fit": {
+    "n": 300000,
+    "roc_auc": 0.9999932392888888,
+    "average_precision": 0.9999954912415172,
+    "tpr_at_max_fpr": 0.9999866666666667,
+    "max_fpr": 0.005,
+    "note": "fit statistic on the training split, not a generalisation measure"
+  },
+  "challenge": {
+    "n": 6315,
+    "roc_auc": null,
+    "average_precision": 1.0,
+    "tpr_at_max_fpr": 0.0,
+    "max_fpr": 0.005,
+    "seconds": 0.39,
+    "caught_at_0.5": 0.5022961203483769,
+    "note": "single-class split (all-malicious): ROC-AUC and average precision are undefined, so only caught_at_0.5 is meaningful"
+  }
+}

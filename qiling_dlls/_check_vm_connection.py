@@ -48,7 +48,7 @@ class Check(NamedTuple):
 # vm_info.json
 # ---------------------------------------------------------------------------
 def load_vm_info() -> dict:
-    """Read and validate vm_info.json (VM_NAME, VM_IP, PORT)."""
+    """Read and validate vm_info.json (VM_NAME, VM_IP, VM_PORT|PORT)."""
     if not VM_INFO_FILE.is_file():
         raise VmCheckError(
             f"{VM_INFO_FILE.name} not found in {VM_INFO_FILE.parent}")
@@ -68,7 +68,7 @@ def load_vm_info() -> dict:
     if not ip:
         raise VmCheckError(f"VM_IP is missing in {VM_INFO_FILE.name}")
     try:
-        port = int(data.get("PORT", 22))
+        port = int(data.get("VM_PORT", data.get("PORT", 22)))
     except (TypeError, ValueError) as exc:
         raise VmCheckError(f"PORT must be an integer in {VM_INFO_FILE.name}") \
             from exc

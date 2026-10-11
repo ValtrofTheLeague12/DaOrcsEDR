@@ -1,0 +1,14 @@
+# EMBER2024 score only. The feature extraction happens inside ml/serve.py
+# (thrember), so this pipeline needs no other analysis phase: the service
+# receives the file path and computes all 2,568 EMBER dimensions itself.
+name: model
+description: EMBER2024 ML score only
+
+phases: [model]
+
+# Exported into the process environment before the ML service starts, so the
+# knobs below reach ml/serve.py (and getenv() in the analyzer, e.g. ML_SKIP).
+environment:
+  ML_THRESHOLD: "0.6"
+  ML_EXPLAIN: "true"
+  ML_TOP_K: "10"

@@ -1,0 +1,7 @@
+
+name: quick
+description: Fast triage - sections, strings/IOCs, imports
+
+stages:
+  - name: triage
+    phases: [sections, strings, iat]

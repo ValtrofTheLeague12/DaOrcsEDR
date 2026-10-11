@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -138,10 +139,19 @@ void print_yara_report(const yara_scanner::result_t& r) {
     print_kv_colored("Matches",
                      std::to_string(r.rules_matched) + " rule(s) matched",
                      console::red);
+    // Quality-weighted score: curated hits count 1.0, community hits 0.5.
+    double weighted = 0.0;
+    for (const auto& match : r.matches) weighted += match.weight;
+    std::ostringstream score;
+    score << std::fixed << std::setprecision(1) << weighted;
+    print_kv_colored("Weighted score", score.str(),
+                     weighted >= 3.0 ? console::red : console::yellow);
   }
 
   std::ostringstream load;
   load << r.rule_files_loaded << " / " << r.rule_files_found;
+  if (r.rule_files_skipped > 0)
+    load << " (" << r.rule_files_skipped << " excluded by hygiene filters)";
   print_kv_colored("Rules loaded", load.str(),
                    r.rule_files_failed == 0 ? console::green : console::yellow);
   if (r.rule_files_failed > 0) {
@@ -150,11 +160,21 @@ void print_yara_report(const yara_scanner::result_t& r) {
   }
   print_kv("Workers", std::to_string(r.worker_threads));
   if (!r.rules_directory.empty()) print_kv("Rules dir", r.rules_directory);
+  const char* cache_state = r.memory_cache_hit   ? "memory"
+                            : r.disk_cache_hit   ? "disk"
+                                                 : "compiled";
   std::ostringstream scan;
   scan << "exit=" << r.exit_code << "  seconds=" << std::fixed
-       << std::setprecision(3) << r.seconds;
+       << std::setprecision(3) << r.seconds << "  compile=" << std::fixed
+       << std::setprecision(2) << r.compile_seconds << "s [" << cache_state
+       << " cache]";
   print_kv_colored("Scan", scan.str(), r.scan_ok ? console::green : console::yellow);
+  if (r.rules_deduped > 0)
+    print_kv("Duplicates", std::to_string(r.rules_deduped) +
+                               " duplicate (namespace, rule) match(es) dropped");
   for (const auto& message : r.errors) print_bullet(message, console::yellow);
+  if (!r.errors_log.empty())
+    print_kv("Error log", r.errors_log);
 
   if (r.matches.empty()) return;
 
@@ -200,6 +220,18 @@ void print_yara_report(const yara_scanner::result_t& r) {
       std::string joined;
       while (tag_stream >> tag) joined += (joined.empty() ? "" : ", ") + tag;
       title += "  [" + joined + "]";
+    }
+    // Source attribution: which rule pack matched and how much that hit is
+    // worth (community packs are weighted below curated ones).
+    if (!match.rule_set.empty()) {
+      title += "  (" + match.rule_set + " \xc2\xb7 " + match.quality;
+      if (match.quality != "curated") {
+        char weight_text[16]{};
+        std::snprintf(weight_text, sizeof(weight_text), "%.1fx", match.weight);
+        title += " ";
+        title += weight_text;
+      }
+      title += ")";
     }
     print_section(title);
 

@@ -1,0 +1,7 @@
+# capa capability detection: matches the sample against the fireeye/cisa
+# rule set (network, persistence, anti-analysis, ...) and writes the JSON
+# report. Stands alone - no radare2/extraction prerequisite.
+name: capa
+description: "capa capability detection (rule-based: network, persistence, anti-analysis)"
+
+phases: [capa]

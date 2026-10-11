@@ -419,6 +419,31 @@ struct attack_detail {
 std::map<std::string, attack_detail> attack_details_for(const std::set<std::string>& wanted_ids,
                                                         const std::string& bundle_path = {});
 
+// Full MBC (Malware Behavior Catalog) detail for one behavior/method, as read
+// straight out of the vendored STIX 2.1 bundle. capa tags rule matches with
+// MBC ids (C0007, B0032, E1056, ...); this is the catalog entry behind such
+// an id - the malware-analysis counterpart of attack_detail.
+struct mbc_detail {
+  std::string id;            // upper-case external id, e.g. "C0007" or "B0012.005"
+  std::string kind;          // "behavior" (malware-behavior) | "method" (malware-method)
+  std::string name;          // "Virtual Memory Operations"
+  std::string description;   // obj_defn.description (markdown, ATT&CK refs included)
+  std::string url;           // obj_defn.url - the mbc-markdown page, when present
+  std::string parent;        // methods only: "B0012 Obfuscated Files or Information"
+  std::vector<std::string> objectives;  // objective names, e.g. "Execution"
+  std::vector<std::string> attack_ids;  // T-ids scraped from the description
+  std::size_t detection_rules = 0;      // detection_rules entries (capa / CAPE / ...)
+};
+
+// Reads the MBC bundle ($MBC_BUNDLE, else cti-cache/knowledge/mbc.json, else
+// the vendored mbc-stix2.1/mbc/mbc.json) and returns details for `wanted_ids`
+// only (case-insensitive, keyed by upper-case id). Ids the bundle does not
+// know, and a missing/unreadable bundle, are simply absent from the result -
+// never an error, callers keep showing the bare id. No network access; the
+// ~2.5 MB bundle is indexed once per process and later calls only filter.
+std::map<std::string, mbc_detail> mbc_details_for(const std::set<std::string>& wanted_ids,
+                                                  const std::string& bundle_path = {});
+
 // ---------------------------------------------------------------------------
 // Tactic view builders. Free functions over plain ids rather than pipeline
 // members: the matrix needs ATT&CK knowledge (the local cache) and the observed

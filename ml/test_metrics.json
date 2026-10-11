@@ -1,0 +1,8 @@
+{
+  "roc_auc": 0.9974903533333332,
+  "average_precision": 0.9976217799665571,
+  "operating_threshold": 0.9993426248220831,
+  "tpr_at_max_fpr": 0.9249666666666667,
+  "n_test": 120000,
+  "test": true
+}

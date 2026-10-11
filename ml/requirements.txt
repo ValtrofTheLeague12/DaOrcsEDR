@@ -1,0 +1,42 @@
+# EMBER2024 -> LightGBM malware classifier (training VM)
+#
+# Install:  python -m pip install -r requirements.txt
+#
+# lightgbm/scikit-learn/numpy are the only hard requirements. huggingface_hub is
+# needed only for download_dataset.py (already-downloaded zips work without it).
+
+numpy>=1.24
+# Pandas is used by evaluate_report.py for the dataset schema/statistics profile.
+pandas>=2.0
+lightgbm>=4.3
+scikit-learn>=1.3
+huggingface_hub[hf_xet]>=0.23
+
+# thrember is the EMBER v3 feature extractor and is NOT on PyPI; it comes from
+# the EMBER2024 repo (ml/README.md still describes the clone-and-install route).
+thrember @ git+https://github.com/FutureComputing4AI/EMBER2024.git
+
+# thrember declares only signify>=0.7.1, which is too loose:
+#   0.9.x  -> ImportError: no SignedPEFile (thrember cannot even import)
+#   0.8.x  -> imports, but predict.py dies on any Authenticode-signed PE with
+#            "'CertificateStore' object is not subscriptable"
+#   0.7.1  -> import and signed-binary extraction both work. Verified on
+#            kernel32.dll, explorer.exe, python.exe.
+signify==0.7.1
+
+# ml/serve.py only: the local scoring API. Matches python/api/requirements.txt,
+# which already uses Flask for the analyzer's MalAPI service.
+flask>=3.0
+
+# ml/report_pdf.py only: renders templates/report.html.j2 to PDF.
+# jinja2 arrives with Flask; segno draws the integrity QR code.
+jinja2>=3.1
+segno>=1.6
+
+# --self-test only: proves the QR scans and the PDF paginates. Optional; the
+# report builds fine without them. Install with:
+#   pip install "pymupdf>=1.24" "pyzbar>=0.1.9" pillow
+# pyzbar also needs the zbar shared library on Linux (libzbar0).
+pymupdf>=1.24
+pyzbar>=0.1.9
+pillow>=10.0

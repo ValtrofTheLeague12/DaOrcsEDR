@@ -1,0 +1,41 @@
+# jinja2 template -> /home/qilin/.config/systemd/user/qilin-service.service
+# target user: qilin
+# payload dir : /home/qilin/.config/systemd/qilin-service/  (app_dir)
+#   contains: qilin-script.py (entry point, copied from _qiling_script.py)
+#             rootfs/         (copied from examples/rootfs at deploy time)
+#             samples/<stem>/ one directory per sample:
+#                 <name>.exe              uploaded sample
+#                 <stem>_qiling_out.zip   analysis results (harness --out)
+# NOTE: the harness is ONE-SHOT per sample - script_args must contain the
+#       sample path, e.g.
+#         script_args="--out <app_dir>/samples/bad/bad_qiling_out.zip bad/bad.exe"
+#       (relative sample paths resolve from WorkingDirectory=app_dir). Re-render
+#       the unit per sample, then:
+#         systemctl --user start qilin-service.service
+# note: systemd user units are loaded only from ~/.config/systemd/user/
+#   directly - the payload stays in the qilin-service/ subdirectory and the
+#   rendered unit is installed one level up (or linked:
+#   systemctl --user link ~/.config/systemd/qilin-service/qilin-service.service ).
+# fill vars: description, app_dir, python_bin, script_args, log_file,
+#            service_user, timeout_start_sec
+# install (as qilin):
+#   systemctl --user daemon-reload
+#   systemctl --user enable qilin-service.service
+[Unit]
+Description={{ description | default('Qiling CPU-emulation analysis agent') }}
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type={{ service_type | default('oneshot') }}
+User={{ service_user | default('qilin') }}
+WorkingDirectory={{ app_dir | default('/home/qilin/.config/systemd/qilin-service') }}
+ExecStart={{ python_bin | default('/usr/bin/python3') }} {{ app_dir | default('/home/qilin/.config/systemd/qilin-service') }}/qilin-script.py --rootfs {{ app_dir | default('/home/qilin/.config/systemd/qilin-service') }}/rootfs {{ script_args | default('') }}
+Environment=QILING_ROOTFS={{ app_dir | default('/home/qilin/.config/systemd/qilin-service') }}/rootfs
+Environment=PYTHONUNBUFFERED=1
+TimeoutStartSec={{ timeout_start_sec | default('1h') }}
+StandardOutput=append:{{ log_file | default('/home/qilin/.config/systemd/qilin-service/qilin-service.log') }}
+StandardError=append:{{ log_file | default('/home/qilin/.config/systemd/qilin-service/qilin-service.log') }}
+
+[Install]
+WantedBy=default.target

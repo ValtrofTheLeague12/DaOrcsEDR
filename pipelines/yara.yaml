@@ -1,0 +1,6 @@
+# YARA-only pass: compiles the rule set (with hygiene filters + cache),
+# scans the target and writes the extraction JSON with yara results.
+name: yara
+description: YARA rule scan + export
+
+phases: [extraction, export]

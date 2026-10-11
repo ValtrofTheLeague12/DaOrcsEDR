@@ -1,5 +1,7 @@
 #include "report.hpp"
 
+#include "cti.hpp"
+
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -68,8 +70,17 @@ void print_capa_report(const capa::report_t& r) {
       print_kv("ATT&CK", line);
     }
     if (!mbc.empty()) {
+      // Name the ids from the local MBC catalog when it is available; a
+      // missing catalog degrades to the bare ids, never an error.
+      const auto details = cti::mbc_details_for({mbc.begin(), mbc.end()});
       std::string line;
-      for (const auto& id : mbc) { if (!line.empty()) line += ", "; line += id; }
+      for (const auto& id : mbc) {
+        if (!line.empty()) line += ", ";
+        line += id;
+        const auto it = details.find(cti::to_upper(id));
+        if (it != details.end() && !it->second.name.empty())
+          line += ' ' + it->second.name;
+      }
       print_kv("MBC", line);
     }
   }
@@ -252,6 +263,11 @@ void print_ml_score_report(const ml_api::score_result_t& r,
                                      ? std::string(ml_api::to_string(r.verdict))
                                      : r.verdict_raw,
                    vcolor);
+  if (r.low_confidence) {
+    // A score built from a non-thrember vector or one that failed the
+    // train/serve skew check must not read like a normal verdict.
+    print_warn("LOW CONFIDENCE: " + r.confidence_note);
+  }
 
   {
     std::ostringstream thr;
@@ -266,6 +282,31 @@ void print_ml_score_report(const ml_api::score_result_t& r,
 
   print_kv("Features", r.feature_source.empty() ? "thrember (service-side)"
                                                 : r.feature_source);
+  if (r.skew.present) {
+    // Train/serve skew: the C++ exporter's own histogram/byteentropy against
+    // the thrember vector the model actually scored.
+    double worst = -1.0;
+    std::string worst_group;
+    std::size_t n_groups = 0;
+    for (const auto& [name, g] : r.skew.groups) {
+      ++n_groups;
+      if (g.max_abs_diff > worst) {
+        worst = g.max_abs_diff;
+        worst_group = name;
+      }
+    }
+    std::ostringstream sk;
+    sk << std::scientific << std::setprecision(1) << "max |C++ - thrember| = "
+       << (worst < 0.0 ? 0.0 : worst) << " (tolerance " << r.skew.tolerance
+       << ", " << n_groups << " group(s))";
+    if (r.skew.ok) {
+      print_kv_colored("Skew check", "OK  " + sk.str(), console::green);
+    } else {
+      print_kv_colored("Skew check",
+                       "MISMATCH in " + worst_group + ": " + sk.str(),
+                       console::red);
+    }
+  }
   if (!r.model_sha256.empty()) {
     // Short hash: enough to identify the model build in a log, short enough not
     // to wrap the report line.
@@ -295,6 +336,9 @@ void print_ml_score_report(const ml_api::score_result_t& r,
       os << (f.shap_log_odds >= 0 ? "+" : "") << std::fixed
          << std::setprecision(3) << std::setw(7) << f.shap_log_odds << "  "
          << what;
+      // The feature's own value next to its contribution: a SHAP of +1.4 on
+      // an entropy feature reads very differently at value=0.1 than at 7.9.
+      os << "   [value " << std::setprecision(4) << f.value << "]";
       if (f.shared_bucket && f.bucket_occupancy > 1) {
         // A shared hash bucket's SHAP is the sum over every name in it, so the
         // number must not be read as this one import's contribution.

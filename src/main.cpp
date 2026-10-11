@@ -305,6 +305,14 @@ int main(int argc, char** argv) {
   // "[phase n/total]" header and its own applicability gate.
   pipeline::planner::run_phases(ctx, cfg);
 
+  // -------- Human-readable hash ------------------------------------------------
+  // main() owns the process, so it reports the read-aloud PGP words next to the
+  // exit result too - run_hashes prints them at the top of the run and
+  // run_summary in its recap; this is the process-owner's closing line. Empty
+  // (so silent) when the hash failed to compute or produced no valid hex.
+  const std::string words = hasher::human_words(ctx.file_hash.hash);
+  if (!words.empty()) print_kv("Words", words);
+
   // -------- Result and shutdown ----------------------------------------------
   // capa / radare2 are only run-failing when the pipeline selected them: a
   // ["strings"] run must not exit non-zero because capa never ran.

@@ -1,0 +1,7 @@
+# Disassembly extraction: radare2 function analysis, Graphviz call graphs
+# and IAT/GOT call-site assembly. radare2 is listed explicitly although
+# graphs/xref would insert it themselves.
+name: extract_asm
+description: Disassembly - radare2 functions, Graphviz call graphs, call-site assembly
+
+phases: [radare2, graphs, xref]

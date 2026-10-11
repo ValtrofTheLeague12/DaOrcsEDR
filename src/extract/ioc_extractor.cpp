@@ -1,14 +1,18 @@
 #include "ioc_extractor.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <random>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -128,6 +132,33 @@ const std::unordered_set<std::string_view>& ambiguous_tlds() {
     return tlds;
 }
 
+// gTLDs that are also common English words, code tokens or ISA suffixes:
+// a bare "word.tld" pair is far more often an instruction-table entry
+// (i32.store, cmp.click, f64.live) than an actual domain. These get the
+// same context requirement as ambiguous_tlds.
+const std::unordered_set<std::string_view>& wordlike_tlds() {
+    static const std::unordered_set<std::string_view> tlds = {
+        "store", "shop", "top", "club", "work", "live", "life", "fun",
+        "link", "click", "world", "today", "space", "website", "press",
+        "vip", "ltd", "email", "support", "agency", "network", "digital",
+        "solutions", "services", "systems", "center", "company", "group",
+        "news", "media", "page", "blog", "wiki", "host", "download",
+        "online", "site", "app", "dev", "cloud", "tech",
+    };
+    return tlds;
+}
+
+// A bare "label.tld" needs corroborating context (subdomain / path / port /
+// scheme) when the TLD is a 2-letter ccTLD (cmp.af, shra.ph, and.ge all
+// collide with instruction suffixes), an ambiguous extension, or a wordlike
+// gTLD. Real C2 hosts found in binary strings virtually always appear inside
+// a URL, with a port, or with a real subdomain.
+bool tld_requires_context(std::string_view tld) {
+    return tld.size() == 2 ||
+           ambiguous_tlds().count(tld) != 0 ||
+           wordlike_tlds().count(tld) != 0;
+}
+
 // Extensions that commonly show up as the *second* extension on a
 // "double extension" file: utils.py.bak, README.md.orig, handler.so.1
 // (the trailing "1" isn't alphabetic so it's naturally excluded by
@@ -175,13 +206,18 @@ bool is_plausible_domain(std::string_view text, std::size_t pos, std::size_t len
         }
     }
 
-    // Ambiguous TLD (also a common file extension / code token): only accept
-    // when there's real corroborating context -- a subdomain, a following
-    // path or port, or a preceding scheme/www. A bare "SLD.tld" with nothing
-    // else around it is more often README.md / utils.py / System.IO than an
-    // actual domain.
-    if (!is_xn && ambiguous_tlds().count(tld) != 0) {
-        const bool has_subdomain = std::count(lower.begin(), lower.end(), '.') >= 2;
+    // Context-required TLDs (ambiguous extension, wordlike gTLD, or any
+    // 2-letter ccTLD): only accept when there's real corroborating context --
+    // a subdomain made of normal-length labels, a following path or port, or
+    // a preceding scheme/www. A bare "SLD.tld" with nothing else around it is
+    // more often README.md / utils.py / System.IO / cmp.af / i32.store than an
+    // actual domain. For context-free 3+ label matches every non-TLD label
+    // must be at least 3 chars, so ISA-table chains like "precrq.qb.ph" and
+    // "amoadd.d.aq" are rejected while "mail.update.ph" still passes.
+    if (!is_xn && tld_requires_context(tld)) {
+        const std::size_t dots = static_cast<std::size_t>(
+            std::count(lower.begin(), lower.end(), '.'));
+        const bool has_subdomain = dots >= 2;
 
         const std::size_t after = pos + len;
         const bool followed_by_path_or_port =
@@ -195,24 +231,58 @@ bool is_plausible_domain(std::string_view text, std::size_t pos, std::size_t len
                 before.find("://") != std::string::npos;
         }
 
-        if (!has_subdomain && !followed_by_path_or_port && !preceded_by_scheme_or_www) {
+        const bool has_context =
+            followed_by_path_or_port || preceded_by_scheme_or_www;
+
+        if (!has_subdomain && !has_context) {
             return false;
+        }
+
+        if (has_subdomain && !has_context) {
+            // Every label except the TLD must be >= 3 chars.
+            std::size_t start = 0;
+            while (start < lower.size()) {
+                std::size_t end = lower.find('.', start);
+                if (end == std::string::npos) end = lower.size();
+                const bool is_tld_label = (end == lower.size());
+                if (!is_tld_label && end - start < 3) return false;
+                start = end + 1;
+            }
         }
     }
 
     return true;
 }
 
-// Drops IPv4 "hits" that are really version strings / reserved space.
+// Drops IPv4 "hits" that are really version strings / reserved space, plus
+// private and special-use ranges (RFC 1918, loopback, link-local, CGNAT,
+// multicast) which are not actionable external indicators. Documentation
+// ranges (TEST-NET-1..3) are deliberately kept: they are rare in real
+// binaries and are used as C2 stand-ins by the detection fixtures.
 bool is_plausible_ip(std::string_view text, std::size_t pos, std::size_t len) {
     // part of a longer dotted number, e.g. 1.2.3.4.5
     if (pos >= 2 && text[pos - 1] == '.' && is_digit(text[pos - 2])) return false;
     const std::size_t end = pos + len;
     if (end + 1 < text.size() && text[end] == '.' && is_digit(text[end + 1])) return false;
 
-    unsigned first = 0;
-    for (std::size_t i = pos; i < end && text[i] != '.'; ++i) first = first * 10 + (text[i] - '0');
-    return first != 0 && first < 224;  // 0/8 and multicast/reserved/broadcast
+    unsigned octets[4] = {0, 0, 0, 0};
+    int part = 0;
+    for (std::size_t i = pos; i < end; ++i) {
+        if (text[i] == '.') { ++part; continue; }
+        if (part < 4) octets[part] = octets[part] * 10 + static_cast<unsigned>(text[i] - '0');
+    }
+
+    const unsigned o0 = octets[0], o1 = octets[1], o2 = octets[2];
+    if (o0 == 0) return false;                                 // 0.0.0.0/8 "this network"
+    if (o0 == 10) return false;                                // 10.0.0.0/8 private
+    if (o0 == 127) return false;                               // loopback
+    if (o0 == 169 && o1 == 254) return false;                  // link-local
+    if (o0 == 172 && o1 >= 16 && o1 <= 31) return false;       // 172.16.0.0/12 private
+    if (o0 == 192 && o1 == 168) return false;                  // 192.168.0.0/16 private
+    if (o0 == 192 && o1 == 0 && o2 == 0) return false;         // 192.0.0.0/24 IETF
+    if (o0 == 100 && o1 >= 64 && o1 <= 127) return false;      // 100.64.0.0/10 CGNAT
+    if (o0 >= 224) return false;                               // multicast / reserved
+    return true;
 }
 
 bool is_trivial_hash(std::string_view h) {
@@ -328,7 +398,7 @@ const std::vector<keyword_entry>& commonKeywordClassification() {
         {"nyetya", RANSOMWARE},
         {"odin", RANSOMWARE},
         {"padcrypt", RANSOMWARE}, {"pandabanker", TROJAN}, {"petya", RANSOMWARE},
-        {"pony", INFO_STEALER}, {"pseudo", RANSOMWARE}, {"pushdo", TROJAN}, {"pykspa", WORM},
+        {"pony", INFO_STEALER}, {"pseudolocker", RANSOMWARE}, {"pushdo", TROJAN}, {"pykspa", WORM},
         {"qadars", TROJAN}, {"qakbot", TROJAN}, {"qbot", TROJAN},
         {"ramdo", TROJAN}, {"ramnit", TROJAN}, {"ranbyus", TROJAN}, {"reign", APT},
         {"rig", EXPLOIT_KIT}, {"rigek", EXPLOIT_KIT}, {"rovnix", TROJAN}, {"rulan", DROPPER},
@@ -347,7 +417,7 @@ const std::vector<keyword_entry>& commonKeywordClassification() {
         {"domain", DOMAIN_C}, {"control panel", INFRASTRUCTURE}, {"exploitkit", MALWARE},
         {"gate", INFRASTRUCTURE}, {"malware", MALWARE}, {"spyware", SPYWARE},
         {"adware", ADWARE}, {"ransomware", RANSOMWARE}, {"botnet", INFRASTRUCTURE},
-        {"rat", TROJAN}, {"c2", INFRASTRUCTURE}, {"maldoc", MALWARE},
+        {"rat", TROJAN}, {"maldoc", MALWARE},
         {"email", EMAIL_C}, {"powershell", MALWARE}, {"trojan", TROJAN},
         {"compromised", TROJAN}, {"open directory", INFRASTRUCTURE},
         {"opendirectory", INFRASTRUCTURE},
@@ -753,9 +823,86 @@ namespace {
 
 constexpr std::size_t kBatchTargetBytes    = 64 * 1024;
 constexpr std::size_t kSingleStringThreshold = 8 * 1024;
+constexpr std::size_t kMaxLocalB64Flags    = 20;
+constexpr std::size_t kMaxLocalXorFlags    = 20;
 
 bool needs_refang(const std::string& s) {
     return s.find_first_of("[](") != std::string::npos;
+}
+
+// Long base64 runs are candidates for embedded payloads / config blobs.
+const RE2& base64_candidate_re() {
+    static const RE2 re(R"([A-Za-z0-9+/]{32,}={0,2})", RE2::Quiet);
+    return re;
+}
+
+bool base64_decode(std::string_view in, std::string& out) {
+    static const std::string_view kAlphabet =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static const auto rev = [] {
+        std::array<int, 256> r{};
+        r.fill(-1);
+        for (int i = 0; i < 64; ++i) r[static_cast<unsigned char>(kAlphabet[static_cast<std::size_t>(i)])] = i;
+        return r;
+    }();
+    out.clear();
+    out.reserve(in.size() * 3 / 4);
+    int val = 0;
+    int valb = -8;
+    for (unsigned char c : in) {
+        if (c == '=') break;
+        const int d = rev[c];
+        if (d < 0) return false;
+        val = (val << 6) + d;
+        valb += 6;
+        if (valb >= 0) {
+            out.push_back(static_cast<char>((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    return !out.empty();
+}
+
+double shannon_entropy(std::string_view s) {
+    if (s.empty()) return 0.0;
+    std::size_t counts[256] = {};
+    for (unsigned char c : s) ++counts[c];
+    double ent = 0.0;
+    const double n = static_cast<double>(s.size());
+    for (std::size_t c : counts) {
+        if (c == 0) continue;
+        const double p = static_cast<double>(c) / n;
+        ent -= p * std::log2(p);
+    }
+    return ent;
+}
+
+// Single-byte XOR crib-drag: returns true and fills `key`/`decoded`/`crib`
+// for the first key byte that exposes one of the tracked plaintext cribs.
+// Only called on fully-printable, high-entropy strings (see extract_all).
+bool xor_crib_find(std::string_view s, int& key_out, std::string& decoded_out,
+                   std::string& crib_out) {
+    static constexpr std::string_view cribs[] = {
+        "http://", "https://", "This program", "cmd.exe", "powershell",
+        "MZ",
+    };
+    std::string decoded;
+    decoded.reserve(s.size());
+    for (int key = 1; key < 256; ++key) {
+        decoded.clear();
+        for (unsigned char c : s) {
+            decoded.push_back(static_cast<char>(c ^ static_cast<unsigned char>(key)));
+        }
+        for (const std::string_view crib : cribs) {
+            const std::size_t hit = decoded.find(crib);
+            if (hit == std::string::npos) continue;
+            key_out = key;
+            decoded_out = decoded;
+            crib_out = std::string(crib);
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -824,6 +971,35 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
     std::size_t batch_count = 0;
     std::size_t refang_count = 0;
     std::size_t single_scan_count = 0;
+    std::size_t hashtag_suppressed = 0;
+    std::vector<encoded_flag_t> local_b64_flags;
+    std::vector<std::string> hashtag_candidates;
+    std::unordered_set<std::string> bare_identifiers;
+
+    // "#word" matches C preprocessor directives (#include, #pragma), resource
+    // IDs (#101), LLVM machine-function names (#ATOMIC_SWAP_I32) and printf
+    // fragments in every compiler-produced binary. Keep only social-style
+    // tags: alpha-start, no digits, no underscores, >= 4 chars, not a
+    // preprocessor keyword. Candidates surviving these rules are checked
+    // against bare identifiers after the scan: a tag whose body also appears
+    // as a plain identifier in the binary is a symbol reference, not a
+    // hashtag (see the post-scan filter in extract_all).
+    const auto is_noise_hashtag = [&](const std::string& tag) -> bool {
+        if (tag.size() < 4) return true;
+        if (!is_alpha_lc(tag.front())) return true;
+        if (std::any_of(tag.begin(), tag.end(),
+                        [](unsigned char c) { return is_digit(c) != 0; })) {
+            return true;
+        }
+        if (tag.find('_') != std::string::npos) return true;
+        static const std::unordered_set<std::string_view> noise = {
+            "include", "define", "pragma", "ifdef", "ifndef", "endif",
+            "else", "elif", "undef", "error", "warning", "line",
+            "region", "endregion", "import", "using", "module", "alignas",
+        };
+        const std::string lower_tag = to_lower(tag);
+        return noise.count(lower_tag) != 0;
+    };
 
     auto scan_batch = [&](const std::string& buf) {
         if (buf.empty()) return;
@@ -893,7 +1069,40 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
         {
             std::vector<std::string> tmp;
             findAllGroup1(re.hashTag, buf, tmp);
-            r.num_hash_tags += tmp.size();
+            for (auto& tag : tmp) {
+                if (is_noise_hashtag(tag)) {
+                    ++hashtag_suppressed;
+                    continue;
+                }
+                hashtag_candidates.push_back(std::move(tag));
+            }
+        }
+
+        // Local base64 candidates: long base64 runs whose decode is mostly
+        // printable are embedded payloads / config blobs worth flagging
+        // without any network round-trip (CyberChef scan may add more later).
+        if (local_b64_flags.size() < kMaxLocalB64Flags) {
+            std::vector<span_t> spans;
+            findAllSpans(base64_candidate_re(), buf, spans);
+            for (const auto& sp : spans) {
+                if (local_b64_flags.size() >= kMaxLocalB64Flags) break;
+                const std::string_view cand = buf.substr(sp.pos, sp.len);
+                std::string decoded;
+                if (!base64_decode(cand, decoded)) continue;
+                if (decoded.size() < 24) continue;
+                std::size_t printable = 0;
+                for (unsigned char c : decoded) {
+                    if (c >= 0x20 && c < 0x7f) ++printable;
+                }
+                if (printable * 10 < decoded.size() * 6) continue;  // < 60% printable
+                encoded_flag_t flag;
+                flag.recipe = "local-base64";
+                flag.original = std::string(cand.substr(0, 96));
+                flag.decoded = decoded.substr(0, 160);
+                flag.indicators = {"high-printable-decode"};
+                findAll(re.url, decoded, flag.urls);
+                local_b64_flags.push_back(std::move(flag));
+            }
         }
 
         // EMBER-style string indicators (see string_indicator_defs). Literal
@@ -972,13 +1181,74 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
 
     std::size_t processed = 0;
     std::size_t skipped_empty = 0;
+    std::size_t skipped_low_printable = 0;
+    std::size_t local_xor_flags = 0;
 
     for (const auto& s : strings) {
         if (s.empty()) {
             ++skipped_empty;
             continue;
         }
+
+        // Drop low-printable-ratio fragments: binary blobs that slipped
+        // through the strings extractor carry no extractable IOCs and only
+        // slow the regex scan down.
+        {
+            std::size_t printable = 0;
+            for (unsigned char c : s) {
+                if ((c >= 0x20 && c < 0x7f) || c == '\n' || c == '\t' || c == '\r') {
+                    ++printable;
+                }
+            }
+            if (printable * 10 < s.size() * 7) {  // < 70% printable
+                ++skipped_low_printable;
+                continue;
+            }
+        }
         ++processed;
+
+        // Bare identifier index for the post-scan hashtag filter: a "#tag"
+        // whose body also occurs as a plain identifier in the binary is a
+        // symbol reference (LLVM function name, macro), not a social tag.
+        if (s.size() >= 4 && s.size() <= 48 && is_alpha_lc(s.front())) {
+            bool ident = true;
+            for (unsigned char c : s) {
+                if (!(is_alpha_lc(c) || is_digit(c) || c == '_')) {
+                    ident = false;
+                    break;
+                }
+            }
+            if (ident) bare_identifiers.insert(to_lower(s));
+        }
+
+        // Entropy-gated single-byte XOR candidates: fully printable strings
+        // with high Shannon entropy often store a XOR'd payload/URL. Crib for
+        // known plaintexts; capped per run to bound worst-case cost.
+        if (local_xor_flags < kMaxLocalXorFlags &&
+            s.size() >= 32 && s.size() <= 4096 &&
+            shannon_entropy(s) >= 6.0) {
+            bool all_printable = true;
+            for (unsigned char c : s) {
+                if (c < 0x20 || c >= 0x7f) { all_printable = false; break; }
+            }
+            if (all_printable) {
+                int key = 0;
+                std::string decoded;
+                std::string crib;
+                if (xor_crib_find(s, key, decoded, crib)) {
+                    ++local_xor_flags;
+                    encoded_flag_t flag;
+                    char key_hex[8];
+                    std::snprintf(key_hex, sizeof(key_hex), "0x%02X", key);
+                    flag.recipe = std::string("local-xor1(") + key_hex + ")";
+                    flag.original = s.substr(0, 96);
+                    flag.decoded = decoded.substr(0, 160);
+                    flag.indicators = {crib};
+                    findAll(re.url, decoded, flag.urls);
+                    r.encoded_flags.push_back(std::move(flag));
+                }
+            }
+        }
 
         const bool did_refang = needs_refang(s);
         if (did_refang) ++refang_count;
@@ -1007,6 +1277,43 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
         add_error(r.errors, extractor_error::empty_input,
                   "All provided strings were empty");
         return r;
+    }
+
+    for (auto& flag : local_b64_flags) {
+        r.encoded_flags.push_back(std::move(flag));
+    }
+
+    // Post-scan hashtag filter: candidates whose body appears as a bare
+    // identifier anywhere in the binary are symbol references, not social
+    // tags (e.g. "; #ReadTB" next to LLVM's bare "ReadTB" symbols).
+    {
+        std::unordered_set<std::string> counted;
+        for (auto& tag : hashtag_candidates) {
+            if (bare_identifiers.count(to_lower(tag)) != 0) {
+                ++hashtag_suppressed;
+                continue;
+            }
+            if (counted.insert(to_lower(tag)).second) {
+                ++r.num_hash_tags;
+            }
+        }
+    }
+
+    // Minimum two distinct hits per family keyword: one string containing a
+    // family name (or worse, a generic term like "virus") is weak static
+    // evidence; two independent strings are what a real family trace looks
+    // like. Suppressed singles are counted and logged, never silently lost.
+    std::size_t family_suppressed = 0;
+    {
+        std::unordered_map<std::string_view, std::size_t> counts;
+        for (const auto& h : r.family_hits) ++counts[h.keyword];
+        std::vector<ioc_results_t::family_hit> kept;
+        kept.reserve(r.family_hits.size());
+        for (const auto& h : r.family_hits) {
+            if (counts[h.keyword] >= 2) kept.push_back(h);
+            else ++family_suppressed;
+        }
+        r.family_hits = std::move(kept);
     }
 
     r.num_urls    = r.urls.size();
@@ -1043,15 +1350,20 @@ ioc_results_t extract_all(const std::vector<std::string>& strings) {
     }
 
     LOG_INFO("ioc: extract_all: done in {:.3f}s — strings={} (empty={}, "
-             "refanged={}, single-scan={}), batches={}, "
+             "low-printable={}, refanged={}, single-scan={}), batches={}, "
              "urls={}, domains={}, ips={}, emails={}, hashes={} (md5={}, "
-             "sha1={}, sha256={}, sha512={}), hashtags={}, family_hits={}, "
-             "errors={}",
-             seconds_since(started), processed, skipped_empty, refang_count,
+             "sha1={}, sha256={}, sha512={}), hashtags={} (suppressed={}), "
+             "family_hits={} (suppressed_singles={}), "
+             "encoded_flags={} (base64={}, xor={}), errors={}",
+             seconds_since(started), processed, skipped_empty,
+             skipped_low_printable, refang_count,
              single_scan_count, batch_count,
              r.num_urls, r.num_domains, r.num_ips, r.num_emails,
              r.hashes.size(), r.num_md5, r.num_sha1, r.num_sha256, r.num_sha512,
-             r.num_hash_tags, r.family_hits.size(), r.errors.messages.size());
+             r.num_hash_tags, hashtag_suppressed,
+             r.family_hits.size(), family_suppressed,
+             r.encoded_flags.size(), local_b64_flags.size(), local_xor_flags,
+             r.errors.messages.size());
 
     return r;
 }

@@ -1,0 +1,36 @@
+# jinja2 template -> /home/qilin/.config/systemd/user/qilin-service.service
+# target user: qilin
+# payload dir : /home/qilin/.config/systemd/qilin-service/  (app_dir)
+#   contains: qilin-script.py (entry point, copied from _qiling_script.py)
+#             rootfs/         (copied from examples/rootfs at deploy time)
+# NOTE: the harness is ONE-SHOT per sample - script_args must contain the
+#       sample path (e.g. script_args="<app_dir>/samples/bad.exe"). The unit
+#       is enabled at deploy time and started manually per sample:
+#         systemctl --user start qilin-service.service
+# note: systemd user units are loaded only from ~/.config/systemd/user/
+#   directly - the payload stays in the qilin-service/ subdirectory and the
+#   rendered unit is installed one level up (or linked:
+#   systemctl --user link ~/.config/systemd/qilin-service/qilin-service.service ).
+# fill vars: description, app_dir, python_bin, script_args, log_file,
+#            service_user, timeout_start_sec
+# install (as qilin):
+#   systemctl --user daemon-reload
+#   systemctl --user enable qilin-service.service
+[Unit]
+Description=Qiling CPU-emulation analysis agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=qilin
+WorkingDirectory=/home/qilin/.config/systemd/qilin-service
+ExecStart=/usr/bin/python3 /home/qilin/.config/systemd/qilin-service/qilin-script.py --rootfs /home/qilin/.config/systemd/qilin-service/rootfs 
+Environment=QILING_ROOTFS=/home/qilin/.config/systemd/qilin-service/rootfs
+Environment=PYTHONUNBUFFERED=1
+TimeoutStartSec=1h
+StandardOutput=append:/home/qilin/.config/systemd/qilin-service/qilin-service.log
+StandardError=append:/home/qilin/.config/systemd/qilin-service/qilin-service.log
+
+[Install]
+WantedBy=default.target

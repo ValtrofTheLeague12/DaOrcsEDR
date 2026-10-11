@@ -1,0 +1,9 @@
+# General PE knowledge - metadata only. No disassembly, no extraction, no
+# strings/IOCs, no ML, no local services. Section table, byte entropy,
+# packer/compiler detection, Windows mitigations (DEP/ASLR/CFG/...),
+# Authenticode signature status and debug symbols - the "what kind of
+# binary is this?" answer.
+name: pe_info
+description: General PE knowledge - sections, entropy, packer, mitigations, signature, debug symbols
+
+phases: [sections, histogram, packer, guards, signature, debug]

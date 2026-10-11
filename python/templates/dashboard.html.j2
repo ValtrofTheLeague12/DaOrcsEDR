@@ -1069,11 +1069,46 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
     <div class="stat-card"><div class="sv">{{ payload.capa.mbc_ids|length }}</div><div class="sl">MBC IDs</div></div>
   </div>
   <div class="card" style="margin-bottom:16px">
-    <h3>ATT&CK &amp; MBC Mappings</h3>
+    <h3>ATT&amp;CK &amp; MBC Mappings</h3>
     <div style="display:flex;flex-wrap:wrap;gap:5px">
       {% for a in payload.capa.attack_ids %}<span class="chip purple">{{ a }}</span>{% endfor %}
-      {% for m in payload.capa.mbc_ids %}<span class="chip orange">{{ m }}</span>{% endfor %}
+      {% set md = payload.capa.mbc_details or {} %}
+      {%- for m in payload.capa.mbc_ids -%}
+      {%- set d = md.get(m) -%}
+      {%- set tip = (d.description if d and d.description else m) -%}
+      <span class="chip orange" title="{{ tip|e|replace('\n', ' ')|truncate(240) }}">{% if d and d.name %}{{ m }} {{ d.name|e }}{% else %}{{ m }}{% endif %}</span>
+      {%- endfor -%}
     </div>
+  </div>
+  {% set mbc_view = payload.capa.mbc_view or [] %}
+  {% if mbc_view %}
+  <div class="card" style="margin-bottom:16px">
+    <h3>MBC Behaviors by Objective ({{ payload.capa.mbc_ids|length }} ids)</h3>
+    {% for group in mbc_view %}
+    <div class="sx-tac" style="margin-bottom:8px">
+      <h4>{{ group.objective|e }}<b>{{ group.entries|length }}</b></h4>
+      {% for e in group.entries %}
+      <div class="d3f-tech">
+        <h5>
+          {%- if e.url -%}<a href="{{ e.url|e }}" target="_blank" rel="noopener"><code>{{ e.id|e }}</code></a>
+          {%- else -%}<code>{{ e.id|e }}</code>{%- endif -%}
+          {{ e.name|e }}
+          {%- if e.kind %} <span class="tk-sub">{{ e.kind|e }}</span>{% endif %}
+          {%- if e.parent %} <span class="tk-tacmeta">via {{ e.parent|e }}</span>{% endif %}
+          {%- if e.detection_rules %} <span class="tk-hits">{{ e.detection_rules }} detection rule(s)</span>{% endif %}
+        </h5>
+        {% if e.attack_ids %}
+        <div class="dt-chips">{% for t in e.attack_ids %}<span class="dt-chip">{{ t|e }}</span>{% endfor %}</div>
+        {% endif %}
+        {% if e.description %}
+        <p style="color:var(--dim);font-size:12px;margin:4px 0 0;line-height:1.45">{{ e.description|e|truncate(420) }}</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
   </div>
   <div class="card">
     <h3>Capabilities ({{ payload.capa.capabilities|length }})</h3>

@@ -332,7 +332,12 @@ void run_strings_and_ioc(context& ctx) {
       print_warn("CyberChef API unreachable (" + scan.error +
                  "); encoded-string flagging skipped");
     } else {
-      ctx.ioc_results.encoded_flags = std::move(scan.flagged);
+      // Append, don't assign: extract_all already produced local base64 /
+      // single-byte-XOR candidates that must survive a CyberChef pass that
+      // found nothing extra.
+      for (auto& f : scan.flagged) {
+        ctx.ioc_results.encoded_flags.push_back(std::move(f));
+      }
       print_section("Encoded strings (CyberChef)");
       print_kv_colored(
           "Checked",

@@ -1,0 +1,6 @@
+# Strings extraction: printable/UTF-16 strings, IOC mining (IPs/domains/URLs)
+# and the CyberChef decode pass (rot13/xor/base32/58/85, hex, UTF-16LE, ...).
+name: extract_strings
+description: Extract strings + IOC mining (IPs/domains/URLs), CyberChef decode pass
+
+phases: [strings]

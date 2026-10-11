@@ -1,7 +1,9 @@
 {
     "VM_NAME": "TestingVM",
     "VM_IP": "192.168.56.105",
-    "PORT":22,
+    "VM_HOST":"qilin",
+    "VM_PASSWORD":"imoom",
+    "VM_PORT":22,
     "GENERATE_ROOTFS_IF_NOT_FOUND":"True",
     "START_VM_IF_NOT_FOUND":"True"
 }

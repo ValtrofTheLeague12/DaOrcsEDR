@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -137,10 +138,7 @@ def load_graphs_json(path: str, stem: str = "") -> dict:
         print(f"warn: {path} has no 'graphs' object", file=sys.stderr)
         return {}
 
-    # Keys are FILE STEMS (<stem>_callgraph, <stem>_section_<name>), not digraph
-    # names. Every r2 callgraph is called "digraph code", so selecting by graph
-    # name would mix samples. When a stem is given, only that sample's graphs
-    # are eligible.
+  
     def owned(stem_key: str) -> bool:
         if not stem:
             return True
@@ -611,6 +609,157 @@ def build_d3fend_section(capa: dict) -> dict:
         print(f"warn: d3fend: {exc}", file=sys.stderr)
         empty["reason"] = str(exc)
         return empty
+
+
+def load_mbc_details(capa: dict) -> dict:
+    """MBC id -> catalog entry for the ids this sample matched.
+
+    Primary source is the ``mbc_details`` object the C++ exporter now writes
+    into capa.json (from the vendored MBC STIX bundle). Older runs lack it, so
+    fall back to reading the bundle here - same offline-first rule as
+    :func:`_attack_matrix_from_cache`. A missing bundle is an empty dict, and
+    the bare ids still render.
+    """
+    if not isinstance(capa, dict):
+        return {}
+    details = capa.get("mbc_details")
+    if isinstance(details, dict) and details:
+        return details
+
+    wanted = {str(t).strip().upper() for t in (capa.get("mbc_ids") or [])
+              if str(t).strip()}
+    for capability in capa.get("capabilities") or []:
+        if not isinstance(capability, dict):
+            continue
+        for hit in (capability.get("mbc") or []):
+            if isinstance(hit, dict) and hit.get("id"):
+                wanted.add(str(hit["id"]).strip().upper())
+    if not wanted:
+        return {}
+
+    root = HERE.parent
+    cache_dir = os.environ.get("CTI_CACHE_DIR") or "cti-cache"
+    candidates = []
+    env = os.environ.get("MBC_BUNDLE")
+    if env:
+        candidates.append(Path(env))
+    candidates.append(Path(cache_dir) / "knowledge" / "mbc.json")
+    candidates.append(root / "mbc-stix2.1" / "mbc" / "mbc.json")
+    bundle = next((p for p in candidates if p.is_file()), None)
+    if bundle is None:
+        return {}
+    try:
+        with bundle.open("r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except Exception as exc:
+        print(f"warn: mbc: cannot read {bundle}: {exc}", file=sys.stderr)
+        return {}
+    objects = doc.get("objects") if isinstance(doc, dict) else None
+    if not isinstance(objects, list):
+        return {}
+
+    objective_names: dict[str, str] = {}
+    behaviors: dict[str, dict] = {}
+    methods: list[dict] = []
+    for obj in objects:
+        if not isinstance(obj, dict):
+            continue
+        otype = obj.get("type")
+        if otype == "malware-objective":
+            if obj.get("id") and obj.get("name"):
+                objective_names[obj["id"]] = obj["name"]
+        elif otype == "malware-behavior":
+            behaviors[obj.get("id") or ""] = obj
+        elif otype == "malware-method":
+            methods.append(obj)
+
+    behavior_objectives: dict[str, list[str]] = {}
+    for stix_id, obj in behaviors.items():
+        names = []
+        for ref in obj.get("objective_refs") or []:
+            name = objective_names.get(ref)
+            if name and name not in names:
+                names.append(name)
+        behavior_objectives[stix_id] = names
+
+    attack_re = re.compile(r"(?:^|[^A-Za-z0-9])(T\d{4}(?:\.\d{3})?)")
+    out: dict[str, dict] = {}
+
+    def add(obj: dict, kind: str) -> None:
+        defn = obj.get("obj_defn") if isinstance(obj.get("obj_defn"), dict) else {}
+        ext = str(defn.get("external_id") or "").strip().upper()
+        if not ext or ext in out:
+            return
+        description = str(defn.get("description") or "").strip()
+        objectives = list(behavior_objectives.get(obj.get("id") or "", []))
+        parent = ""
+        url = str(defn.get("url") or "").strip()
+        if kind == "method":
+            ref = obj.get("behavior_ref") or ""
+            parent_obj = behaviors.get(ref) or {}
+            parent_defn = (parent_obj.get("obj_defn")
+                           if isinstance(parent_obj.get("obj_defn"), dict) else {})
+            pid = str(parent_defn.get("external_id") or "").strip().upper()
+            pname = str(parent_obj.get("name") or "").strip()
+            if pid:
+                parent = (pid + " " + pname).strip()
+            if not objectives:
+                objectives = list(behavior_objectives.get(ref, []))
+            if not url:
+                url = str(parent_defn.get("url") or "").strip()
+        rules = obj.get("detection_rules")
+        out[ext] = {
+            "kind": kind,
+            "name": str(obj.get("name") or "").strip(),
+            "description": description,
+            "url": url,
+            "parent": parent,
+            "objectives": objectives,
+            "attack_ids": sorted({m for m in attack_re.findall(description)}),
+            "detection_rules": len(rules) if isinstance(rules, list) else 0,
+        }
+
+    for obj in behaviors.values():
+        add(obj, "behavior")
+    for obj in methods:
+        add(obj, "method")
+    return {k: v for k, v in out.items() if k in wanted}
+
+
+def build_mbc_view(details: dict, mbc_ids) -> list[dict]:
+    """Observed MBC entries grouped under their objectives.
+
+    The malware-analysis analog of the ATT&CK tactic view: one block per
+    objective (Execution, Persistence, ...), each listing the behaviors /
+    methods capa matched, with description, ATT&CK cross-links and detection
+    rule counts. An entry with several objectives appears under each; entries
+    the catalog does not know land under ``(uncategorized)``.
+    """
+    entries = []
+    seen = set()
+    for raw in mbc_ids or []:
+        key = str(raw).strip().upper()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        d = details.get(key) or {}
+        entries.append({
+            "id": key,
+            "kind": d.get("kind") or "",
+            "name": d.get("name") or "",
+            "description": (d.get("description") or "").strip(),
+            "url": d.get("url") or "",
+            "parent": d.get("parent") or "",
+            "objectives": d.get("objectives") or [],
+            "attack_ids": d.get("attack_ids") or [],
+            "detection_rules": int(d.get("detection_rules") or 0),
+        })
+    groups: dict[str, list] = {}
+    for entry in entries:
+        for objective in (entry["objectives"] or ["(uncategorized)"]):
+            groups.setdefault(objective, []).append(entry)
+    return [{"objective": objective, "entries": groups[objective]}
+            for objective in sorted(groups, key=str.lower)]
 
 
 def _attack_matrix_from_cache(capa: dict) -> list[dict]:
@@ -1097,6 +1246,13 @@ def build_payload(args) -> dict:
     asm_embed, asm_size = clamp_bytes(asm, max(1024, embed_budget // 2))
     asm_truncated = asm_embed is None
 
+    # MBC catalog enrichment: names / objectives / descriptions for the bare
+    # ids capa matched. Read from capa.json's mbc_details when the exporter
+    # wrote it, else rebuilt from the vendored STIX bundle - so regenerating a
+    # dashboard on an older run still gets the named view.
+    mbc_details = load_mbc_details(capa)
+    mbc_view = build_mbc_view(mbc_details, capa.get("mbc_ids") or [])
+
     return {
         "meta": {
             "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
@@ -1112,6 +1268,8 @@ def build_payload(args) -> dict:
             "capabilities": capa.get("capabilities") or [],
             "attack_ids": capa.get("attack_ids") or [],
             "mbc_ids": capa.get("mbc_ids") or [],
+            "mbc_details": mbc_details,
+            "mbc_view": mbc_view,
         },
         "imports": {"dlls": dlls, "summary": iat.get("summary") or {}},
         "got": got,

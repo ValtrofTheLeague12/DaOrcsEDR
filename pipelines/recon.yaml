@@ -1,0 +1,11 @@
+
+# imports - no capa/radare2/ML. Good middle ground between quick and default.
+name: recon
+description: Recon - sections, strings/IOCs, imports, entropy, packer hints
+
+stages:
+  - name: identify
+    phases: [sections, histogram, packer, signature, guards]
+
+  - name: contents
+    phases: [strings, iat, got, opcodes, debug]

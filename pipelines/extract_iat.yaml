@@ -1,0 +1,6 @@
+# PE import address table extraction. MalAPI classifies every imported
+# function against its remote-api catalogue (Sleep, VirtualProtect, ...).
+name: extract_iat
+description: PE import address table (IAT) + MalAPI classification of imported functions
+
+phases: [iat]

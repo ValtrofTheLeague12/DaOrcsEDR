@@ -1,0 +1,145 @@
+{
+  "entries": [
+    {
+      "bytes": 239702,
+      "name": "C:/Users/The4thReich/Desktop/IAProject/a.exe",
+      "sha256": "6773fee7acd3cd311f68283230834a803f1549f20c338717f283bbeae823dfc3"
+    },
+    {
+      "bytes": 39425608,
+      "name": "model.txt",
+      "sha256": "f04edcbcf4a2ede52f17806651f2569277c6c4cb3591b317c12fc59b170266b4"
+    },
+    {
+      "bytes": 1140,
+      "name": "model.txt.metrics.json",
+      "sha256": "a611d9623f4fc45a7d758ea82ad7f0dbcaaedf6184944d8a0de575b246ee21ca"
+    },
+    {
+      "bytes": 48907,
+      "name": "report/01_roc_curve.png",
+      "sha256": "aad68998cd60c8071967a78370f025e07057f6a026429c1ccf23688010bf9f4d"
+    },
+    {
+      "bytes": 35666,
+      "name": "report/02_pr_curve.png",
+      "sha256": "40a293b08c3d46940305e637015309459f131a2e88d7ccbcda505b28b5c498e8"
+    },
+    {
+      "bytes": 47733,
+      "name": "report/03_score_distribution.png",
+      "sha256": "7f51bd9273b53651a058c272a0ac984b00f750e61637a4fa7e3bcdaf70003507"
+    },
+    {
+      "bytes": 76079,
+      "name": "report/04_threshold_tradeoff.png",
+      "sha256": "953afb3eddd876d58fa9afd6e65d7769fc614ec792e1347b45ec046081311f86"
+    },
+    {
+      "bytes": 149782,
+      "name": "report/05_errors_by_week.png",
+      "sha256": "e2acf64f0b2aaad51317d6643a36dc55559a705d484f231537bf939c02c6ab2a"
+    },
+    {
+      "bytes": 74520,
+      "name": "report/06_feature_group_importance.png",
+      "sha256": "da0af00e008fe2cf93feccc32a3c94e5401c4d6cb48130f694a5675af49bec37"
+    },
+    {
+      "bytes": 55573,
+      "name": "report/07_confusion_matrix.png",
+      "sha256": "0bdbfedd5718b0e8f20016b71ace5b590f6a7d41f2ba07e5704f18c837bf7304"
+    },
+    {
+      "bytes": 81563,
+      "name": "report/08_corpus_composition.png",
+      "sha256": "426f3350549bcf0b03fdd852475d6209f3f2c78853073204b09a8fd4f0dbd15d"
+    },
+    {
+      "bytes": 174215,
+      "name": "report/09_dataset_correlation.png",
+      "sha256": "4fb01e694a55c8512e6e6293f44218b6c21adbc388bd3eb1d2ddd82b66ab4273"
+    },
+    {
+      "bytes": 296516,
+      "name": "report/a/report.fields.csv",
+      "sha256": "6f4e9afca6088c94d75b0bfc98cccc9643d59c714a69084fa4fffb2310e99d81"
+    },
+    {
+      "bytes": 118202,
+      "name": "report/a/report.vector.csv",
+      "sha256": "703d874b6afa75265ebb54b3e127d8d81edb87732ccc277f8140db85feb45630"
+    },
+    {
+      "bytes": 214,
+      "name": "report/data_quality.csv",
+      "sha256": "326f1597a601a026055ecb3b77723d77efdbf19003227781d0db454c981e8a2c"
+    },
+    {
+      "bytes": 353961,
+      "name": "report/dataset_profile.csv",
+      "sha256": "7322e6688caf4484f6f8b6d2a367ce9ab748af23bdfeca470f47e3eab9d76510"
+    },
+    {
+      "bytes": 146,
+      "name": "report/dataset_summary.csv",
+      "sha256": "ab6be01fbcf2ef6bfc0ea052dd82dd983a197aadbdf790f21622f367f9de96ea"
+    },
+    {
+      "bytes": 590918,
+      "name": "report/errors_test.csv",
+      "sha256": "2c1224f099866732e940671398c35a37c6bbeced8dfec1f8bead9a2d991c3703"
+    },
+    {
+      "bytes": 71030,
+      "name": "report/feature_importance.csv",
+      "sha256": "c49826cd42f5f50b0ac1bc1222c4fe5e2a07d62cc3f7b89aac3c25a2568c457a"
+    },
+    {
+      "bytes": 462,
+      "name": "report/metrics_summary.csv",
+      "sha256": "77dceb3cb4280dd89cd1804a9e03b317699b25d2d2e5fe4a0d65658cd056ccaf"
+    },
+    {
+      "bytes": 1352418,
+      "name": "report/pr_points.csv",
+      "sha256": "6cad1e02b10e65b822c8bcac6bca1bf481314926da195b612f40f3fb2e04a474"
+    },
+    {
+      "bytes": 1106574,
+      "name": "report/predictions_challenge.csv",
+      "sha256": "db28292a7f3efc4aa4cb9bd91c9cc593ef613b959b995126dc3cf63977e35b04"
+    },
+    {
+      "bytes": 19274652,
+      "name": "report/predictions_test.csv",
+      "sha256": "b18d43737d3d2e891b15a457a513265a8e97128258d64f9710b96f1b41a56a4a"
+    },
+    {
+      "bytes": 48999152,
+      "name": "report/predictions_train.csv",
+      "sha256": "d8b8354afe3879948879cd1a086f21d3bfaf06c0566a1bdbb5a69c4e244fe927"
+    },
+    {
+      "bytes": 88881,
+      "name": "report/roc_points.csv",
+      "sha256": "106f04801f3ad9df1cbf7429444146cc5fc2aa4d7e0a76ee1ce25ba66a3b629d"
+    },
+    {
+      "bytes": 34481,
+      "name": "report/threshold_curve.csv",
+      "sha256": "ccc4fff8eb14c1b31e947679fe1f912e667c72c360522690ab4810d11bc98d17"
+    },
+    {
+      "bytes": 49885,
+      "name": "templates/report.html.j2",
+      "sha256": "af9c9c2cbe3f8b46e5666bfe9928a9d5984eaefb549f70d2258a592527ec1dcf"
+    },
+    {
+      "bytes": 206,
+      "name": "test_metrics.json",
+      "sha256": "0e0c9ad0ee0e304d4216e2fc57c43c66cc17a30aa32986e3dca15e90cc207687"
+    }
+  ],
+  "generator": "ml/report_pdf.py"
+}
