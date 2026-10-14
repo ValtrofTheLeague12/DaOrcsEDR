@@ -1,0 +1,26 @@
+# Qiling emulation tooling (python/qiling/)
+#
+#   _qiling_script.py           - the PE harness; runs ON THE ANALYSIS VM
+#   _configure_quiling.py       - host-side staging: renders the systemd unit,
+#                                 uploads rootfs.tar.gz + the harness over SSH
+#   _check_vm_connection.py     - VM reachability and VirtualBox power control
+#   _collect_qiling_artifacts.py- SFTP recovery of report zips / service logs
+#   _build_dashboard.py         - summary.json -> self-contained dashboard.html
+#   _cti_intel.py               - SHA256 lookups against abuse.ch / VirusTotal
+#
+# IMPORTANT: qiling and yara-python are installed ON THE VM, not here. The
+# harness (_qiling_script.py) is uploaded by _configure_quiling.py and executed
+# by qilin-service there against the rootfs in ~/qiling_dlls. Installing them
+# host-side would pull in a large, mostly unused native dependency tree.
+#
+# Host-side dependencies only:
+#
+#   python\ -m pip install -r python\qiling\requirements.txt
+#
+# paramiko, colorama, Jinja2 and requests are already pinned by
+# python/requirements.txt; they are listed here so this file stands alone.
+
+paramiko
+colorama
+Jinja2
+requests

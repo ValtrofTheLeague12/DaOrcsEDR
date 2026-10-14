@@ -2,12 +2,12 @@
 
 Status is derived from what actually exists in the repo:
 
-  Qiling  - the PE harness (qiling_dlls/_qiling_script.py), its rootfs
+  Qiling  - the PE harness (python/qiling/_qiling_script.py), its rootfs
             archive, whether `qiling` is importable, and its trace log.
   SSH     - trust is checked against the current user's ~/.ssh/known_hosts
             (override with known_hosts_file in admin-terminal/vms.json).
   Power   - VirtualBox/Qiling VM state comes from
-            qiling_dlls/_check_vm_connection.py (same functions as the
+            python/qiling/_check_vm_connection.py (same functions as the
             standalone script); full control lives in section 10,
             Qiling VM Control (admin-terminal/qiling_vm.py).
   CAPEv2  - the agent-side config (kafka-agent/config/cape-config.yaml)
@@ -30,8 +30,12 @@ from datetime import datetime
 
 import core
 
+# qiling_dlls/ is the VM payload (rootfs archive + tree, vm_info.json) and is
+# also the remote_dir name, so it keeps its basename. The Python tooling lives
+# in python/qiling/ with the rest of the tree.
 QILING_DIR = os.path.join(core.REPO, "qiling_dlls")
-QILING_SCRIPT = os.path.join(QILING_DIR, "_qiling_script.py")
+QILING_SCRIPTS = os.path.join(core.REPO, "python", "qiling")
+QILING_SCRIPT = os.path.join(QILING_SCRIPTS, "_qiling_script.py")
 ROOTFS_TAR = os.path.join(QILING_DIR, "rootfs.tar.gz")
 ROOTFS_DIR = os.path.join(QILING_DIR, "examples", "rootfs")
 QILING_TRACE = os.path.join(QILING_DIR, "trace.log")
@@ -49,6 +53,7 @@ DEFAULT_VMS = {
         "remote_dir": "qiling_dlls",
         "remote_python": "python3",
         "identity_file": "",
+        "password": "",
         "path": "/",
         "known_hosts_file": "~/.ssh/known_hosts",
         "hint": "Analysis VM SSH; verify its key in ~/.ssh/known_hosts",
@@ -91,7 +96,7 @@ def load_vms() -> dict:
         merged["port"] = port if 0 <= port <= 65535 else defaults["port"]
         for field in ("name", "kind", "path", "hint", "username",
                       "remote_dir", "known_hosts_file", "remote_python",
-                      "identity_file"):
+                      "identity_file", "password"):
             if field in defaults and not isinstance(merged.get(field), str):
                 merged[field] = defaults[field]
         if merged["kind"] not in ("http", "tcp", "local", "ssh"):
@@ -108,17 +113,17 @@ def save_vms(data: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# qiling_dlls/_check_vm_connection.py - shared VM checks and power control
+# python/qiling/_check_vm_connection.py - shared VM checks and power control
 # ---------------------------------------------------------------------------
 _VM_CHECK = None
 
 
 def vm_check():
-    """Load the VM check module (qiling_dlls/_check_vm_connection.py) once."""
+    """Load the VM check module (python/qiling/_check_vm_connection.py) once."""
     global _VM_CHECK
     if _VM_CHECK is not None:
         return _VM_CHECK
-    path = os.path.join(QILING_DIR, "_check_vm_connection.py")
+    path = os.path.join(QILING_SCRIPTS, "_check_vm_connection.py")
     if not os.path.isfile(path):
         raise RuntimeError(f"VM check module missing: {path}")
     spec = importlib.util.spec_from_file_location("check_vm_connection", path)

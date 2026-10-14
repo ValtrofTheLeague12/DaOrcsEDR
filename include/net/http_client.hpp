@@ -22,6 +22,8 @@ struct http_request {
   std::string body;                                              // POST payload
   long        timeout_ms = 20000;
   std::size_t max_response_bytes = 128u * 1024u * 1024u;
+  std::chrono::steady_clock::time_point deadline =
+      std::chrono::steady_clock::time_point::max();
 };
 
 struct http_response {

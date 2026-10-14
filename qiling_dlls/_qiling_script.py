@@ -16,6 +16,7 @@ Usage:
                                sample.exe [sample args...]
 """
 
+## OR SFTP CLIE
 # ---------------------------------------------------------------------------
 # 0. Qiling 1.4.6 compatibility shim  (MUST run before importing qiling.os.*)
 # ---------------------------------------------------------------------------
@@ -80,14 +81,10 @@ import traceback
 try:
     from qiling import Qiling
     from qiling.const import QL_VERBOSE, QL_INTERCEPT
-    HAVE_QILING = True
-    QILING_IMPORT_ERROR = None
 except Exception as e:
-    HAVE_QILING = False
-    QILING_IMPORT_ERROR = e
-    Qiling = None
-    QL_VERBOSE = None
-    QL_INTERCEPT = None
+    print(f"[!] Failed to import qiling: {e}")
+    print("    Install with:  pip install qiling==1.4.6")
+    sys.exit(1)
 
 # --- optional YARA ---
 try:
@@ -96,72 +93,10 @@ try:
 except Exception:
     HAVE_YARA = False
 
-if HAVE_QILING:
-    ENTER, EXIT, CALL = QL_INTERCEPT.ENTER, QL_INTERCEPT.EXIT, QL_INTERCEPT.CALL
-else:
-    ENTER = EXIT = CALL = None
+ENTER, EXIT, CALL = QL_INTERCEPT.ENTER, QL_INTERCEPT.EXIT, QL_INTERCEPT.CALL
 
 TOOL_VERSION = "qiling_harness_pe v5"
 MAX_EVENTS = 2_000_000
-
-# --- PE arch pre-check (stdlib only, runs before Qiling) -------------------
-SUPPORTED_MACHINES = {0x014C: "x86", 0x8664: "x64"}
-ROOTFS_ARCH_DIRS = {"x86": "x86_windows", "x64": "x8664_windows"}
-
-
-def pe_machine(path):
-    """Return the PE COFF Machine field, or None if not a PE."""
-    with open(path, "rb") as f:
-        if f.read(2) != b"MZ":
-            return None
-        f.seek(0x3C)
-        e_lfanew = f.read(4)
-        if len(e_lfanew) != 4:
-            return None
-        f.seek(struct.unpack("<I", e_lfanew)[0])
-        if f.read(4) != b"PE\x00\x00":
-            return None
-        machine = f.read(2)
-        if len(machine) != 2:
-            return None
-        return struct.unpack("<H", machine)[0]
-
-
-def check_sample_arch(sample, rootfs):
-    """Fail fast unless sample is an x86/x64 PE matching the given rootfs.
-
-    Returns (arch, resolved_rootfs) where resolved_rootfs is the
-    arch-specific subfolder Qiling 1.4.6 needs (it does not auto-append it).
-    """
-    machine = pe_machine(sample)
-    if machine is None:
-        sys.exit(f"[-] {sample}: not a PE file (missing MZ/PE headers)")
-    arch = SUPPORTED_MACHINES.get(machine)
-    if arch is None:
-        sys.exit(f"[-] unsupported PE machine 0x{machine:04X} - only x86 "
-                 f"(0x14C) and x64 (0x8664) Windows binaries are supported")
-    rf_name = os.path.basename(os.path.normpath(rootfs))
-    want = ROOTFS_ARCH_DIRS[arch]
-    if rf_name in ROOTFS_ARCH_DIRS.values():
-        if rf_name != want:
-            have = "x64" if rf_name == "x8664_windows" else "x86"
-            sys.exit(f"[-] sample is {arch} but --rootfs points at '{rf_name}' "
-                     f"({have} system files) - pass the parent rootfs dir "
-                     f"or '{want}' instead")
-        resolved = os.path.normpath(rootfs)
-    else:
-        child = os.path.join(rootfs, want)
-        if not os.path.isdir(child):
-            found = ", ".join(sorted(
-                d for d in (os.path.join(rootfs, x)
-                            for x in ROOTFS_ARCH_DIRS.values())
-                if os.path.isdir(d))) or "none"
-            sys.exit(f"[-] rootfs '{rootfs}' has no {want}/ subfolder "
-                     f"(arch dirs found: {found})")
-        resolved = os.path.normpath(child)
-    print(f"[+] sample arch: {arch} (machine 0x{machine:04X})")
-    print(f"[+] rootfs resolved for {arch}: {resolved}")
-    return arch, resolved
 
 
 # ----------------------------------------------------------------------------
@@ -778,7 +713,7 @@ BAD_OUI = {bytes.fromhex(x) for x in ("080027", "0a0027", "000569", "000c29", "0
 
 
 def hide(arg, wide, tokens, errval, label):
-    def h(ql, _pc, p, r):
+    def h(ql, p, r):
         try:
             v = read_str(ql, p.get(arg), wide)
             low = v.lower().replace("/", "\\")
@@ -792,18 +727,18 @@ def hide(arg, wide, tokens, errval, label):
     return h
 
 
-def x_isdbg(ql, _pc, p, r):
+def x_isdbg(ql, p, r):
     rec("evade", "IsDebuggerPresent -> 0")
     return 0
 
 
-def x_crdp(ql, _pc, p, r):
+def x_crdp(ql, p, r):
     wint(ql, p.get("pbDebuggerPresent"), 0, 4)
     rec("evade", "CheckRemoteDebuggerPresent -> FALSE")
     return None
 
 
-def x_ntqip(ql, _pc, p, r):
+def x_ntqip(ql, p, r):
     cls = p.get("ProcessInformationClass")
     buf = p.get("ProcessInformation")
     if buf is None or cls is None:
@@ -823,28 +758,28 @@ def x_ntqip(ql, _pc, p, r):
     return None
 
 
-def x_tick(ql, _pc, p, r):
+def x_tick(ql, p, r):
     st.tick += 1
     return st.tick & 0xFFFFFFFF
 
 
-def x_tick64(ql, _pc, p, r):
+def x_tick64(ql, p, r):
     st.tick += 1
     return st.tick
 
 
-def x_qpc(ql, _pc, p, r):
+def x_qpc(ql, p, r):
     st.tick += 1
     wint(ql, p.get("lpPerformanceCount"), st.tick * 10_000, 8)
     return 1
 
 
-def x_qpf(ql, _pc, p, r):
+def x_qpf(ql, p, r):
     wint(ql, p.get("lpFrequency"), 10_000_000, 8)
     return 1
 
 
-def x_sysinfo(ql, _pc, p, r):
+def x_sysinfo(ql, p, r):
     si = p.get("lpSystemInfo")
     if si:
         wint(ql, si + (0x20 if st.arch64 else 0x14), 4, 4)
@@ -852,7 +787,7 @@ def x_sysinfo(ql, _pc, p, r):
     return None
 
 
-def x_cursor(ql, _pc, p, r):
+def x_cursor(ql, p, r):
     pt = p.get("lpPoint")
     if pt:
         x, y = 200 + (st.tick * 7) % 900, 150 + (st.tick * 13) % 500
@@ -863,7 +798,7 @@ def x_cursor(ql, _pc, p, r):
     return None
 
 
-def x_adapters(ql, _pc, p, r):
+def x_adapters(ql, p, r):
     if r != 0:
         return None
     node = p.get("pAdapterInfo")
@@ -892,7 +827,7 @@ def x_adapters(ql, _pc, p, r):
     return None
 
 
-def x_valloc(ql, _pc, p, r):
+def x_valloc(ql, p, r):
     try:
         prot = int(p.get("flProtect") or 0)
     except Exception:
@@ -905,7 +840,7 @@ def x_valloc(ql, _pc, p, r):
     return None
 
 
-def x_vprot(ql, _pc, p, r):
+def x_vprot(ql, p, r):
     try:
         prot = int(p.get("flNewProtect") or 0)
     except Exception:
@@ -919,13 +854,13 @@ def x_vprot(ql, _pc, p, r):
 
 
 # --- v4 addition: EXIT-argument logging for high-value APIs ---
-def x_createfile(ql, _pc, p, r):
+def x_createfile(ql, p, r):
     name = read_str(ql, p.get("lpFileName"), "W" in getattr(r, "_name", "") or False) if False else None
     # Above is dead — we determine wide-ness from the API name in the wrapper below
     return None
 
 
-def x_regquery(ql, _pc, p, r):
+def x_regquery(ql, p, r):
     if r != 0:
         return None
     data_ptr = p.get("lpData")
@@ -951,7 +886,7 @@ def x_regquery(ql, _pc, p, r):
     return None
 
 
-def x_proc32next(ql, _pc, p, r):
+def x_proc32next(ql, p, r):
     if r == 0:
         return None
     lppe = p.get("lppe")
@@ -969,7 +904,7 @@ def x_proc32next(ql, _pc, p, r):
     return None
 
 
-def x_query_dword_info(ql, _pc, p, r):
+def x_query_dword_info(ql, p, r):
     if r != 0:
         return None
     buf = p.get("lpBuffer")
@@ -980,7 +915,7 @@ def x_query_dword_info(ql, _pc, p, r):
     return None
 
 
-def x_enum_process(ql, _pc, p, r):
+def x_enum_process(ql, p, r):
     if r == 0:
         return None
     return None
@@ -1365,24 +1300,6 @@ def main():
     ap.add_argument("sample_args", nargs=argparse.REMAINDER)
     a = ap.parse_args()
 
-    _arch, a.rootfs = check_sample_arch(a.sample, a.rootfs)
-
-    sample_abs = os.path.abspath(a.sample)
-    rootfs_abs = os.path.abspath(a.rootfs)
-    if not sample_abs.startswith(rootfs_abs + os.sep):
-        # Qiling's windows loader maps the exe path relative to the rootfs
-        # (GetModuleFileName etc.) and crashes if the sample lives outside it,
-        # so stage a copy inside the arch rootfs dir like qiling's own examples.
-        dest = os.path.join(rootfs_abs, os.path.basename(sample_abs))
-        shutil.copy2(sample_abs, dest)
-        print(f"[+] sample staged inside rootfs: {dest}")
-        a.sample = dest
-
-    if not HAVE_QILING:
-        print(f"[!] Failed to import qiling: {QILING_IMPORT_ERROR}")
-        print("    Install with:  pip install qiling==1.4.6")
-        sys.exit(1)
-
     st.zip_path = os.path.abspath(a.out)
     st.workdir = tempfile.mkdtemp(prefix="qiling_harness_")
     os.makedirs(os.path.join(st.workdir, "dumps"), exist_ok=True)
@@ -1464,13 +1381,14 @@ def main():
         z = make_zip()
         if z:
             print(f"\n[+] results written to {z}")
-            if not a.keep_temp:
-                try:
-                    shutil.rmtree(st.workdir, ignore_errors=True)
-                except Exception:
-                    pass
         else:
             print(f"\n[!] zip failed; staging dir kept at {st.workdir}")
+            return
+        if not a.keep_temp:
+            try:
+                shutil.rmtree(st.workdir, ignore_errors=True)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

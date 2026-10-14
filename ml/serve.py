@@ -677,9 +677,49 @@ def make_app(model_path: Path, root: Path | None = None,
     app.config["MODEL"] = model
     root = root.resolve() if root else None
 
+    # OpenAPI for this service, so the admin panel can document the scorer the
+    # same way it documents everything else instead of parsing this file. The
+    # UI assets are served from flasgger's own static directory, not a CDN.
+    #
+    # `headers` must be an empty list: flasgger iterates it in an after_request
+    # hook on every response, and a missing key turns every route into a 500.
+    # `/apidocs/` and `/apispec_1.json` are exempt from the token check below -
+    # a spec that required a bearer token could not be read by the very tool
+    # that documents it.
+    try:
+        from flasgger import Swagger
+
+        Swagger(app, config={
+            "title": "Malware ML scorer",
+            "version": "1.0",
+            "description": (
+                "EMBER2024 LightGBM scorer. Scores a PE file, or a feature "
+                "vector the caller has already extracted, and returns the "
+                "malicious probability with an optional feature attribution."
+            ),
+            "headers": [],
+            "specs": [{
+                "endpoint": "apispec_1",
+                "route": "/apispec_1.json",
+                "rule_filter": lambda rule: True,
+                "model_filter": lambda tag: True,
+            }],
+            "swagger_ui": True,
+            "specs_route": "/apidocs/",
+            "static_url_path": "/flasgger_static",
+        })
+    except ImportError:  # pragma: no cover - optional dependency
+        log.info("[*] flasgger not installed; /apidocs unavailable")
+
     @app.before_request
     def _require_token():
         if request.method == "OPTIONS" or request.endpoint == "static":
+            return None
+        # The spec and the Swagger UI describe this service; requiring a bearer
+        # token for them would make the documentation unreadable by the panel
+        # that consumes it. They expose no sample data and no scoring ability.
+        if request.path in ("/apidocs/", "/apispec_1.json") or \
+                request.path.startswith("/flasgger_static/"):
             return None
         if _authorised(token, request.remote_addr,
                        request.headers.get("Authorization", "")):
@@ -816,10 +856,28 @@ def make_app(model_path: Path, root: Path | None = None,
 
     @app.get("/health")
     def health():
+        """Liveness, plus the model's identity and metrics
+        ---
+        tags: [ml]
+        responses:
+          200:
+            description: Service is up, with model metadata
+        """
         return jsonify({"status": "ok", **meta()}), 200
 
     @app.get("/model")
     def model_info():
+        """Model card: feature layout, training metrics and version
+        ---
+        tags: [ml]
+        responses:
+          200:
+            description: Feature layout plus metrics
+        description: >
+          Offsets index the EMBER v3 thrember vector. Use this to build a
+          vector yourself and call POST /score/vector instead of shipping the
+          file.
+        """
         return jsonify({**meta(),
                         "feature_layout": [{"name": n, "offset": o, "dim": d}
                                            for n, o, d in layout()],
@@ -827,6 +885,41 @@ def make_app(model_path: Path, root: Path | None = None,
 
     @app.post("/score")
     def score():
+        """Score a PE file and return its malicious probability
+        ---
+        tags: [ml]
+        parameters:
+          - name: body
+            in: body
+            required: true
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                  description: Path to the file to score, on this host
+                threshold:
+                  type: number
+                  description: Decision threshold, 0-1
+                explain:
+                  type: integer
+                  description: Return the top N contributing features
+                analyzer_groups:
+                  type: object
+                  description: Optional train/serve skew check by group
+            description: JSON body naming the file on disk
+        responses:
+          200:
+            description: Verdict, probability and optional attribution
+          401:
+            description: Token required
+          422:
+            description: File could not be vectorised
+        description: >
+          The path is resolved on THIS host and must be inside the configured
+          root when one is set; a client-supplied path is never forwarded
+          anywhere else.
+        """
         body = request.get_json(silent=True) or {}
         threshold, err = parse_threshold()
         if err:
@@ -857,6 +950,34 @@ def make_app(model_path: Path, root: Path | None = None,
 
     @app.post("/score/vector")
     def score_vector():
+        """Score an already-extracted feature vector
+        ---
+        tags: [ml]
+        parameters:
+          - name: body
+            in: body
+            required: true
+            schema:
+              type: object
+              properties:
+                vector:
+                  type: array
+                  description: Feature vector, one float per EMBER v3 column
+                threshold:
+                  type: number
+                explain:
+                  type: integer
+            description: JSON body carrying the vector
+        responses:
+          200:
+            description: Verdict with vector_sha256 for reproducibility
+          400:
+            description: vector missing or malformed
+        description: >
+          Skips file parsing entirely. The response carries the SHA-256 of the
+          exact bytes scored, so a verdict can be tied to the vector that
+          produced it.
+        """
         body = request.get_json(silent=True) or {}
         threshold, err = parse_threshold()
         if err:
@@ -881,6 +1002,31 @@ def make_app(model_path: Path, root: Path | None = None,
 
     @app.post("/score/batch")
     def score_batch():
+        """Score many feature vectors in one call
+        ---
+        tags: [ml]
+        parameters:
+          - name: body
+            in: body
+            required: true
+            schema:
+              type: object
+              properties:
+                vectors:
+                  type: array
+                  description: Array of feature vectors, max 10000
+                threshold:
+                  type: number
+            description: JSON body carrying the vectors
+        responses:
+          200:
+            description: One verdict per vector, in request order
+          400:
+            description: vectors empty, malformed, or over the limit
+        description: >
+          Capped at 10000 vectors. Results correspond positionally to the
+          input, so a caller can keep its own labels aligned.
+        """
         body = request.get_json(silent=True) or {}
         threshold, err = parse_threshold()
         if err:

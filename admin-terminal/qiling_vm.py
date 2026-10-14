@@ -1,13 +1,13 @@
 """Qiling VM Control - verify, start, and stop the Qiling analysis VM.
 
-Every check and power action delegates to qiling_dlls/_check_vm_connection.py,
+Every check and power action delegates to python/qiling/_check_vm_connection.py,
 the same functions the standalone script uses, so the menu and the CLI can
 never disagree.  VM identity (name, IP, SSH port) comes from
 qiling_dlls/vm_info.json; SSH trust settings come from
 admin-terminal/vms.json.
 
     [s] start (headless)   [g] graceful shutdown (ACPI power button)
-    [p] power off (hard)   [c] check SSH login (paramiko, strict host keys)
+    [p] power off (hard)   [c] check SSH login (paramiko, AutoAddPolicy)
 """
 from __future__ import annotations
 

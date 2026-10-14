@@ -1,0 +1,16 @@
+# Optional evidence bundle automation for static_analyzer.
+# Standard JSON reports under exports/<sample>_analysis/ are unaffected.
+
+# Build exports/<sample>_artifact/ with a deterministic tar.gz, SHA-256,
+# manifest, and README. This is opt-in; false leaves report exports unchanged.
+store_artifact: false
+
+# Upload the evidence bundle using MEGAcmd. Uploading also creates/stores the
+# local bundle, so this may be enabled without setting store_artifact.
+upload_artifacts: true
+
+# MEGA destination parent. The bundle lands in <remote_root>/<sample>_artifact.
+remote_root: /
+
+# Maximum upload command runtime in seconds.
+timeout_seconds: 900

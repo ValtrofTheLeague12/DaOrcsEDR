@@ -3,9 +3,14 @@
 # payload dir : /home/qilin/.config/systemd/qilin-service/  (app_dir)
 #   contains: qilin-script.py (entry point, copied from _qiling_script.py)
 #             rootfs/         (copied from examples/rootfs at deploy time)
+#             samples/<stem>/ one directory per sample:
+#                 <name>.exe              uploaded sample
+#                 <stem>_qiling_out.zip   analysis results (harness --out)
 # NOTE: the harness is ONE-SHOT per sample - script_args must contain the
-#       sample path (e.g. script_args="<app_dir>/samples/bad.exe"). The unit
-#       is enabled at deploy time and started manually per sample:
+#       sample path, e.g.
+#         script_args="--out <app_dir>/samples/bad/bad_qiling_out.zip bad/bad.exe"
+#       (relative sample paths resolve from WorkingDirectory=app_dir). Re-render
+#       the unit per sample, then:
 #         systemctl --user start qilin-service.service
 # note: systemd user units are loaded only from ~/.config/systemd/user/
 #   directly - the payload stays in the qilin-service/ subdirectory and the

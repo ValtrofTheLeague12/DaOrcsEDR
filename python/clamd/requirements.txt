@@ -1,0 +1,30 @@
+# ClamAV host-side tooling (python/clamd/)
+#
+#   clamd-python.py             - scanner client; talks to clamd over a unix
+#                                 socket or TCP and emits one JSON doc
+#   scan_remote.py              - SSH driver: uploads a sample to the analysis
+#                                 VM, runs clamd-python.py there, pulls results
+#   _collect_clamd_artifacts.py - SFTP recovery of already-written result JSONs
+#   _configure_clamd.pyc        - host-side orchestrator (see note below)
+#
+# NOTE on _configure_clamd.pyc: the .py source is gone (it was 13762 bytes,
+# last modified 2026-10-11) but the bytecode survives and still imports, because
+# it sits in the legacy sourceless location. It is the orchestrator that reads
+# vm_info.json and shells out to scan_remote.py / clamd-python.py. Do not delete
+# it and do not expect a matching _configure_clamd.py to appear:
+#
+#   import sys; sys.path.insert(0, "python/clamd")
+#   import _configure_clamd          # works; exposes run_scan, collect_one,
+#                                    # update_database, run_connection_test
+#
+# Install into the project venv (the one the C++ analyzer and admin-terminal
+# already use), not a per-tool venv:
+#
+#   python\ -m pip install -r python\clamd\requirements.txt
+#
+# paramiko and colorama are already pinned by python/requirements.txt; they are
+# listed here so this file stands alone.
+
+clamd
+paramiko
+colorama

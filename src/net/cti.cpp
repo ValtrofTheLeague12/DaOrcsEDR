@@ -1636,7 +1636,8 @@ const kev_entry* kev_db::find(const std::string& cve) const {
 // downloads
 // ===========================================================================
 bool refresh_file(http_client& http, const std::string& url, const std::string& path,
-                  std::chrono::seconds max_age, bool offline, std::string& warning, std::string& error) {
+                  std::chrono::seconds max_age, bool offline, std::string& warning, std::string& error,
+                  std::chrono::steady_clock::time_point deadline) {
   std::error_code ec;
   const bool have = fs::exists(path, ec) && fs::file_size(path, ec) > 0;
   if (have) {
@@ -1659,6 +1660,7 @@ bool refresh_file(http_client& http, const std::string& url, const std::string& 
   request.url = url;
   request.timeout_ms = 180000;
   request.max_response_bytes = 256u * 1024u * 1024u;
+  request.deadline = deadline;
   request.headers.push_back({"Accept", "application/json"});
   std::string problem;
   http_response response;
@@ -1874,7 +1876,14 @@ class base_provider : public provider {
       f.error = "budget: time budget exhausted while waiting for the " + name_ + " rate limit";
       return f;
     }
-    const http_response response = ctx.http.perform(request);
+    http_request bounded_request = request;
+    bounded_request.deadline = std::min(bounded_request.deadline, ctx.deadline);
+    const http_response response = ctx.http.perform(bounded_request);
+    if (ctx.deadline != std::chrono::steady_clock::time_point::max() &&
+        std::chrono::steady_clock::now() >= ctx.deadline) {
+      f.error = "budget: time budget exhausted during the " + name_ + " request";
+      return f;
+    }
     if (!response.transport_ok) {
       f.error = "request failed: " + response.error;
       f.retryable = true;
@@ -3170,6 +3179,7 @@ bool pipeline::network_available() const {
     request.url = cfg_.urls.attack_stix;
     request.timeout_ms = 5000;
     request.max_response_bytes = 1;
+    request.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     const http_response response = http_->perform(request);
     return response.transport_ok;
   } catch (...) {
@@ -3244,9 +3254,18 @@ bool pipeline::load_knowledge_impl() {
 
   const fs::path dir = (cfg_.cache_dir.empty() ? fs::temp_directory_path() / "cti-knowledge" : fs::path(cfg_.cache_dir) / "knowledge");
   std::string warning, error;
+  const auto deadline = cfg_.provider_budget_seconds > 0
+                            ? run_started_ + std::chrono::seconds(cfg_.provider_budget_seconds)
+                            : std::chrono::steady_clock::time_point::max();
 
   const std::string attack_path = (dir / "enterprise-attack.json").string();
-  if (refresh_file(*http_, cfg_.urls.attack_stix, attack_path, std::chrono::hours(cfg_.attack_max_age_hours), cfg_.offline, warning, error)) {
+  if (refresh_file(*http_, cfg_.urls.attack_stix, attack_path,
+                   std::chrono::hours(cfg_.attack_max_age_hours), cfg_.offline,
+                   warning, error, deadline)) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      warnings_.push_back("MITRE ATT&CK: time budget exhausted before loading the knowledge bundle");
+      return attack_.loaded() || kev_.loaded();
+    }
     if (!warning.empty()) warnings_.push_back("MITRE ATT&CK: " + warning);
     if (!attack_.load_file(attack_path, error)) warnings_.push_back("MITRE ATT&CK: " + error);
   } else {
@@ -3256,7 +3275,17 @@ bool pipeline::load_knowledge_impl() {
   warning.clear();
   error.clear();
   const std::string kev_path = (dir / "known_exploited_vulnerabilities.json").string();
-  if (refresh_file(*http_, cfg_.urls.cisa_kev, kev_path, std::chrono::hours(cfg_.kev_max_age_hours), cfg_.offline, warning, error)) {
+  if (std::chrono::steady_clock::now() >= deadline) {
+    warnings_.push_back("CISA KEV unavailable: CTI time budget exhausted before download");
+    return attack_.loaded() || kev_.loaded();
+  }
+  if (refresh_file(*http_, cfg_.urls.cisa_kev, kev_path,
+                   std::chrono::hours(cfg_.kev_max_age_hours), cfg_.offline,
+                   warning, error, deadline)) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      warnings_.push_back("CISA KEV: time budget exhausted before loading the knowledge bundle");
+      return attack_.loaded() || kev_.loaded();
+    }
     if (!warning.empty()) warnings_.push_back("CISA KEV: " + warning);
     if (!kev_.load_file(kev_path, error)) warnings_.push_back("CISA KEV: " + error);
   } else {
@@ -3416,6 +3445,7 @@ void pipeline::run_round(int round, const progress_callback& progress, std::vect
 // ---------------------------------------------------------------------------
 report pipeline::run(const progress_callback& progress) {
   const auto started = std::chrono::steady_clock::now();
+  run_started_ = started;
   try {
     load_knowledge();
   } catch (const std::exception& ex) {
@@ -3423,7 +3453,6 @@ report pipeline::run(const progress_callback& progress) {
   } catch (...) {
     warnings_.push_back("CTI knowledge loading failed: unknown error");
   }
-  run_started_ = std::chrono::steady_clock::now();      // the budget covers the provider queries
   expand_static();
 
   // Hashes of empty input: they identify "no data", not a file (e.g. an empty string constant).

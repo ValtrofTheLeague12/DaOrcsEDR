@@ -190,6 +190,45 @@ def clamp_bytes(obj, limit: int):
     return obj, size
 
 
+def is_main_like_name(name: str) -> bool:
+    """Mirror of the collector's rule: r2 entryNN flags plus the CRT entry
+    names PE/ELF actually use, after stripping sym./imp./reloc. and leading
+    underscores. Both sides must agree or the embedded subset would differ
+    from what the collector kept."""
+    lowered = (name or "").lower()
+    for prefix in ("sym.", "imp.", "reloc."):
+        if lowered.startswith(prefix):
+            lowered = lowered[len(prefix):]
+            break
+    lowered = lowered.lstrip("_")
+    if lowered.startswith("entry"):
+        return True
+    return lowered in {
+        "main", "wmain", "winmain", "wwinmain", "dllmain", "start",
+        "maincrtstartup", "wmaincrtstartup", "dllcrtstartup",
+    }
+
+
+def select_entry_main_functions(fns: list, extraction: dict) -> list:
+    """Entry-point and main-like subset kept when the full assembly dataset
+    does not fit the embed budget (the large-binary cut, applied at embed
+    time)."""
+    summary = extraction.get("summary") or {}
+    try:
+        entrypoint = int(str(summary.get("entrypoint") or "0"), 16)
+    except ValueError:
+        entrypoint = 0
+    selected = []
+    for fn in fns:
+        if not isinstance(fn, dict):
+            continue
+        if entrypoint and fn.get("offset") == entrypoint:
+            selected.append(fn)
+        elif is_main_like_name(fn.get("name") or ""):
+            selected.append(fn)
+    return selected
+
+
 def read_text(path: str) -> str:
     if not path:
         return ""
@@ -611,6 +650,184 @@ def build_d3fend_section(capa: dict) -> dict:
         return empty
 
 
+# ---------------------------------------------------------------------------
+# MITRE CAR: the CAR tab answers "which CAR analytics detect the techniques
+# capa matched?". The data is the local checkout under mittre_car/, parsed
+# with regexes only (no PyYAML - the dashboard must import anywhere python/
+# does). Loaders are ported from python/qiling/_build_dashboard.py and extended
+# with description / analytic types / platforms so the table shows what each
+# analytic actually does, not only its title.
+# ---------------------------------------------------------------------------
+CAR_DIR = HERE.parent / "mittre_car"
+_CAR_ID_RE = re.compile(r"^id:\s*(CAR-[\w-]+)\s*$", re.M)
+_CAR_TITLE_RE = re.compile(r"^title:\s*(.+?)\s*$", re.M)
+_CAR_DESC_HEAD_RE = re.compile(r"^description:\s*([|>][-+]?)?[ \t]*([^\n]*)$", re.M)
+_CAR_DESC_BLOCK_RE = re.compile(r"^description:[^\n]*\n((?:[ \t]+[^\n]*\n?)*)", re.M)
+_CAR_LIST_RES = {
+    key: re.compile(rf"^{key}:\s*\n((?:[ \t]+-[^\n]*\n?)+)", re.M)
+    for key in ("analytic_types", "platforms")
+}
+_CAR_ITEM_RE = re.compile(r"^[ \t]+-[ \t]*(.+?)\s*$", re.M)
+_CAR_COV_TECH_RE = re.compile(r"^[ \t]*-[ \t]*technique:[ \t]*(T[\d.]+)\s*$", re.M)
+_CAR_COV_LEVEL_RE = re.compile(r"^[ \t]*coverage:[ \t]*(\w+)\s*$", re.M)
+
+_CAR_CACHE: dict = {}
+
+
+def _car_list(match: re.Match | None) -> list[str]:
+    """Scalar items of a YAML block list, quotes stripped."""
+    if not match:
+        return []
+    return [m.group(1).strip().strip("'\"") for m in _CAR_ITEM_RE.finditer(match.group(1))]
+
+
+def _car_description(text: str) -> str:
+    """Analytic description: inline scalar or |- / > block form."""
+    head = _CAR_DESC_HEAD_RE.search(text)
+    if not head:
+        return ""
+    inline = (head.group(2) or "").strip().strip("'\"")
+    if inline:
+        return inline[:320]
+    block = _CAR_DESC_BLOCK_RE.search(text)
+    if not block:
+        return ""
+    lines = [ln.strip() for ln in block.group(1).splitlines() if ln.strip()]
+    desc = re.sub(r"^#+\s*", "", " ".join(lines))
+    return desc[:320]
+
+
+def _car_yaml_fields(text: str) -> dict:
+    """id / title / description / types / platforms."""
+    id_m = _CAR_ID_RE.search(text)
+    title_m = _CAR_TITLE_RE.search(text)
+    return {
+        "id": id_m.group(1) if id_m else "",
+        "title": title_m.group(1).strip() if title_m else "",
+        "desc": _car_description(text),
+        "types": _car_list(_CAR_LIST_RES["analytic_types"].search(text)),
+        "platforms": _car_list(_CAR_LIST_RES["platforms"].search(text)),
+    }
+
+
+def load_car_analytics() -> dict:
+    """{technique_id: [analytic row, ...]} from mittre_car/analytics/*.yaml."""
+    if "analytics" in _CAR_CACHE:
+        return _CAR_CACHE["analytics"]
+    out: dict[str, list] = {}
+    analytics_dir = CAR_DIR / "analytics"
+    if analytics_dir.is_dir():
+        for yml in sorted(analytics_dir.glob("*.y*ml")):
+            try:
+                text = yml.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            base = _car_yaml_fields(text)
+            base["id"] = base["id"] or yml.stem
+            base["title"] = base["title"] or yml.stem
+            for m in _CAR_COV_TECH_RE.finditer(text):
+                lm = _CAR_COV_LEVEL_RE.search(text[m.end():m.end() + 240])
+                row = dict(base, level=(lm.group(1) if lm else ""))
+                out.setdefault(m.group(1), []).append(row)
+    _CAR_CACHE["analytics"] = out
+    return out
+
+
+def load_car_coverage_layer() -> dict:
+    """{technique_id: analytic count} from the newest CAR coverage layer."""
+    if "layer" in _CAR_CACHE:
+        return _CAR_CACHE["layer"]
+    counts: dict[str, int] = {}
+    cov_dir = CAR_DIR / "docs" / "coverage"
+    files = (sorted(cov_dir.glob("car_analytic_coverage_*.json"))
+             if cov_dir.is_dir() else [])
+    if files:
+        try:
+            layer = json.loads(files[-1].read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"warn: car: cannot read {files[-1].name}: {exc}", file=sys.stderr)
+            layer = {}
+        for t in layer.get("techniques") or []:
+            tid = str(t.get("techniqueID") or "")
+            if not tid:
+                continue
+            n = 1
+            for md in t.get("metadata") or []:
+                if md.get("name") == "Analytic Count":
+                    try:
+                        n = int(md.get("value", 1))
+                    except (TypeError, ValueError):
+                        n = 1
+            counts[tid] = counts.get(tid, 0) + n
+    _CAR_CACHE["layer"] = counts
+    return counts
+
+
+def build_car_section(capa: dict) -> dict:
+    """The CAR tab: MITRE CAR analytics covering the techniques capa matched.
+
+    Same capa source as the D3FEND tab (d3fend_map.collect_from_capa) so the
+    two defensive views always talk about the same technique set.
+    """
+    empty = {
+        "available": False, "reason": "", "source": "mittre_car/",
+        "generated_at": "",
+        "totals": {"techniques": 0, "covered": 0, "uncovered": 0, "analytics": 0},
+        "techniques": [],
+    }
+    if d3fend_map is None:
+        empty["reason"] = D3FEND_IMPORT_ERROR or "python/d3fend_map.py is unavailable"
+        return empty
+    found = d3fend_map.collect_from_capa(capa)
+    if not found:
+        empty["reason"] = "capa matched no ATT&CK techniques for this sample"
+        return empty
+    if not CAR_DIR.is_dir():
+        empty["reason"] = f"MITRE CAR checkout missing at {CAR_DIR}"
+        return empty
+
+    analytics = load_car_analytics()
+    layer_counts = load_car_coverage_layer()
+
+    rows = []
+    covered = uncovered = analytic_hits = 0
+    for tid in sorted(found):
+        info = found[tid]
+        hits = analytics.get(tid) or []
+        layer_n = layer_counts.get(tid, len(hits))
+        if hits or layer_n:
+            covered += 1
+        else:
+            uncovered += 1
+        analytic_hits += len(hits)
+        rows.append({
+            "id": tid,
+            "name": info.get("name") or tid,
+            "sub": info.get("sub") or "",
+            "tactics": info.get("tactics") or [],
+            "layer_count": layer_n,
+            "analytics": hits,
+        })
+    # Covered first (most analytics first): the uncovered tail is the
+    # detection gap an analyst cares about.
+    rows.sort(key=lambda r: (0 if (r["analytics"] or r["layer_count"]) else 1,
+                             -(r["layer_count"] or len(r["analytics"])),
+                             r["id"]))
+    return {
+        "available": True,
+        "reason": "",
+        "source": "mittre_car/ (local MITRE CAR checkout)",
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "totals": {
+            "techniques": len(rows),
+            "covered": covered,
+            "uncovered": uncovered,
+            "analytics": analytic_hits,
+        },
+        "techniques": rows,
+    }
+
+
 def load_mbc_details(capa: dict) -> dict:
     """MBC id -> catalog entry for the ids this sample matched.
 
@@ -933,6 +1150,50 @@ def build_attack_matrix(cti_doc: dict, corr: dict, capa: dict | None = None) -> 
             "source": source}
 
 
+def build_die_view(doc: dict) -> dict:
+    """Detect It Easy view: the normalized die_scan.py document, plus a one-line
+    summary the header row renders. Empty dict when the DIE phase was skipped
+    (no artifact), which the template shows as "not scanned"."""
+    if not doc:
+        return {}
+
+    def labels(key: str) -> list[str]:
+        out = []
+        for e in (doc.get(key) or []):
+            if not isinstance(e, dict):
+                continue
+            name = str(e.get("name") or "")
+            version = str(e.get("version") or "")
+            out.append(f"{name} {version}".strip())
+        return out
+
+    packers = labels("packers")
+    compilers = labels("compilers")
+    linkers = labels("linkers")
+    others = labels("others")
+    if packers:
+        summary = "; ".join(packers)
+    elif not doc.get("unknown_only"):
+        summary = "; ".join(compilers + linkers + others) or "not packed"
+    else:
+        summary = "no match (DIE reported Unknown)"
+    return {
+        "available": True,
+        "ok": bool(doc.get("ok")),
+        "packed": bool(doc.get("packed")),
+        "unknown_only": bool(doc.get("unknown_only")),
+        "unknown_count": int(doc.get("unknown_count") or 0),
+        "databases": int(doc.get("databases") or 0),
+        "die_version": str(doc.get("die_version") or ""),
+        "packers": packers,
+        "compilers": compilers,
+        "linkers": linkers,
+        "others": others,
+        "summary": summary,
+        "seconds": float(doc.get("seconds") or 0.0),
+    }
+
+
 def build_payload(args) -> dict:
     fileinfo = load_json(args.fileinfo) or {}
     hashj = load_json(args.hash) or {}
@@ -950,6 +1211,9 @@ def build_payload(args) -> dict:
     # EMBER2024 model score (exports/<stem>_analysis/ml/<stem>_ml.json). Absent when the ML
     # phase was skipped (no service) — renders as an empty-state section.
     ml_doc = load_json(getattr(args, "ml", "")) or {}
+    # Detect It Easy scan (exports/<stem>_analysis/die/<stem>_die.json). Absent
+    # when the die phase was skipped (die-python not installed) or failed.
+    die_doc = load_json(getattr(args, "die", "")) or {}
     files = build_file_catalog(getattr(args, "files_root", ""),
                                max(256 * 1024, args.max_embed_bytes // 8))
 
@@ -1232,9 +1496,16 @@ def build_payload(args) -> dict:
         # used to drop the "Procedures & Tooling" tab on offline runs.
         cti_summary = {"attack_matrix": build_attack_matrix({}, {}, capa)}
 
-    packed = bool(extraction.get("packing", {}).get("packed"))
+    heuristic_packed = bool(extraction.get("packing", {}).get("packed"))
+    # Detect It Easy is authoritative on packing: fold its verdict into the
+    # LIEF heuristics so a packer they miss still flags the header row, and
+    # give the confirmation a small score bump (never double-counting the
+    # heuristic 30 - that keying is on the combined flag).
+    die_packed = bool(die_doc.get("packed"))
+    packed = heuristic_packed or die_packed
     score = 0
     score += 30 if packed else 0
+    score += 10 if die_packed else 0
     score += min(40, 4 * len(mal_rows))
     score += min(20, 2 * len(ioc.get("domains") or []) + 2 * len(ioc.get("ips") or []))
     score += min(10, 2 * len(ioc.get("family_hits") or []))
@@ -1243,8 +1514,30 @@ def build_payload(args) -> dict:
                "suspicious" if score >= 25 else "clean")
 
     embed_budget = args.max_embed_bytes
-    asm_embed, asm_size = clamp_bytes(asm, max(1024, embed_budget // 2))
+    asm_limit = max(1024, embed_budget // 2)
+    asm_embed, asm_size = clamp_bytes(asm, asm_limit)
     asm_truncated = asm_embed is None
+    asm_listed = len(asm) if isinstance(asm, list) else 0
+    # The collector pre-cuts _functions.json to the entry point and main-like
+    # functions once a binary exceeds its own cap: compare the listed count
+    # against radare2's discovered function count so the dashboard can still
+    # say how much was left out even though the full dataset is on disk.
+    r2_total = (radare2.get("counts") or {}).get("functions") or 0
+    asm_pre_cut = bool(r2_total and asm_listed < r2_total)
+    asm_total = r2_total if asm_pre_cut else asm_listed
+    asm_scope = "all"
+    if asm_truncated and isinstance(asm, list) and asm:
+        # The full dataset is over the embed budget: keep the entry point and
+        # main-like functions only - the same cut the collector applies when a
+        # binary's function list exceeds its own cap - instead of dropping the
+        # whole disassembly view.
+        subset = select_entry_main_functions(asm, extraction)
+        subset_embed, _subset_size = clamp_bytes(subset, asm_limit)
+        if subset_embed is not None:
+            asm_embed = subset_embed
+            asm_scope = "entry-main"
+    if asm_pre_cut:
+        asm_scope = "entry-main"
 
     # MBC catalog enrichment: names / objectives / descriptions for the bare
     # ids capa matched. Read from capa.json's mbc_details when the exporter
@@ -1273,6 +1566,7 @@ def build_payload(args) -> dict:
         },
         "imports": {"dlls": dlls, "summary": iat.get("summary") or {}},
         "got": got,
+        "die": build_die_view(die_doc),
         "extraction": {
             "summary": extraction.get("summary") or {},
             "sections": extraction.get("sections") or {},
@@ -1297,6 +1591,10 @@ def build_payload(args) -> dict:
         "asm": asm_embed or [],
         "asm_truncated": asm_truncated,
         "asm_bytes": asm_size,
+        "asm_total_functions": asm_total,
+        "asm_shown_functions": len(asm_embed) if asm_embed else 0,
+        "asm_scope": asm_scope,
+        "asm_pre_cut": asm_pre_cut,
         "graphs": {"callgraph": callgraph, "section": section_graph},
         "threat_graph": {"nodes": t_nodes, "links": t_links},
         "cti": cti_summary,
@@ -1304,6 +1602,7 @@ def build_payload(args) -> dict:
         "ml": ml_doc,
         "stix": build_stix_section(args, capa, cti_summary),
         "d3fend": build_d3fend_section(capa),
+        "car": build_car_section(capa),
         "charts": charts,
         "files": files,
     }
@@ -1337,6 +1636,7 @@ def verify_mappings(args, payload) -> list[str]:
         ("stix", lambda: payload.get("stix", {}).get("graph", {}).get("nodes"),
          "payload.stix.graph.nodes"),
         ("ml", lambda: payload.get("ml"), "payload.ml"),
+        ("die", lambda: payload.get("die"), "payload.die"),
         ("navigator", lambda: payload.get("stix", {}).get("layer", {}).get("techniques"),
          "payload.stix.layer.techniques"),
     ]
@@ -1370,7 +1670,7 @@ def verify_mappings(args, payload) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(add_help=True)
     for flag in ("fileinfo", "hash", "ioc", "extraction", "capa", "iat", "got",
-                 "radare2", "malapi", "cti", "stix", "navigator", "ml",
+                 "radare2", "malapi", "cti", "stix", "navigator", "ml", "die",
                  "out-dir", "out-name"):
         ap.add_argument("--" + flag, default="")
     ap.add_argument("--asm-json", default="")

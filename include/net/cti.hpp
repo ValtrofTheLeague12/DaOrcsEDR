@@ -517,7 +517,9 @@ class kev_db {
 // ---------------------------------------------------------------------------
 bool refresh_file(http_client& http, const std::string& url, const std::string& path,
                   std::chrono::seconds max_age, bool offline, std::string& warning,
-                  std::string& error);
+                  std::string& error,
+                  std::chrono::steady_clock::time_point deadline =
+                      std::chrono::steady_clock::time_point::max());
 
 // ===========================================================================
 // cti_providers.hpp
@@ -529,8 +531,8 @@ struct provider_context {
   bool              offline = false;
   const attack_db*  attack = nullptr;
   const kev_db*     kev = nullptr;
-  // Time budget (config::provider_budget_seconds). A provider must not wait on its rate limiter
-  // past it: it reports an error starting with "budget:" instead.
+  // Time budget (config::provider_budget_seconds). Requests and rate-limit waits
+  // must not run past it: providers report an error starting with "budget:".
   std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();
 };
 

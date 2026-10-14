@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -451,6 +452,48 @@ xref_asm_result_t dump_xref_calls(const std::string& sample,
                                   const std::vector<std::uint64_t>& targets,
                                   const options& opts = {},
                                   const xref_asm_options& dump = {});
+
+// ---------------------------------------------------------------------------
+// Call-site locations only (r2 -c "aflj" + "axtj")
+//
+// The same stages 0-1 as dump_xref_calls - function list, then cross
+// references per slot, then the enclosing function of every reference - but
+// without disassembling anything and without writing artifacts. Used by the
+// MalAPI report to answer "where does this binary reference Sleep?" while the
+// import phase is still running, several phases before the xref dump exists.
+//
+// `by_target` keeps every input target (empty vector when nothing references
+// it), so a caller can tell "resolved, no xrefs" from "never resolved".
+// ---------------------------------------------------------------------------
+
+struct callsite_t {
+  std::uint64_t address         = 0;   // VA of the reference itself
+  std::string   function;              // enclosing function, as r2 names it
+  std::uint64_t function_offset = 0;   // start of that function
+  std::uint64_t function_size   = 0;
+};
+
+struct call_sites_result_t {
+  status      st = status::ok;
+  std::string error;
+  double      seconds = 0.0;
+
+  std::size_t slots_input = 0;
+  std::size_t slots_with_xrefs = 0;
+  std::size_t sites_found = 0;
+
+  std::map<std::uint64_t, std::vector<callsite_t>> by_target;
+
+  std::string command_line;
+  std::string stderr_tail;
+  int         exit_code = 0;
+  std::string r2_version;
+};
+
+call_sites_result_t resolve_call_sites(const std::string& sample,
+                                       const std::vector<std::uint64_t>& targets,
+                                       const options& opts = {},
+                                       std::size_t max_slots = 512);
 
 // ---------------------------------------------------------------------------
 // Bulk extraction

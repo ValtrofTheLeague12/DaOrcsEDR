@@ -1,9 +1,12 @@
 #include "pipeline_planner.hpp"
 
+#include "crash_handler.hpp"
+#include "debug_dump_macro.hpp"
 #include "exporter.hpp"
 #include "logging.hpp"
 #include "phase_compression.hpp"
 #include "pipeline.hpp"
+#include "redact.hpp"
 
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
@@ -17,6 +20,8 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -60,6 +65,9 @@ const std::vector<phase_info>& build_catalog() {
        "got/<stem>_got.json", "", {}},
       {phase_id::histogram, "histogram", "byte histogram and entropy", "", "", {}},
       {phase_id::packer, "packer", "packer / compiler detection", "", "", {}},
+      {phase_id::die, "die",
+       "Detect It Easy packer/compiler identification (python bindings)",
+       "die/<stem>_die.json", "", {}},
       {phase_id::opcodes, "opcodes", "opcode statistics", "", "", {}},
       {phase_id::debug, "debug", "debug symbols / DWARF information", "", "", {}},
       {phase_id::signature, "signature", "Authenticode signature status", "", "", {}},
@@ -481,6 +489,21 @@ std::vector<std::filesystem::path> bare_candidates(const std::string& name) {
   return out;
 }
 
+std::vector<std::filesystem::path> artifact_config_candidates() {
+  std::vector<std::filesystem::path> out{
+      std::filesystem::current_path() / "config" / "artifacts.yaml"};
+  for (const std::filesystem::path& root : pipeline_roots()) {
+    out.push_back(root.parent_path() / "config" / "artifacts.yaml");
+    out.push_back(root.parent_path().parent_path() / "config" / "artifacts.yaml");
+  }
+  std::vector<std::filesystem::path> unique;
+  for (const auto& path : out) {
+    if (std::find(unique.begin(), unique.end(), path) == unique.end())
+      unique.push_back(path);
+  }
+  return unique;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -525,8 +548,9 @@ pipeline_config parse_default() {
       phase_id::generic_sections, phase_id::strings,
       phase_id::iat,              phase_id::got,
       phase_id::histogram,        phase_id::packer,
-      phase_id::opcodes,          phase_id::debug,
-      phase_id::signature,        phase_id::capa,
+      phase_id::die,              phase_id::opcodes,
+      phase_id::debug,            phase_id::signature,
+      phase_id::capa,
       phase_id::radare2,          phase_id::graphs,
       phase_id::xref,             phase_id::guards,
       phase_id::extraction,       phase_id::hexdump,
@@ -595,6 +619,69 @@ pipeline_config load(const std::string& spec) {
   return from_yaml_text(text, path);
 }
 
+artifact_options load_artifact_options() {
+  artifact_options options;
+  std::filesystem::path path;
+  for (const auto& candidate : artifact_config_candidates()) {
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(candidate, ec) && !ec) {
+      path = candidate;
+      break;
+    }
+  }
+  if (path.empty()) return options;
+
+  options.source = path.string();
+  YAML::Node root;
+  try {
+    root = YAML::LoadFile(path.string());
+  } catch (const std::exception& e) {
+    throw std::runtime_error(path.string() + ": invalid artifact config: " + e.what());
+  }
+  if (!root || !root.IsMap()) {
+    throw std::runtime_error(path.string() + ": artifact config must be a YAML map");
+  }
+
+  const std::set<std::string> allowed{
+      "store_artifact", "upload_artifacts", "remote_root", "timeout_seconds"};
+  for (const auto& entry : root) {
+    if (!entry.first.IsScalar()) {
+      throw std::runtime_error(path.string() + ": artifact config keys must be strings");
+    }
+    const std::string key = entry.first.Scalar();
+    if (allowed.find(key) == allowed.end()) {
+      throw std::runtime_error(path.string() + ": unknown artifact option '" + key + "'");
+    }
+  }
+  try {
+    if (root["store_artifact"]) options.store_artifact = root["store_artifact"].as<bool>();
+    if (root["upload_artifacts"]) options.upload_artifacts = root["upload_artifacts"].as<bool>();
+    if (root["remote_root"]) options.remote_root = root["remote_root"].as<std::string>();
+    if (root["timeout_seconds"]) options.timeout_seconds = root["timeout_seconds"].as<int>();
+  } catch (const YAML::Exception& e) {
+    throw std::runtime_error(path.string() + ": invalid artifact option value: " + e.what());
+  }
+  if (options.remote_root.empty()) {
+    throw std::runtime_error(path.string() + ": 'remote_root' must not be empty");
+  }
+  if (options.timeout_seconds < 1 || options.timeout_seconds > 86400) {
+    throw std::runtime_error(path.string() + ": 'timeout_seconds' must be between 1 and 86400");
+  }
+  std::vector<std::filesystem::path> script_candidates{
+      path.parent_path().parent_path() / "mega" / "upload.py",
+      std::filesystem::current_path() / "mega" / "upload.py"};
+  for (const auto& root : pipeline_roots())
+    script_candidates.push_back(root.parent_path() / "mega" / "upload.py");
+  for (const auto& candidate : script_candidates) {
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(candidate, ec) && !ec) {
+      options.uploader_script = candidate.string();
+      break;
+    }
+  }
+  return options;
+}
+
 void apply_environment(const pipeline_config& cfg) {
   for (const auto& [key, value] : cfg.environment) {
 #ifdef _WIN32
@@ -605,7 +692,15 @@ void apply_environment(const pipeline_config& cfg) {
 #else
     setenv(key.c_str(), value.c_str(), 1);
 #endif
-    LOG_DEBUG("planner: environment {}={}", key, value);
+    // Name-gated, not just scrubbed: redact::seed() only learns about a
+    // pipeline-exported value *after* apply_environment() put it in the
+    // environment, so a late-registered secret must not be printed here in the
+    // first place.
+    if (redact::is_secret_name(key)) {
+      LOG_DEBUG("planner: environment {}=<redacted>", key);
+    } else {
+      LOG_DEBUG("planner: environment {}={}", key, redact::scrub(value));
+    }
   }
 }
 
@@ -657,7 +752,7 @@ void print_pipelines() {
   std::vector<entry> entries;
   std::set<std::string> seen;
   entries.push_back({"default",
-                     "Complete static analysis (classic 26-phase order)",
+                     "Complete static analysis (classic 27-phase order)",
                      "builtin"});
   seen.insert("default");
 
@@ -712,12 +807,31 @@ int header_count(const pipeline_config& cfg, const context& ctx) {
 void run_phases(context& ctx, const pipeline_config& cfg) {
   ctx.active_plan = &cfg;
 
+  // --debug: what is about to run. Only the *names* of the environment
+  // entries are dumped - their values are credentials, which is exactly what
+  // must never reach a dump file.
+  {
+    std::vector<std::string> phase_names;
+    phase_names.reserve(cfg.phases.size());
+    for (phase_id p : cfg.phases) phase_names.push_back(to_name(p));
+    std::vector<std::string> env_names;
+    env_names.reserve(cfg.environment.size());
+    for (const auto& entry : cfg.environment) env_names.push_back(entry.first);
+    SA_DUMP("pipeline plan", "name", cfg.name, "source", cfg.source,
+            "phases", phase_names, "environment names", env_names);
+  }
+
   // Prologue: always, unnumbered (hashes) or self-numbering (preamble sets
   // the phase total from the config).
   run_preamble(ctx);
   run_hashes(ctx);
 
   for (phase_id p : cfg.phases) {
+    const std::string phase_name = to_name(p);
+    // The crash report leads with this, so a dump and a crash report of the
+    // same run name the same phase.
+    crash::set_state(phase_name, ctx.path);
+    SA_DUMP("phase start", phase_name, "ran_mask", ctx.ran_mask, "input", ctx.path);
     switch (p) {
       case phase_id::compression:
         run_compression(ctx, "artifacts", 6);
@@ -729,6 +843,7 @@ void run_phases(context& ctx, const pipeline_config& cfg) {
       case phase_id::got:               run_got(ctx);               break;
       case phase_id::histogram:         run_byte_histogram(ctx);    break;
       case phase_id::packer:            run_packer(ctx);            break;
+      case phase_id::die:               run_die(ctx);               break;
       case phase_id::opcodes:           run_opcodes(ctx);           break;
       case phase_id::debug:             run_debug_symbols(ctx);     break;
       case phase_id::signature:         run_signature(ctx);         break;
@@ -765,7 +880,7 @@ void write_run_summary(const context& ctx, const pipeline_config& cfg,
   }
   json environment = json::array();
   for (const auto& [k, v] : cfg.environment)
-    environment.push_back({{"name", k}, {"value", v}});
+    environment.push_back({{"name", k}, {"value", redact::scrub(v)}});
 
   json requested = json::array();
   for (phase_id p : cfg.phases) requested.push_back(to_name(p));
@@ -781,7 +896,13 @@ void write_run_summary(const context& ctx, const pipeline_config& cfg,
                     {"description", cfg.description},
                     {"source", cfg.source},
                     {"stages", std::move(stages)},
-                    {"environment", std::move(environment)}}},
+                    {"environment", std::move(environment)},
+                    {"artifacts", {
+                        {"store_artifact", cfg.artifacts.store_artifact},
+                        {"upload_artifacts", cfg.artifacts.upload_artifacts},
+                        {"remote_root", cfg.artifacts.remote_root},
+                        {"timeout_seconds", cfg.artifacts.timeout_seconds},
+                    }}}},
       {"input", ctx.path},
       {"stem", ctx.stem},
       {"format", {{"pe", ctx.is_pe}, {"elf", ctx.is_elf}, {"macho", ctx.is_macho}}},
@@ -789,6 +910,11 @@ void write_run_summary(const context& ctx, const pipeline_config& cfg,
                   {"auto_inserted", std::move(inserted)},
                   {"ran", std::move(ran)}}},
       {"artifacts", ctx.exported_artifacts},
+      {"artifact_bundle", {
+          {"created", ctx.artifact_bundle_created},
+          {"uploaded", ctx.artifact_bundle_uploaded},
+          {"error", ctx.artifact_action_error},
+      }},
       {"result", exit_code == 0 ? "success" : "failed"},
       {"exit_code", exit_code},
       {"failed", ctx.failed},
@@ -822,7 +948,12 @@ void write_run_summary(const context& ctx, const pipeline_config& cfg,
     LOG_ERROR("planner: cannot write run summary {}", path.string());
     return;
   }
-  out << j.dump(2) << "\n";
+  // Scrub the serialized document, not just the fields we know about: this
+  // manifest is the one artifact a later step reads back, and a pipeline name
+  // or description copied from a config that also holds a token must not leak
+  // through it. Replacing a value with ***REDACTED*** cannot break the JSON
+  // (the mask has no quotes or backslashes).
+  out << redact::scrub(j.dump(2)) << "\n";
   LOG_DEBUG("planner: run summary written to {}", path.string());
 } catch (const std::exception& e) {
   LOG_ERROR("planner: run summary failed: {}", e.what());

@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import time
+import webbrowser
 from dataclasses import dataclass
 
 import core
@@ -110,6 +111,16 @@ def _starter_list() -> list[Starter]:
             needs="__missing__",
             hint="compose file + Containerfile.cyberchef missing "
                  "(see CONTAINER-TESTING.md)"))
+    if compose:
+        out.append(Starter(
+            "guacamole", "Guacamole",
+            ["docker", "compose", "-f", compose, "up", "-d", "guacamole"],
+            core.REPO, ready=120.0))
+    else:
+        out.append(Starter(
+            "guacamole", "Guacamole", [], core.REPO, ready=0.0,
+            needs="__missing__",
+            hint="compose.yaml missing (see CONTAINER-TESTING.md)"))
     out.append(Starter(
         "kafka", "Kafka broker",
         ["docker", "compose", "-f",
@@ -260,6 +271,11 @@ def _start(st: Starter) -> None:
             print()
             print(core.paint(f"  {st.name} is ready ({svc.ms:.0f} ms).",
                              core.GREEN, core.BOLD))
+            if st.key == "guacamole" and core.confirm(
+                    "  open Guacamole in the browser?", True):
+                webbrowser.open(f"http://{svc.shown}")
+                print(core.paint("  opened http://127.0.0.1:61000",
+                                 core.DIM))
             return
         now = time.monotonic()
         if now >= deadline:

@@ -275,6 +275,11 @@ struct iat_result_t {
   error_type_t             errors;
   std::vector<iat_entry_t> entries;
 
+  // Preferred load address (PE optional header ImageBase). The IAT RVAs plus
+  // this value are the addresses radare2 resolves cross-references against,
+  // which is how import call sites are located without a second parse.
+  std::uint64_t image_base = 0;
+
   std::size_t dll_count            = 0;
   std::size_t named_import_count   = 0;
   std::size_t ordinal_import_count = 0;
@@ -654,8 +659,8 @@ bool extract_hexdump(hexdump_result_t& result,
                      const analyzer::file_info_t& info,
                      std::size_t max_bytes = 4096u);
 
-// Cminer code-cave results. Cminer is a Linux CLI, so the extractor invokes the
-// bundled executable through WSL and parses its structured cave report.
+// Cminer code-cave results. The scan runs in-process over the PE section
+// table and the raw bytes - no external tool, no shell, no WSL.
 struct cminer_cave_t {
   std::string   section;
   std::uint64_t size = 0;

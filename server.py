@@ -639,6 +639,38 @@ def create_app(api: Api) -> Flask:
     app = Flask(__name__, static_folder=None)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD + 64 * 1024  # multipart overhead
 
+    # OpenAPI for the analyzer, so the admin panel documents this service from
+    # the live app rather than by parsing this file. Assets come from flasgger's
+    # own static directory, not a CDN, so it works on an isolated network.
+    #
+    # `headers` must be an empty list - flasgger iterates it in an
+    # after_request hook on every response, and a missing key 500s every route.
+    # The spec and UI are exempt from the rate limiter below: they start no
+    # analysis, upload nothing, and a throttled spec is just a broken page.
+    try:
+        from flasgger import Swagger
+
+        Swagger(app, config={
+            "title": "Static analyzer API",
+            "version": "1.0",
+            "description": (
+                "REST wrapper around the static analyzer. Upload a sample, "
+                "pick a pipeline, poll the task, download the artifacts."
+            ),
+            "headers": [],
+            "specs": [{
+                "endpoint": "apispec_1",
+                "route": "/apispec_1.json",
+                "rule_filter": lambda rule: True,
+                "model_filter": lambda tag: True,
+            }],
+            "swagger_ui": True,
+            "specs_route": "/apidocs/",
+            "static_url_path": "/flasgger_static",
+        })
+    except ImportError:  # pragma: no cover - optional dependency
+        pass
+
     def client_ip() -> str:
         return request.remote_addr or "?"
 
@@ -656,6 +688,12 @@ def create_app(api: Api) -> Flask:
     def gate() -> Optional[Response]:
         if api.shutdown_event.is_set() and request.method == "POST":
             return jsonify(error="server is shutting down"), 503
+        # Documentation is free to read: it starts no analysis, uploads nothing
+        # and exposes no sample data. Throttling it would only make the panel's
+        # documentation page fail under the same load that caused the throttle.
+        if request.path in ("/apidocs/", "/apispec_1.json") or \
+                request.path.startswith("/flasgger_static/"):
+            return None
         return rate("flood:" + client_ip(), api.args.read_limit, 60.0)
 
     # -- errors as JSON -----------------------------------------------------
@@ -680,6 +718,13 @@ def create_app(api: Api) -> Flask:
     @app.get("/")
     @app.get("/api")
     def index():
+        """Service index: version, endpoints, pipelines and capabilities
+        ---
+        tags: [meta]
+        responses:
+          200:
+            description: What this service offers
+        """
         return jsonify(
             service="static-analyzer-api",
             version="0.2.0",
@@ -692,6 +737,13 @@ def create_app(api: Api) -> Flask:
 
     @app.get("/health")
     def health():
+        """Liveness plus queue depth and rate-limit state
+        ---
+        tags: [meta]
+        responses:
+          200:
+            description: Status, analyzer path, queued and running counts
+        """
         counts = api.registry.counts()
         return jsonify(
             status="shutting_down" if api.shutdown_event.is_set() else "ok",
@@ -706,25 +758,76 @@ def create_app(api: Api) -> Flask:
 
     @app.get("/phases")
     def phases():
+        """Analyzer phase catalog as JSON
+        ---
+        tags: [meta]
+        responses:
+          200:
+            description: Every phase the analyzer knows about
+          503:
+            description: Catalog was not available at startup
+        """
         if api.phases is None:
             return jsonify(error="phase catalog unavailable"), 503
         return jsonify(api.phases)
 
     @app.get("/pipelines")
     def pipelines():
+        """Named pipeline configs discovered on disk
+        ---
+        tags: [meta]
+        responses:
+          200:
+            description: Pipeline name, description and source path
+        """
         return jsonify(api.pipelines)
 
     @app.get("/tasks")
     def task_list():
+        """List analysis tasks, newest first
+        ---
+        tags: [tasks]
+        parameters:
+          - name: limit
+            in: query
+            required: false
+            type: integer
+            description: Maximum number of tasks to return
+        responses:
+          200:
+            description: Task summaries without manifests
+        """
         limit = request.args.get("limit", 100, type=int)
         return jsonify([t.view(full=False) for t in api.registry.list_tasks()[:limit]])
 
     @app.get("/queue")
     def queue_status():
+        """Queue depth, positions and running tasks
+        ---
+        tags: [tasks]
+        responses:
+          200:
+            description: Queue state, including whether it can accept work
+        """
         return jsonify(api.registry.queue_status())
 
     @app.get("/tasks/<task_id>")
     def task_detail(task_id: str):
+        """Task detail, with the manifest once it has finished
+        ---
+        tags: [tasks]
+        parameters:
+          - name: task_id
+            in: path
+            required: true
+            type: string
+            description: Task handle from POST /analyze
+        responses:
+          200:
+            description: Task state and, when terminal, its manifest
+          404:
+            description: Unknown task id
+        """
         task = api.registry.get(task_id)
         if task is None:
             return jsonify(error="unknown task", id=task_id), 404
@@ -732,6 +835,21 @@ def create_app(api: Api) -> Flask:
 
     @app.get("/tasks/<task_id>/log")
     def task_log(task_id: str):
+        """Tail of the analyzer's stdout and stderr for a task
+        ---
+        tags: [tasks]
+        parameters:
+          - name: task_id
+            in: path
+            required: true
+            type: string
+            description: Task handle from POST /analyze
+        responses:
+          200:
+            description: Last 64 KB of the run log, as plain text
+          404:
+            description: Unknown task id
+        """
         task = api.registry.get(task_id)
         if task is None:
             return jsonify(error="unknown task", id=task_id), 404
@@ -740,6 +858,21 @@ def create_app(api: Api) -> Flask:
 
     @app.get("/tasks/<task_id>/artifacts")
     def task_artifacts(task_id: str):
+        """List the artifact files a run produced
+        ---
+        tags: [tasks]
+        parameters:
+          - name: task_id
+            in: path
+            required: true
+            type: string
+            description: Task handle from POST /analyze
+        responses:
+          200:
+            description: File list with sizes and download links
+          404:
+            description: Unknown task id
+        """
         task = api.registry.get(task_id)
         if task is None:
             return jsonify(error="unknown task", id=task_id), 404
@@ -747,6 +880,26 @@ def create_app(api: Api) -> Flask:
 
     @app.get("/tasks/<task_id>/artifacts/<path:rel>")
     def task_artifact(task_id: str, rel: str):
+        """Download one artifact from a run
+        ---
+        tags: [tasks]
+        parameters:
+          - name: task_id
+            in: path
+            required: true
+            type: string
+            description: Task handle from POST /analyze
+          - name: rel
+            in: path
+            required: true
+            type: string
+            description: Artifact path, relative to the run root
+        responses:
+          200:
+            description: The file, as an attachment
+          404:
+            description: Unknown task, or the path escapes the run directory
+        """
         task = api.registry.get(task_id)
         if task is None:
             return jsonify(error="unknown task", id=task_id), 404
@@ -804,6 +957,17 @@ def create_app(api: Api) -> Flask:
     # -- granular capabilities ---------------------------------------------
     @app.get("/capabilities")
     def capability_index():
+        """Index of granular capability endpoints
+        ---
+        tags: [capabilities]
+        responses:
+          200:
+            description: One entry per capability, with its phases and aliases
+        description: >
+          Each capability runs a single phase and returns its artifact JSON
+          inline, without going through the task queue. Useful when you want one
+          specific artifact and do not want to run a whole pipeline.
+        """
         return jsonify([
             {"name": name, "description": CAPABILITY_DOCS.get(name, ""),
              "phases": phases, "endpoint": f"/capabilities/{name}",
@@ -832,6 +996,38 @@ def create_app(api: Api) -> Flask:
 
     @app.post("/capabilities/<name>")
     def capability_post(name: str):
+        """Run one capability and return its artifact JSON inline
+        ---
+        tags: [capabilities]
+        parameters:
+          - name: name
+            in: path
+            required: true
+            type: string
+            description: Capability name, e.g. hashes, capa, disasm
+          - name: body
+            in: body
+            required: true
+            description: Raw sample bytes, or a multipart form with a file part
+          - name: timeout
+            in: query
+            required: false
+            type: number
+            description: Seconds to allow before the run is killed
+        responses:
+          200:
+            description: Artifact JSON produced by the capability
+          400:
+            description: Empty body, or no file part in a multipart request
+          413:
+            description: Sample exceeds the 10 MB limit
+          502:
+            description: The analyzer failed or timed out
+        description: >
+          Aliases exist for every capability - POST /strings is the same as
+          POST /capabilities/strings. No task queue is involved: the run is
+          synchronous and the artifact comes back in the response body.
+        """
         return run_capability_route(name)
 
     # short aliases: POST /strings, POST /hashes, ...
@@ -843,6 +1039,52 @@ def create_app(api: Api) -> Flask:
     # -- POST /analyze ------------------------------------------------------
     @app.post("/analyze")
     def analyze():
+        """Run a full pipeline over an uploaded sample
+        ---
+        tags: [analysis]
+        parameters:
+          - name: body
+            in: body
+            required: true
+            description: Raw sample bytes, or a multipart form with a file part
+          - name: pipeline
+            in: query
+            required: false
+            type: string
+            description: Pipeline name, or an inline JSON list of phase tags
+          - name: wait
+            in: query
+            required: false
+            type: boolean
+            description: Block until the run finishes instead of returning 202
+          - name: priority
+            in: query
+            required: false
+            type: integer
+            description: 0 high, 1 normal, 2 low
+          - name: filename
+            in: query
+            required: false
+            type: string
+            description: Override the stored filename
+        responses:
+          200:
+            description: Finished, when wait=true
+          202:
+            description: Queued; poll the task at the Location header
+          400:
+            description: Empty body
+          409:
+            description: Cancelled while wait=true
+          413:
+            description: Sample exceeds the 10 MB limit
+          429:
+            description: Rate limited
+          502:
+            description: The analyzer failed
+          504:
+            description: Timed out
+        """
         blocked = rate("analyze:" + client_ip(), api.args.rate_limit,
                        api.args.rate_window)
         if blocked is not None:
@@ -876,6 +1118,21 @@ def create_app(api: Api) -> Flask:
     # -- DELETE -------------------------------------------------------------
     @app.delete("/tasks/<task_id>")
     def task_delete(task_id: str):
+        """Cancel a running task, then purge it
+        ---
+        tags: [tasks]
+        parameters:
+          - name: task_id
+            in: path
+            required: true
+            type: string
+            description: Task handle from POST /analyze
+        responses:
+          200:
+            description: removed, plus whether it was cancelled
+          404:
+            description: Unknown task id
+        """
         task = api.registry.get(task_id)
         if task is None:
             return jsonify(error="unknown task", id=task_id), 404

@@ -26,6 +26,30 @@ static_analyzer.exe <input-file>
 
 With no argument the analyzer falls back to `a.exe` in the current directory. Results are written relative to the working directory, so run from the repository root unless a different layout is intentional.
 
+### Evidence bundle and upload options
+
+The analyzer always writes its normal report files to
+`exports/<sample>_analysis/`. Optional packaging and MEGA upload are controlled
+separately in `config/artifacts.yaml` (also copied beside the built executable):
+
+```yaml
+store_artifact: false
+upload_artifacts: false
+remote_root: /
+timeout_seconds: 900
+```
+
+Set `store_artifact: true` to create
+`exports/<sample>_artifact/` with a deterministic tar.gz, SHA-256 sidecar,
+file manifest, and README. Set `upload_artifacts: true` to also upload that
+bundle through MEGAcmd; uploading automatically creates the local bundle first.
+Cloud upload is opt-in and requires MEGAcmd to be installed and logged into the
+intended account. `remote_root` is the destination parent, and the bundle is
+placed in `<remote_root>/<sample>_artifact`. A configured packaging or upload
+failure is reported and causes the analyzer to exit unsuccessfully; the run
+manifest records the options, resulting bundle paths, and any error. Missing
+configuration uses safe defaults (no packaging or upload).
+
 ### Python API server
 
 The root `server.py` provides a local REST API. Start it from the repository root
@@ -45,14 +69,162 @@ inspection, while new POST submissions receive `503`.
 Run `python\.venv\Scripts\python.exe tests\test_server_queue.py` to test queuing
 the included executable fixture and graceful draining without launching the analyzer.
 
+### Admin console (web dashboard)
+
+A React console in `admin-web/`, served by `python/panel/` on `127.0.0.1:60100`.
+It is separate from two things it is easy to confuse it with: the
+[static-analysis dashboard](#dashboard) above, which is a per-sample HTML file
+written into `exports/`, and the Admin Terminal TUI in `admin-terminal/`. All
+three can be running at once and they do not share state.
+
+```powershell
+.\admin-panel.ps1              # build the SPA, start the panel, open a browser
+.\admin-panel.ps1 -Dev         # Vite on :60101 with HMR, proxying /api to the panel
+.\admin-panel.ps1 -NoBrowser   # start without opening a browser
+```
+
+The panel binds loopback only and always will — `config.bind_host()` is a
+function precisely so that is one obvious place rather than a value someone
+changes. Set `ADMIN_WEB_PORT` to move the port and `ADMIN_PANEL_TOKEN` to put a
+login in front of it. Every route is introspected into the in-app
+[Documentation](#documentation) page and into `/api/openapi.json`, so the
+catalog cannot drift from what the panel actually serves.
+
+#### Networking
+
+`GET /api/netmap` builds a node/link graph of the host, its adapters, its
+VirtualBox host-only network, its Docker bridges and the Qiling VM. A node is
+`up` because a TCP connect to it answered, not because a config file says so. A
+missing Docker daemon or a missing VirtualBox yields fewer nodes, never a 500.
+
+Hypervisor auto-detection (`python/panel/virt.py`) is reported alongside it,
+under `virt`. It probes VirtualBox, QEMU, VMware Workstation and Hyper-V and
+reports all four whether or not they are present, because "QEMU is not on this
+box" is the answer you want and silence is not. Detection is evidence-based: a
+tool counts as installed only if its binary exists *and* prints a version
+banner, so a leftover Program Files directory does not report a working
+hypervisor. Hyper-V is detected by its `vmms` service rather than by
+`vmcompute.exe`, which ships with Windows whether or not the role is enabled.
+Results are cached for 30 s.
+
+The **Hypervisors** tab then reports:
+
+- the roster above, one row per tool, absent ones dimmed with the reason they
+  were ruled out;
+- every registered VirtualBox machine from `GET /api/vms` — name, power state,
+  guest address, MAC, CPU/RAM, and the services actually answering on it, one
+  `showvminfo` per machine, paginated because a research host accumulates VMs;
+- `POST /api/vms/start` and `POST /api/vms/stop`.
+
+The machine name travels in the request **body**, not the path: a VirtualBox
+name is free text that can contain slashes and spaces. It is checked against the
+registered machine list before VBoxManage is involved, so the buttons cannot be
+pointed at anything that is not a real machine on this host. `stop` is a hard
+poweroff rather than an ACPI shutdown — malware in the guest can ignore a power
+button, and a sandbox that will not power down is worse than one that loses a
+snapshot. Start is headless. This is the only part of the panel that changes
+state; everything else reports what already exists.
+
+Power control itself is not reimplemented here. Names, running state, start and
+stop come from `python/qiling/_check_vm_connection.py`, and the port list and
+TCP probe come from `python/panel/netmap.py`, so the machine list and the
+network map cannot disagree about what "SSH is open" means. `showvminfo` is the
+only thing this layer adds, because it is what turns a name into an address.
+
+#### Artifacts
+
+`GET /api/artifacts` reads both ends of the `mega/` evidence pipeline, split into
+a **Local artifacts** tab and a **Remote** tab.
+
+Local walks `exports/` for `<artifact>_artifact/` bundles and reports the sealed
+`<artifact>_evidence.tar.gz`, the file count from `manifest.json`, and the
+SHA-256 that the manifest and the `.sha256` sidecar each recorded
+independently. The archive is re-hashed where a byte budget allows, so a bundle
+that is present but truncated reports *digest mismatch* rather than looking
+fine; anything over budget reports *not hashed*, because "unverified" and
+"verified" must never look alike.
+
+Remote lists the same bundles off MEGA through `mega/list.py` — loaded by path,
+so its own `ls()` parser is used and its handling of MEGAcmd's two date shapes
+is inherited rather than reimplemented. It is a third-party call, so a missing
+MEGAcmd, an absent session and a timeout all degrade to `available: false` with
+a reason, under a 25-second wall-clock budget so a slow MEGA cannot hold the
+request open. A truncated listing says so instead of looking complete.
+
+**The upload timeline is cached, so the charts are continuous.** Every
+successful remote read is folded into
+`%APPDATA%\IAProject\panel-cache\artifacts-history.json` (override with
+`IA_PANEL_CACHE_DIR`, same convention as `mega/credential.py`'s `secrets_dir()`,
+and deliberately outside the repo tree), and the transfer series is computed
+from *that* rather than from whatever MEGA is holding right now. Three
+consequences, each of which is the point:
+
+- **It survives a panel restart.** The in-memory cache dies with the process;
+  the timeline does not.
+- **Deleting a case from MEGA does not erase its point.** The upload still
+  happened, so the bundle stays on the timeline marked *no longer on MEGA* and
+  keeps contributing the interval it formed. Dropping it would make the rate
+  jump as though the case had never existed.
+- **A logged-out client cannot wipe the record.** History is only written on a
+  successful read, so a failed probe leaves the last good data in place and the
+  panel says "last successful read 4 minutes ago" instead of showing an empty
+  account.
+
+Re-polling every 30 seconds does not invent new points: entries are keyed by
+name and keep MEGA's *upload* timestamp rather than the time we looked, so the
+same bundle observed a hundred times is still one point. The file is written
+atomically (temp + rename, so a crash mid-write cannot leave a half-file that
+the next read discards), is rebuilt rather than trusted if it is corrupt or
+wrong-shaped, and is capped at 500 bundles, keeping the newest.
+
+**Refresh rates, and why they are slow.** Nothing on this page changes on a
+timer: a bundle is sealed when an analysis run finishes, and MEGA changes when
+someone presses upload. Both are human actions, so the panel polls every 120 s
+and the server caches the MEGA listing for 5 minutes — 12 MEGAcmd spawns an
+hour instead of 60, for a detection latency no one can perceive. `?refresh=1`
+bypasses both caches, which is what the Rescan button uses so that "I just
+uploaded, show me" does not mean "wait five minutes".
+
+The relative "x ago" labels deliberately do **not** ride that interval. They
+tick on their own 60-second clock (`admin-web/src/lib/tick.ts`) and cost no
+request, so a clock tick can never trigger a MEGAcmd renewal as a side effect.
+The two questions — how often the data refreshes, and how often a label
+describing a fixed timestamp changes — are answered separately.
+
+One thing to know about `usePoll`: it holds the fetcher in a ref rather than
+listing it as an effect dependency. Listing it was a live bug — a caller
+passing an inline arrow (which this page needs, for `?refresh=1`) produced a new
+function identity every render, so the effect re-ran, set state, re-rendered,
+and looped. The result was not "poll every 120 s" but polling as fast as the
+endpoint would answer, which looks exactly like values updating too fast.
+
+**The upload-rate charts are estimates, and the panel says so on the card.**
+Nothing in this project records when an upload *starts* — MEGAcmd records only
+when it finished — so a true per-upload duration is not knowable from the data
+that exists. What the charts show is the later bundle's bytes divided by the
+wall-clock gap between the two MEGA timestamps. That gap also contains however
+long the operator waited before pressing upload, which makes the figure an
+upper bound on line rate and never a measurement of it. Gaps under one second
+render as no value rather than as an infinite speed, because MEGAcmd's date is
+minute- or day-granular and a near-zero gap divided by real bytes is a
+granularity artefact. One bundle has no interval and therefore no rate; the
+chart says so instead of drawing a zero.
+
+The page is read-only. Uploading stays `python mega/upload.py --artifact <name>`
+— it pushes analysis evidence to cloud storage, which is not something a page
+that re-polls every 30 seconds should be able to trigger.
+
 ### Qiling Analysis VM
 
 The Analysis VM connection is configured in `admin-terminal/vms.json`
-(`192.168.56.105:22` by default). Set its `username` and, if needed,
-`identity_file`. Before connecting, add the VM's verified SSH host-key entry to
-the current user's `~/.ssh/known_hosts` (override with `known_hosts_file` in
-`vms.json`); connections use strict checking and never accept unknown keys.
-Verify the VM fingerprint out of band before adding it.
+(`192.168.56.105:22` by default). Set its `username` (the stock VM user is
+`qilin`) and, if needed, `identity_file`. Unknown host keys are accepted on
+first use (OpenSSH `accept-new`, paramiko `AutoAddPolicy`) and recorded in the
+current user's `~/.ssh/known_hosts` (override with `known_hosts_file` in
+`vms.json`). Because the CLI runs in BatchMode (no password prompts), the first
+connection installs this machine's `~/.ssh/id_ed25519` public key on the VM
+using the password from `vms.json` (`password`) or `qiling_dlls/vm_info.json`
+(`VM_PASSWORD`); later connections use key login only.
 
 In Admin Terminal → Analysis VMs, choose **q** to collect Windows registry/DLL
 files into the local Qiling rootfs (Windows displays a UAC prompt), or **d** to
@@ -61,6 +233,14 @@ prepare the rootfs, upload it only if the VM does not already have it, send
 and download the result to `qiling_dlls/results/`. If SSH times out, the menu
 offers optional, elevated Windows Firewall rules limited to TCP 22/80 and the
 `192.168.56.0/24` subnet; it does not change the firewall without confirmation.
+
+The same flow works without the menu:
+`py admin-terminal\qiling_upload.py <sample.exe>` packages the local rootfs if
+needed, offers to start the VM, uploads the harness and sample (plus the
+rootfs when the VM lacks it), runs Qiling with the output streamed live, and
+downloads the report to `qiling_dlls/results/<sample>_qiling_out.zip`.
+`--timeout`, `--max-insn` and `--no-peb-patch` are forwarded to the harness;
+x86 and x64 samples each get their matching rootfs architecture.
 
 `main()` owns the process lifecycle and the stage order; the stages themselves live in `src/main/`. Startup is a fixed sequence:
 
@@ -283,6 +463,10 @@ JSON artifacts are composable. The dashboard generator reads these files and emb
 
 ## Dashboard
 
+This is the per-sample HTML report written into `exports/`, not the
+[admin console](#admin-console-web-dashboard) — that one is a live console for
+the whole lab, described above.
+
 The dashboard is generated by:
 
 ```text
@@ -363,10 +547,28 @@ python/_extract_stix.py       Recovers STIX objects from bare technique IDs
 python/templates/              Jinja HTML/CSS/JavaScript template (dashboard.html.j2)
                                and the placeholder-based stix.html shell
 python/api/server.py          Local MalAPI service used during a run
+admin-web/                    Admin console SPA (React + Vite + HeroUI). dist/
+                              is served by python/panel; only src/ is source
+admin-panel.ps1               Builds the SPA, starts the panel, opens a browser
+python/admin_server.py        Flask entry point for the admin console
+python/panel/                 Panel backend: app.py holds the routes, netmap.py
+                              the network graph, virt.py hypervisor detection,
+                              vms.py the machine inventory and power control,
+                              artifacts.py local + MEGA evidence bundles
+python/clamd/                 ClamAV host-side tooling: scanner client, SSH
+                               driver, artifact collector, requirements.txt
+python/qiling/                Qiling emulation tooling: the PE harness, VM
+                               staging, artifact collector, dashboard and CTI
 python/requirements.txt       Python dependencies
 python/d3.min.js              Vendored dashboard plotting library
 python/world-110m.json        Vendored offline world geometry
 python/country-codes.json     Country code/name/centroid table
+qiling_dlls/                  VM payload only: rootfs.tar.gz, examples/,
+                               templates/, dll_collector.bat, vm_info.json.
+                               Its basename is also the analysis VM's
+                               remote_dir (admin-terminal/vms.json), so it
+                               keeps the name even though the scripts moved
+                               to python/qiling/
 exports/                      Generated analysis artifacts, one <stem>_analysis/ per run
 cache/                        Provider/tool caches
 logs/                         Runtime logs
@@ -536,5 +738,7 @@ The stages run in the order below. The number a stage actually prints is assigne
 | 25 | Invalid-input sanity checks | all |
 
 Every stage above except Graphviz is gated on the file format alone. Graphviz is the exception: its slot is still counted in the 25/23/20 total, but the stage returns before printing its header unless `R2_RENDER` is set. On a default run, therefore, the printed numbers skip that slot and the last stage reports one less than the total — `[phase 22/23]` for a PE, `[phase 19/20]` for an ELF or Mach-O. Setting `R2_RENDER` (for example `R2_RENDER=svg`) makes the run fill all of its advertised slots.
+
+The capa phase allows 15 minutes for samples up to 50 MiB and 30 minutes above that; `CAPA_TIMEOUT` and `CAPA_LARGE_TIMEOUT` override either budget in seconds. The cminer code-cave stage scans the PE in-process (section table from LIEF plus a chunked NULL-run scan over the raw bytes) - it needs no external Cminer binary, shell, or WSL.
 
 A stage can be partial when an external dependency, provider, or file feature is missing. The analyzer records warnings and continues where possible; the final result can still be `FAILED` if a required analysis fails.

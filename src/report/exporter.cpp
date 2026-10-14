@@ -1627,6 +1627,62 @@ std::filesystem::path write_capa_json(const std::string& stem,
     })
 }
 
+// ---------------------------------------------------------------------------
+// to_json(die_runner::result_t) - Detect It Easy
+// ---------------------------------------------------------------------------
+// The runner keeps the script's normalized document verbatim in `raw`; that
+// IS the artifact contract (python/die_scan.py --json), so it is passed
+// through untouched. The fallback only exists so a future runner change that
+// stops keeping `raw` still produces a complete document rather than {}.
+json to_json(const die_runner::result_t& r) {
+    if (r.raw.is_object() && !r.raw.empty()) return r.raw;
+
+    LOG_TRACE("exporter: to_json(die_runner::result_t): reconstructing from "
+              "structured fields (raw was empty), packed={}", r.packed);
+    const auto entries = [](const std::vector<die_runner::entry_t>& in) {
+        json arr = json::array();
+        for (const auto& e : in) {
+            arr.push_back({{"name", e.name},
+                           {"version", e.version},
+                           {"type", e.type},
+                           {"info", e.info},
+                           {"string", e.string}});
+        }
+        return arr;
+    };
+    return json{
+        {"ok", r.st == die_runner::status::ok},
+        {"error", r.error},
+        {"seconds", r.seconds},
+        {"die_version", r.die_version},
+        {"databases", r.databases},
+        {"packed", r.packed},
+        {"unknown_only", r.unknown_only},
+        {"unknown_count", r.unknown_count},
+        {"packers", entries(r.packers)},
+        {"compilers", entries(r.compilers)},
+        {"linkers", entries(r.linkers)},
+        {"others", entries(r.others)},
+        {"detects", json::array()},
+    };
+}
+
+// Detect It Easy scan result: exports/<stem>_analysis/die/<stem>_die.json.
+// Only a successful scan reaches this writer - run_export gates on st == ok -
+// so a run without the optional die-python install leaves no placeholder.
+std::filesystem::path write_die_json(const std::string& stem,
+                                     const die_runner::result_t& r) {
+    LOG_DEBUG("exporter: write_die_json: stem='{}', packed={}, packers={}, compilers={}",
+              stem, r.packed, r.packers.size(), r.compilers.size());
+    EXPORTER_TRY("write_die_json", {
+        const auto path = write_json_file(dir::run(stem, "die"),
+                                          artifact_stem(stem, "die"),
+                                          to_json(r));
+        print_export_line("die", path, !path.empty());
+        return path;
+    })
+}
+
 std::filesystem::path write_iat_json(const std::string& stem,
                                      const extractor::iat_result_t& r) {
     LOG_DEBUG("exporter: write_iat_json: stem='{}', entries={}, dlls={}",

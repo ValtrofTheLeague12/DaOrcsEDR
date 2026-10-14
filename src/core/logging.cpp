@@ -3,6 +3,8 @@
 
 #include "logging.hpp"
 
+#include "redact.hpp"
+
 #include <spdlog/async.h>
 #include <spdlog/details/log_msg.h>
 #include <spdlog/logger.h>
@@ -1482,6 +1484,11 @@ void emit_impl(spdlog::level::level_enum lvl, status st, const char* op_json,
         }
         payload.push_back('\x1f');
         payload += msg;
+        // Single choke point for the whole record: message plus the JSON
+        // context of LOG_OPERATION. Anything that quoted a credential (a
+        // config dump, a curl header, a pipeline environment value) loses it
+        // here, before it reaches the JSONL file on disk.
+        payload = redact::scrub(payload);
         spdlog::source_loc loc{};
 #ifndef NDEBUG
         if (file) {

@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <ios>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "console.hpp"
+#include "debug_dump_macro.hpp"
 #include "logging.hpp"
 #include "process_runner.hpp"
 #include "secret_store.hpp"
@@ -176,6 +178,26 @@ void run_cti(context& ctx) {
       if (!cti_cfg.merge_json_file(overlay, overlay_error))
         print_warn("CTI_CONFIG ignored: " + overlay_error);
     }
+
+    // --debug: which providers hold a key. Only "<set>"/"<unset>" is ever
+    // dumped - cti::config carries the keys themselves, and printing the
+    // struct (or an error message that includes it) is how an API key ends up
+    // in a log file.
+    {
+      const auto state = [](const std::string& value) {
+        return value.empty() ? std::string("<unset>") : std::string("<set>");
+      };
+      std::map<std::string, std::string> keys;
+      keys["abuseipdb"] = state(cti_cfg.keys.abuseipdb);
+      keys["otx"] = state(cti_cfg.keys.otx);
+      keys["virustotal"] = state(cti_cfg.keys.virustotal);
+      keys["abusech"] = state(cti_cfg.keys.abusech);
+      keys["greynoise"] = state(cti_cfg.keys.greynoise);
+      keys["nvd"] = state(cti_cfg.keys.nvd);
+      SA_DUMP("cti config", "keys", keys, "offline", cti_cfg.offline,
+              "cache_dir", cti_cfg.cache_dir);
+    }
+
     cti::pipeline pipe(std::move(cti_cfg));
     if (!pipe.network_available()) {
       console::info("No internet connection found — skipping CTI phase.");

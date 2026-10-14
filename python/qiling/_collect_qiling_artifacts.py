@@ -13,8 +13,11 @@ config/systemd/qilin-service/artifacts/ with the same structure:
 import pathlib
 
 DEFAULT_APP_DIR = "/home/qilin/.config/systemd/qilin-service"
-ARTIFACTS_DIR = (pathlib.Path(__file__).parent.parent /
-                 "config" / "systemd" / "qilin-service" / "artifacts")
+
+# This script lives in python/qiling/, so the repo root is two levels above its
+# own directory (python/qiling -> python -> repo), i.e. parents[2] of the file.
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+ARTIFACTS_DIR = REPO_ROOT / "config" / "systemd" / "qilin-service" / "artifacts"
 
 
 def collect_artifacts(ssh_client, remote_paths, local_dir=ARTIFACTS_DIR,

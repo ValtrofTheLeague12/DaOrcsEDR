@@ -27,6 +27,10 @@ option(STATIC_ANALYZER_USE_GRAPHVIZ
     "Parse r2 .dot graphs with libgraphviz (cgraph) instead of the dashboard's regex parser"
     ON
 )
+option(STATIC_ANALYZER_USE_MEGA_SDK
+    "Link the MEGA cloud SDK (MEGA::SDKlib) for evidence storage. Requires an MSVC v142+ toolset, a Windows SDK, Crypto++, libsodium and ICU; it cannot build with the MinGW/UCRT64 compiler this project otherwise uses."
+    OFF
+)
 
 find_package(LIEF CONFIG REQUIRED
     HINTS "C:/msys64/ucrt64/lib/cmake/LIEF"
@@ -518,15 +522,29 @@ add_executable(static_analyzer
 )
 install(TARGETS static_analyzer RUNTIME DESTINATION bin)
 
-# Ship the pipeline configs next to the executable: the planner resolves bare
-# names (-p extract_strings) against ./pipelines and <exe dir>/pipelines, so
-# both the build tree and an install must carry them. The build-tree copy
-# mirrors the source directory wholesale; the install rule below filters to
-# the data files the planner can read.
+# Ship pipeline and artifact configuration, plus the uploader's runtime
+# modules, beside the executable. This keeps named pipelines and opt-in bundle
+# actions available when launched outside the source tree.
 add_custom_command(TARGET static_analyzer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/pipelines"
             "$<TARGET_FILE_DIR:static_analyzer>/pipelines"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:static_analyzer>/config"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/config/artifacts.yaml"
+            "$<TARGET_FILE_DIR:static_analyzer>/config/artifacts.yaml"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:static_analyzer>/mega"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/mega/upload.py"
+            "$<TARGET_FILE_DIR:static_analyzer>/mega/upload.py"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/mega/megacmd.py"
+            "$<TARGET_FILE_DIR:static_analyzer>/mega/megacmd.py"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/mega/credential.py"
+            "$<TARGET_FILE_DIR:static_analyzer>/mega/credential.py"
     COMMENT "Copying pipeline configs next to static_analyzer"
 )
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/pipelines/"
@@ -536,6 +554,13 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/pipelines/"
         PATTERN "*.yml"
         PATTERN "*.json"
 )
+install(FILES "${CMAKE_SOURCE_DIR}/config/artifacts.yaml"
+        DESTINATION bin/config)
+install(FILES
+        "${CMAKE_SOURCE_DIR}/mega/upload.py"
+        "${CMAKE_SOURCE_DIR}/mega/megacmd.py"
+        "${CMAKE_SOURCE_DIR}/mega/credential.py"
+        DESTINATION bin/mega)
 
 add_executable(static_analyzer_cminer
     "${CMAKE_SOURCE_DIR}/tools/cminer/main.cpp"
@@ -579,15 +604,29 @@ endif()
 # includes such as #include "yara_scanner.hpp" regardless of where a module
 # physically lives. That keeps the reorganisation invisible to the code.
 set(ANALYZER_MODULE_DIRS
-    core file extract capa yara r2 dig net report ui podman ml_api main
+    core file extract capa yara r2 dig net report ui podman ml_api die main mega
 )
 foreach(module_dir ${ANALYZER_MODULE_DIRS})
     list(APPEND ANALYZER_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include/${module_dir}")
 endforeach()
 
+# cpp-dump: header-only variable dumper used by include/core/debug_dump.hpp
+# when the run is started with --debug. Vendored locally like spdlog/ and
+# os-libzstd/ (both are untracked too), so a missing checkout is a hard error
+# rather than a confusing compile failure deep inside the headers.
+set(CPP_DUMP_DIR "${CMAKE_SOURCE_DIR}/cpp-dump")
+if(NOT EXISTS "${CPP_DUMP_DIR}/cpp-dump.hpp")
+    message(FATAL_ERROR
+        "cpp-dump is missing at ${CPP_DUMP_DIR}. Restore the checkout "
+        "(https://github.com/philip82148/cpp-dump) - dump.hpp needs "
+        "cpp-dump.hpp to compile."
+    )
+endif()
+
 target_include_directories(static_analyzer PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     ${ANALYZER_INCLUDE_DIRS}
+    "${CPP_DUMP_DIR}"
     "${NLOHMANN_JSON_INCLUDE_DIR}"
     "${TLSH_INCLUDE_DIR}"
     "${LIBMAGIC_INCLUDE_DIR}"
@@ -599,6 +638,63 @@ if(GRAPHVIZ_ENABLED)
     target_compile_definitions(static_analyzer PRIVATE STATIC_ANALYZER_USE_GRAPHVIZ)
     target_include_directories(static_analyzer PRIVATE "${GRAPHVIZ_INCLUDE_DIR}")
     target_link_libraries(static_analyzer PRIVATE "${GRAPHVIZ_CGRAPH_LIBRARY}")
+endif()
+
+# ---------------------------------------------------------------------------
+# MEGA SDK (evidence storage / backup recovery) - OFF by default.
+#
+# The SDK is vendored like spdlog/ and cpp-dump/ and is only reachable from the
+# evidence code, so it must not be able to break an ordinary analysis build.
+#
+# STATUS: this option cannot currently be enabled on this machine. Recorded
+# here because the failure is a build-configuration one, not a source one -
+# sdk-10.21.0/src/*.cpp syntax-checks clean under MSYS2 UCRT64 g++ -std=c++20.
+# The blockers, in the order CMake hits them:
+#
+#   1. sdk-10.21.0/cmake/modules/sdklib_variables.cmake:11 unconditionally sets
+#      CMAKE_GENERATOR_TOOLSET "v142" on WIN32, which the MinGW Makefiles
+#      generator rejects outright ("does not support toolset specification").
+#   2. No v142 toolset is installed. Visual Studio Build Tools 18.10.2 is
+#      present but provides only 14.51 / v145.
+#   3. No Windows SDK. C:/Program Files (x86)/Windows Kits/10 has Catalogs and
+#      Redist but no Include/ and no Lib/, so cl.exe cannot compile.
+#   4. sdklib_variables.cmake:2-4 force USE_CRYPTOPP / USE_SQLITE / USE_SODIUM.
+#      The UCRT64 toolchain has libcurl and sqlite3, but no Crypto++ (the
+#      libcrypto.pc present is OpenSSL), no libsodium and no ICU.
+#
+# Enabling it needs the Windows SDK, a v142-or-newer MSVC toolset, and a vcpkg
+# manifest supplying cryptopp/libsodium/icu - or the out-of-process sidecar
+# design, which builds SDKlib with MSVC on its own and leaves this toolchain
+# alone.
+# ---------------------------------------------------------------------------
+
+set(MEGA_SDK_DIR "${CMAKE_SOURCE_DIR}/sdk-10.21.0")
+
+if(STATIC_ANALYZER_USE_MEGA_SDK)
+    if(NOT EXISTS "${MEGA_SDK_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR
+            "STATIC_ANALYZER_USE_MEGA_SDK is ON but the SDK is missing at "
+            "${MEGA_SDK_DIR}. Unpack the MEGA SDK there "
+            "(https://github.com/meganz/sdk), or configure with "
+            "-DSTATIC_ANALYZER_USE_MEGA_SDK=OFF to silence this."
+        )
+    endif()
+
+    # Straight add_subdirectory: the SDK provides MEGA::SDKlib and, being
+    # included rather than built top-level, defaults ENABLE_SDKLIB_EXAMPLES,
+    # ENABLE_SDKLIB_TESTS and ENABLE_SDKLIB_WERROR to OFF. VCPKG_ROOT is left
+    # unset so it resolves dependencies from the system instead of bootstrapping
+    # vcpkg mid-configure.
+    add_subdirectory("${MEGA_SDK_DIR}" "${CMAKE_BINARY_DIR}/mega-sdk")
+
+    if(TARGET MEGA::SDKlib)
+        message(STATUS "MEGA SDK: enabled (${MEGA_SDK_DIR})")
+    else()
+        message(FATAL_ERROR
+            "STATIC_ANALYZER_USE_MEGA_SDK is ON but the SDK did not define the "
+            "MEGA::SDKlib target."
+        )
+    endif()
 endif()
 
 target_link_libraries(static_analyzer PRIVATE
@@ -615,6 +711,11 @@ target_link_libraries(static_analyzer PRIVATE
     ${ZSTD_LINK_TARGET}
     static_analyzer_compressor
 )
+
+if(STATIC_ANALYZER_USE_MEGA_SDK)
+    target_compile_definitions(static_analyzer PRIVATE STATIC_ANALYZER_USE_MEGA_SDK)
+    target_link_libraries(static_analyzer PRIVATE MEGA::SDKlib)
+endif()
 
 if(WIN32)
     # libyaml-cpp.a is the static build: without this define the headers mark

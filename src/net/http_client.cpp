@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <mutex>
 #include <thread>
 
@@ -58,7 +60,23 @@ class curl_http_client final : public http_client {
     const auto started = std::chrono::steady_clock::now();
     http_response result;
     for (int attempt = 0; attempt <= options_.max_retries; ++attempt) {
-      result = attempt_once(request);
+      const auto now = std::chrono::steady_clock::now();
+      if (request.deadline != std::chrono::steady_clock::time_point::max() &&
+          now >= request.deadline) {
+        result.transport_ok = false;
+        result.error = "request deadline exceeded";
+        break;
+      }
+      long timeout_ms = request.timeout_ms;
+      if (request.deadline != std::chrono::steady_clock::time_point::max()) {
+        const auto remaining =
+            std::chrono::ceil<std::chrono::milliseconds>(request.deadline - now).count();
+        const long bounded_remaining = static_cast<long>(
+            std::min<std::int64_t>(remaining, std::numeric_limits<long>::max()));
+        timeout_ms = timeout_ms > 0 ? std::min(timeout_ms, bounded_remaining)
+                                    : bounded_remaining;
+      }
+      result = attempt_once(request, timeout_ms);
       result.attempts = attempt + 1;
 
       const bool retry_status = result.transport_ok && (result.status == 429 || result.status == 502 ||
@@ -72,14 +90,22 @@ class curl_http_client final : public http_client {
         const long seconds = std::strtol(retry_after->second.c_str(), nullptr, 10);
         if (seconds > 0) wait_ms = std::max(wait_ms, seconds * 1000L);
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(std::min(wait_ms, options_.max_retry_wait_ms)));
+      wait_ms = std::min(wait_ms, options_.max_retry_wait_ms);
+      if (request.deadline != std::chrono::steady_clock::time_point::max()) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  request.deadline - std::chrono::steady_clock::now())
+                                  .count();
+        if (remaining <= 0) break;
+        wait_ms = std::min(wait_ms, static_cast<long>(remaining));
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
     }
     result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     return result;
   }
 
  private:
-  http_response attempt_once(const http_request& request) const {
+  http_response attempt_once(const http_request& request, long timeout_ms) const {
     http_response response;
     CURL* curl = curl_easy_init();
     if (curl == nullptr) {
@@ -102,7 +128,7 @@ class curl_http_client final : public http_client {
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");          // gzip / deflate / br when built in
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);                  // required when used from threads
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, request.timeout_ms);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, options_.connect_timeout_ms);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, options_.verify_tls ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, options_.verify_tls ? 2L : 0L);

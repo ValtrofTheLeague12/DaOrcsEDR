@@ -16,6 +16,7 @@
 #include "ioc_extractor.hpp"
 #include "known_pe_hashes.hpp"
 #include "capa_runner.hpp"
+#include "die_runner.hpp"
 #include "radare2_runner.hpp"
 #include "yara_scanner.hpp"
 #include "cti.hpp"
@@ -54,6 +55,7 @@ json to_json(const file_hash_t& sha256, const fuzzy_hash_t& tlsh);
 json to_json(const ioc::ioc_results_t& r);
 json to_json(const extractor::extraction_result_t& r);
 json to_json(const capa::report_t& r);
+json to_json(const die_runner::result_t& r);
 json to_json(const extractor::iat_result_t& r);
 json to_json(const extractor::pe_export_table_t& r);
 json to_json(const extractor::hexdump_result_t& r);
@@ -105,6 +107,12 @@ std::filesystem::path write_extraction_json(const std::string& stem,
 
 std::filesystem::path write_capa_json(const std::string& stem,
                                       const capa::report_t& r);
+
+// Detect It Easy scan result (exports/<stem>_analysis/die/<stem>_die.json).
+// Written only when the scan succeeded - run_export gates on st == ok - so a
+// run without the optional die-python install leaves no placeholder file.
+std::filesystem::path write_die_json(const std::string& stem,
+                                     const die_runner::result_t& r);
 
 std::filesystem::path write_iat_json(const std::string& stem,
                                      const extractor::iat_result_t& r);

@@ -1,6 +1,7 @@
 #include "pipeline.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -17,6 +18,23 @@
 
 namespace pipeline {
 
+namespace {
+
+// Positive-integer seconds override from the environment. A missing,
+// non-numeric, or out-of-range value keeps `fallback`.
+std::chrono::seconds env_seconds(const char* name, long long fallback) {
+  const char* raw = std::getenv(name);
+  if (raw == nullptr || *raw == '\0') return std::chrono::seconds(fallback);
+  char* end = nullptr;
+  const long long parsed = std::strtoll(raw, &end, 10);
+  if (end == raw || *end != '\0' || parsed <= 0 || parsed > 86400) {
+    return std::chrono::seconds(fallback);
+  }
+  return std::chrono::seconds(parsed);
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // Phase 12: capa
 // ---------------------------------------------------------------------------
@@ -31,7 +49,12 @@ void run_capa(context& ctx) {
   capa_opts.max_addresses         = 32;
   capa_opts.max_stdout_bytes      = 64u * 1024u * 1024u;
   capa_opts.low_priority          = true;
-  capa_opts.timeout               = std::chrono::seconds(300);
+  // The old fixed 300 s budget killed capa on obfuscated samples with zero
+  // bytes of stdout (EasyAntiCheat_EOS.exe, 1 MB, timed out after 300 s).
+  // Give the normal phase 15 min by default; CAPA_TIMEOUT and
+  // CAPA_LARGE_TIMEOUT (seconds) override either phase.
+  capa_opts.timeout               = env_seconds("CAPA_TIMEOUT", 900);
+  capa_opts.large_timeout         = env_seconds("CAPA_LARGE_TIMEOUT", 1800);
 
   ctx.capa_report = capa::analyze_file(ctx.info.filepath, capa_opts);
   print_capa_report(ctx.capa_report);
@@ -39,9 +62,9 @@ void run_capa(context& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 13: radare2 graphs
+// radare2 option setup (shared by every phase that invokes r2)
 // ---------------------------------------------------------------------------
-void run_radare2(context& ctx) {
+void configure_r2(context& ctx) {
   ctx.r2_opts.executable            = "r2";
   ctx.r2_opts.rabin2                = "rabin2";
 #ifdef _WIN32
@@ -65,6 +88,13 @@ void run_radare2(context& ctx) {
   if (!r2::find_rabin2(ctx.r2_opts).empty()) {
     ctx.r2_opts.rabin2_version = r2::rabin2_version(ctx.r2_opts);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13: radare2 graphs
+// ---------------------------------------------------------------------------
+void run_radare2(context& ctx) {
+  configure_r2(ctx);
 
   // ctx.stem is computed in run_hashes() now (so pipelines without this phase
   // have it too); this phase only needs the run directory it owns.
@@ -309,7 +339,7 @@ void run_cminer(context& ctx) {
   } else if (!caves.applicable) {
     console::info("cminer only analyzes PE files; skipped");
   } else if (!caves.available) {
-    print_warn("cminer unavailable: WSL or the Cminer binary could not be used");
+    print_warn("cminer cave scan failed");
     if (!caves.command.empty()) print_kv("Command", caves.command);
     if (!caves.stderr_tail.empty()) print_kv("Stderr", caves.stderr_tail);
   } else {

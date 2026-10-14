@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "curses_ui.hpp"
+#include "die_runner.hpp"
 #include "extractor.hpp"
 #include "ioc_extractor.hpp"
 #include "known_pe_hashes.hpp"
@@ -66,6 +67,10 @@ struct context {
   ioc::ioc_results_t             ioc_results{};
   std::vector<malapi_hit_t>      malapi_hits{};
   capa::report_t                 capa_report;
+  // Detect It Easy scan. `attempted` is false when the die phase never ran;
+  // st == die_runner::status::not_installed is reported as a skip, not a
+  // failure, because the die-python bindings are an optional dependency.
+  die_runner::result_t           die_result{};
   r2::bulk_result_t              r2_result{};
   r2::xref_asm_result_t          xref_result{};
   extractor::extraction_result_t full{};
@@ -75,6 +80,9 @@ struct context {
   // so an absent model reads as "skipped, and here is why" rather than as a
   // missing section.
   std::string                    ml_skip_reason;
+  // Why the die phase did not run its scan, empty once it did (module
+  // missing, script absent). run_summary() prints it alongside the ML skip.
+  std::string                    die_skip_reason;
 
   // Graphviz / call-site bookkeeping the summary reads back.
   std::string render_format;
@@ -105,6 +113,9 @@ struct context {
   extractor::pe_sections_t     pe_sections_result{};
   // Every artifact path this run wrote - the run_summary.json manifest.
   std::vector<std::string>     exported_artifacts;
+  bool                         artifact_bundle_created = false;
+  bool                         artifact_bundle_uploaded = false;
+  std::string                  artifact_action_error;
 };
 
 // Numbers and prints the next stage that applies: a stage that does not apply
@@ -122,6 +133,7 @@ void run_iat_and_malapi(context& ctx);    // PE IAT render + MalAPI lookup
 void run_got(context& ctx);               // ELF / Mach-O GOT
 void run_byte_histogram(context& ctx);
 void run_packer(context& ctx);
+void run_die(context& ctx);
 void run_opcodes(context& ctx);
 void run_debug_symbols(context& ctx);
 void run_signature(context& ctx);
@@ -129,6 +141,12 @@ void run_capa(context& ctx);
 void run_radare2(context& ctx);
 void run_graphviz(context& ctx);
 void run_xref_asm(context& ctx);
+
+// Fills ctx.r2_opts (executable lookup, WSL, analysis flags, timeouts). Every
+// phase that invokes radare2 calls this first - including the MalAPI pass,
+// which runs before the radare2 phase and would otherwise inherit a default
+// options struct that cannot find r2 at all.
+void configure_r2(context& ctx);
 void run_guards(context& ctx);
 void run_full_extraction(context& ctx);   // analyze() + export table + YARA
 void run_hexdump(context& ctx);

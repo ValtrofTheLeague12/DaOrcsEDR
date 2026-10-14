@@ -7,6 +7,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "console.hpp"
@@ -14,6 +15,84 @@
 #include "pipeline_planner.hpp"
 
 namespace pipeline {
+
+namespace {
+
+// Binds a hit to the import it came from, so the report can place it in this
+// binary even when no code reference was resolved. A name can appear twice
+// (regular and delay import); the regular one wins.
+void attach_origin(malapi_hit_t& hit, const extractor::iat_result_t& iat) {
+  const extractor::iat_entry_t* chosen = nullptr;
+  for (const auto& e : iat.entries) {
+    if (e.name != hit.function) continue;
+    if (!e.is_delay) { chosen = &e; break; }   // prefer the regular import
+    if (chosen == nullptr) chosen = &e;
+  }
+  if (chosen == nullptr) return;
+  hit.dll        = chosen->dll;
+  hit.hint       = chosen->hint;
+  hit.ordinal    = chosen->ordinal;
+  hit.is_ordinal = chosen->is_ordinal;
+  hit.is_delay   = chosen->is_delay;
+  hit.iat_rva    = chosen->iat_rva;
+}
+
+// Best effort: every hit gets a location when radare2 is available, and the
+// hits are printed either way - the caller reports the reason when they are
+// missing. Costs one r2 process (and one analysis pass) on top of the import
+// phase; disabled with MALAPI_CALLSITES=0, budget with
+// MALAPI_CALLSITES_TIMEOUT=<seconds> (default 60).
+std::string resolve_malapi_call_sites(context& ctx) {
+  const std::string flag = env_or_empty("MALAPI_CALLSITES");
+  if (flag == "0" || flag == "off" || flag == "false") {
+    return "disabled by MALAPI_CALLSITES=" + flag;
+  }
+
+  std::uint64_t image_base = ctx.iat_result.image_base;
+  if (image_base == 0) {
+    image_base = 0x140000000ull;
+    print_warn("PE image base not reported; assuming 0x140000000 for MalAPI call sites");
+  }
+
+  std::vector<std::uint64_t> targets;
+  targets.reserve(ctx.malapi_hits.size());
+  for (const auto& hit : ctx.malapi_hits) {
+    if (hit.iat_rva != 0) targets.push_back(image_base + hit.iat_rva);
+  }
+  if (targets.empty()) return "no IAT slots behind the matched imports";
+
+  configure_r2(ctx);
+  r2::options opts = ctx.r2_opts;
+  int timeout_s = 60;
+  if (const std::string raw = env_or_empty("MALAPI_CALLSITES_TIMEOUT"); !raw.empty()) {
+    try { timeout_s = std::stoi(raw); } catch (const std::exception&) {}
+  }
+  if (timeout_s <= 0) timeout_s = 60;
+  opts.timeout = std::chrono::milliseconds(timeout_s * 1000);
+
+  const auto started = report_clock::now();
+  const r2::call_sites_result_t res =
+      r2::resolve_call_sites(ctx.info.filepath, targets, opts, 512);
+  if (res.st != r2::status::ok) {
+    LOG_INFO("malapi: call-site resolution failed after {:.1f}s: {}",
+             elapsed_ms(started) / 1000.0, res.error);
+    return res.error;
+  }
+
+  for (auto& hit : ctx.malapi_hits) {
+    hit.sites_resolved = true;
+    if (hit.iat_rva == 0) continue;
+    const auto it = res.by_target.find(image_base + hit.iat_rva);
+    if (it == res.by_target.end()) continue;
+    for (const r2::callsite_t& site : it->second) {
+      hit.call_sites.push_back(malapi_call_site_t{
+          site.function, site.function_offset, site.address});
+    }
+  }
+  return {};
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Phases 4-5: IAT (PE) + MalAPI lookup
@@ -82,22 +161,26 @@ void run_iat_and_malapi(context& ctx) {
         }
       }
 
-      std::vector<std::string> hits;
-      hits.reserve(queue.size());
-
       for (const std::string& name : queue) {
-        const auto hit = query_malapi(*ctx.api, name);
+        auto hit = query_malapi(*ctx.api, name);
         if (!hit) continue;
-        hits.push_back(format_malapi_hit(*hit));
-        ctx.malapi_hits.push_back(*hit);   // structured, for the dashboard
+        LOG_DEBUG("malapi: hit {}", format_malapi_hit(*hit));
+        attach_origin(*hit, ctx.iat_result);
+        ctx.malapi_hits.push_back(std::move(*hit));   // structured, for the export
       }
 
-      if (hits.empty()) {
+      if (ctx.malapi_hits.empty()) {
         console::info("no MalAPI matches among the imported functions");
       } else {
-        print_section("MalAPI matches (" + std::to_string(hits.size()) + ")");
-        for (const std::string& line : hits) {
-          print_bullet(line, console::red);
+        // Where each hit is referenced from: one r2 run over just the slots
+        // behind the matched imports, several phases before the full IAT
+        // call-site dump would otherwise exist.
+        const std::string why = resolve_malapi_call_sites(ctx);
+
+        print_section("MalAPI matches (" + std::to_string(ctx.malapi_hits.size()) + ")");
+        if (!why.empty()) print_warn("call sites not resolved: " + why);
+        for (const malapi_hit_t& hit : ctx.malapi_hits) {
+          print_malapi_hit(hit);
         }
       }
     }

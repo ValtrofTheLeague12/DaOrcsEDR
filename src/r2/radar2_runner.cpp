@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -903,6 +904,28 @@ result_t analyze_file(const std::string& sample, const options& opts) {
 // Function listing (r2 -c "aflj")
 // ---------------------------------------------------------------------------
 
+// The `aflj` payload shared by list_functions() and the combined
+// function-list + xref run in collect_xref_stage().
+void parse_function_list(const json& parsed, std::vector<function_info_t>& out) {
+  if (!parsed.is_array()) return;
+  for (const json& fn : parsed) {
+    if (!fn.is_object()) continue;
+    function_info_t f;
+    f.name    = jstr(fn, "name");
+    f.offset  = jnum(fn, "offset");
+    f.size    = jnum(fn, "size");
+    // nbbs is the modern field; nblocks is older. Use whichever exists.
+    f.blocks  = jnum(fn, "nbbs", jnum(fn, "nblocks", 0));
+    if (f.blocks == 0) {
+      if (auto it = fn.find("blocks"); it != fn.end() && it->is_array()) {
+        f.blocks = it->size();
+      }
+    }
+    f.is_pure = jbool(fn, "is-pure");
+    out.push_back(std::move(f));
+  }
+}
+
 function_list_result_t list_functions(const std::string& sample,
                                       const options& opts) {
   function_list_result_t res;
@@ -938,22 +961,7 @@ function_list_result_t list_functions(const std::string& sample,
     return res;
   }
 
-  for (const json& fn : parsed) {
-    if (!fn.is_object()) continue;
-    function_info_t f;
-    f.name    = jstr(fn, "name");
-    f.offset  = jnum(fn, "offset");
-    f.size    = jnum(fn, "size");
-    // nbbs is the modern field; nblocks is older. Use whichever exists.
-    f.blocks  = jnum(fn, "nbbs", jnum(fn, "nblocks", 0));
-    if (f.blocks == 0) {
-      if (auto it = fn.find("blocks"); it != fn.end() && it->is_array()) {
-        f.blocks = it->size();
-      }
-    }
-    f.is_pure = jbool(fn, "is-pure");
-    res.functions.push_back(std::move(f));
-  }
+  parse_function_list(parsed, res.functions);
 
   res.st = status::ok;
   res.seconds = seconds_since(started);
@@ -1318,6 +1326,31 @@ std::string render_flat_asm(const std::vector<raw_function_t>& fns,
   return body;
 }
 
+// Names that count as "entry or main" when a large function list forces a
+// hard cut: r2's entryNN flags plus the CRT entry names PE/ELF actually use.
+// The dashboard applies the same rule when it shrinks the embedded assembly
+// dataset, so both sides keep the same functions.
+bool is_main_like_name(const std::string& name) {
+  std::string lowered = name;
+  std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  for (const char* prefix : {"sym.", "imp.", "reloc."}) {
+    const std::size_t len = std::strlen(prefix);
+    if (lowered.size() >= len && lowered.compare(0, len, prefix) == 0) {
+      lowered.erase(0, len);
+      break;
+    }
+  }
+  while (!lowered.empty() && lowered.front() == '_') lowered.erase(lowered.begin());
+  if (lowered.rfind("entry", 0) == 0) return true;  // entry0, entry1, ...
+  for (const char* candidate : {"main", "wmain", "winmain", "wwinmain", "dllmain",
+                                "start", "maincrtstartup", "wmaincrtstartup",
+                                "dllcrtstartup"}) {
+    if (lowered == candidate) return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 raw_asm_result_t dump_function_assembly(const std::string& sample,
@@ -1359,6 +1392,7 @@ raw_asm_result_t dump_function_assembly(const std::string& sample,
   // thunks (rabin2 -i, keyed by PLT address) and symbols (rabin2 -s).
   std::unordered_map<std::uint64_t, std::string> label_by_addr;
   std::unordered_set<std::uint64_t> import_addrs;
+  std::unordered_set<std::uint64_t> entry_offsets;
   std::vector<section_t> section_metadata;
   {
     result_t rabin = analyze_file(sample, opts);
@@ -1375,6 +1409,9 @@ raw_asm_result_t dump_function_assembly(const std::string& sample,
         if (sym.vaddr == 0 || sym.name.empty()) continue;
         label_by_addr.emplace(sym.vaddr, sym.name);  // never overwrites
       }
+      for (const auto& ep : rabin.entrypoints) {
+        if (ep.vaddr != 0) entry_offsets.insert(ep.vaddr);
+      }
     } else {
       LOG_WARN("r2: dump_function_assembly: rabin2 metadata unavailable ({}); "
                "target labels will be limited", rabin.error);
@@ -1384,7 +1421,7 @@ raw_asm_result_t dump_function_assembly(const std::string& sample,
     if (!f.name.empty()) label_by_addr[f.offset] = f.name;  // functions win
   }
 
-  // Step 2: per-function `pdfj @ <offset>` batches.
+  // Step 2: choose the functions to dump, then `pdfj @ <offset>` batches.
   //
   // The previous implementation used the r2 iterator `pdfj @@f`, which is
   // fragile across r2 versions and produced no parseable JSON on some
@@ -1392,14 +1429,46 @@ raw_asm_result_t dump_function_assembly(const std::string& sample,
   // dump_xref_calls uses) are deterministic: one JSON object per command,
   // parsed with parse_json_stream. Commands are chunked so a single
   // Windows command line stays well under its 32K limit.
-  std::vector<std::uint64_t> dump_offsets;
-  dump_offsets.reserve(fl.functions.size());
+  //
+  // Selection: everything up to max_functions, address order as before.
+  // When the list is larger than the cap, the first-N-by-address cut would
+  // bury the entry point and main among thousands of helpers, so the cut
+  // keeps only entry-point functions and main-like names - the same subset
+  // the dashboard falls back to when the assembly dataset is too large to
+  // embed. If neither rule matches anything (unusual naming), the old
+  // first-N behaviour is the fallback.
+  std::vector<const function_info_t*> selected;
+  selected.reserve(fl.functions.size());
   for (const auto& f : fl.functions) {
     if (dump.include_function && !dump.include_function(f)) continue;
     if (f.size == 0 && f.name.empty()) continue;
-    dump_offsets.push_back(f.offset);
-    if (dump_offsets.size() >= dump.max_functions) break;
+    selected.push_back(&f);
   }
+  if (selected.size() > dump.max_functions) {
+    std::vector<const function_info_t*> important;
+    important.reserve(selected.size());
+    for (const function_info_t* f : selected) {
+      if (entry_offsets.count(f->offset) > 0 || is_main_like_name(f->name)) {
+        important.push_back(f);
+        if (important.size() >= dump.max_functions) break;
+      }
+    }
+    if (!important.empty()) {
+      LOG_WARN("r2: dump_function_assembly: {} function(s) exceed the {} cap; "
+               "keeping only the {} entry/main function(s)",
+               selected.size(), dump.max_functions, important.size());
+      selected = std::move(important);
+    } else {
+      LOG_WARN("r2: dump_function_assembly: {} function(s) exceed the {} cap "
+               "and no entry/main function was recognised; keeping the first {}",
+               selected.size(), dump.max_functions, dump.max_functions);
+      selected.resize(dump.max_functions);
+    }
+  }
+
+  std::vector<std::uint64_t> dump_offsets;
+  dump_offsets.reserve(selected.size());
+  for (const function_info_t* f : selected) dump_offsets.push_back(f->offset);
 
   std::vector<json> docs;
   {
@@ -1635,21 +1704,46 @@ section_dot_result_t dump_section_dots(const std::string& sample,
     // One seek + agfd per function; each produces its own digraph. We then
     // namespace node IDs per digraph and merge them into a single graph so
     // that identically-numbered nodes in different functions don't collide.
-    std::vector<std::string> cmds;
-    cmds.reserve(in_section.size() * 2);
-    for (const auto* f : in_section) {
-      cmds.push_back("s " + hex_u64(f->offset));
-      cmds.push_back("agfd");
+    //
+    // The commands are chunked: one run with up to max_functions_per_section
+    // x 2 commands overshot the 32K Windows command-line limit on large
+    // sections and CreateProcess failed with error 206 before r2 started.
+    std::string stdout_text;
+    {
+      constexpr std::size_t kFnsPerRun = 400;  // 800 commands ~ 20 KB
+      bool hard_fail = false;
+      std::string hard_err;
+      for (std::size_t base = 0; base < in_section.size();
+           base += kFnsPerRun) {
+        const std::size_t end = std::min(base + kFnsPerRun, in_section.size());
+        std::vector<std::string> cmds;
+        cmds.reserve((end - base) * 2);
+        for (std::size_t i = base; i < end; ++i) {
+          cmds.push_back("s " + hex_u64(in_section[i]->offset));
+          cmds.push_back("agfd");
+        }
+
+        const run_out run = run_r2(sample, opts, cmds, dump.per_section_timeout);
+        if (run.st != status::ok) {
+          if (run.st == status::not_found || run.st == status::launch_failed ||
+              run.st == status::timed_out || run.st == status::output_too_large) {
+            hard_fail = true;
+            hard_err  = run.error;
+            break;
+          }
+          res.errors.push_back({s.name, run.error});
+          continue;
+        }
+        stdout_text += run.stdout_text;
+      }
+      if (hard_fail) {
+        LOG_WARN("r2: dump_section_dots: section '{}' failed: {}", s.name, hard_err);
+        res.errors.push_back({s.name, hard_err});
+        continue;
+      }
     }
 
-    const run_out run = run_r2(sample, opts, cmds, dump.per_section_timeout);
-    if (run.st != status::ok) {
-      LOG_WARN("r2: dump_section_dots: section '{}' failed: {}", s.name, run.error);
-      res.errors.push_back({s.name, run.error});
-      continue;
-    }
-
-    if (run.stdout_text.find("digraph") == std::string::npos) continue;
+    if (stdout_text.find("digraph") == std::string::npos) continue;
 
     std::string combined;
     {
@@ -1659,22 +1753,22 @@ section_dot_result_t dump_section_dots(const std::string& sample,
       combined += "  node [shape=box, fontname=\"Courier\"];\n";
 
       while (true) {
-        const std::size_t dg = run.stdout_text.find("digraph", pos);
+        const std::size_t dg = stdout_text.find("digraph", pos);
         if (dg == std::string::npos) break;
-        const std::size_t brace_open = run.stdout_text.find('{', dg);
+        const std::size_t brace_open = stdout_text.find('{', dg);
         if (brace_open == std::string::npos) break;
 
         int depth = 1;
         std::size_t cursor = brace_open + 1;
-        while (cursor < run.stdout_text.size() && depth > 0) {
-          if (run.stdout_text[cursor] == '{') ++depth;
-          else if (run.stdout_text[cursor] == '}') --depth;
+        while (cursor < stdout_text.size() && depth > 0) {
+          if (stdout_text[cursor] == '{') ++depth;
+          else if (stdout_text[cursor] == '}') --depth;
           ++cursor;
         }
         if (depth != 0) break;
 
-        std::string body = run.stdout_text.substr(brace_open + 1,
-                                                  cursor - brace_open - 2);
+        std::string body = stdout_text.substr(brace_open + 1,
+                                              cursor - brace_open - 2);
 
         // Namespace node IDs by prefixing each `0x...` token with fn<N>_.
         const std::string prefix = "fn" + std::to_string(fn_index) + "_";
@@ -1855,6 +1949,95 @@ const function_info_t* find_enclosing(const std::vector<function_info_t>& fns,
   return best;
 }
 
+// Stages 0-1 of dump_xref_calls, shared with resolve_call_sites: the function
+// list (aflj) and one batched axtj run, keeping the sites per slot so a caller
+// can map an individual import slot to the code that references it.
+struct xref_stage_t {
+  status      st = status::ok;
+  std::string error;
+
+  function_list_result_t functions;
+  std::vector<std::uint64_t> slots;                    // after the max_slots cap
+  std::vector<std::vector<std::uint64_t>> sites_per_slot;  // parallel to slots
+  std::vector<std::uint64_t> call_sites;               // deduped, first-seen order
+  std::size_t slots_with_xrefs = 0;
+
+  std::string command_line;
+  std::string stderr_tail;
+  int         exit_code = 0;
+};
+
+xref_stage_t collect_xref_stage(const std::string& sample,
+                                const std::vector<std::uint64_t>& targets,
+                                const options& opts,
+                                std::size_t max_slots) {
+  xref_stage_t s;
+
+  s.slots = targets;
+  if (s.slots.size() > max_slots) s.slots.resize(max_slots);
+  s.sites_per_slot.assign(s.slots.size(), {});
+
+  // One r2 process, one analysis pass: aflj first (so call sites can be
+  // mapped to their enclosing function), then one axtj per slot. Analysis is
+  // by far the most expensive part of this - running the two commands in
+  // separate processes would pay for it twice.
+  std::vector<std::string> cmds;
+  cmds.reserve(s.slots.size() + 1);
+  cmds.push_back("aflj");
+  for (const std::uint64_t a : s.slots) {
+    cmds.push_back("axtj @ " + hex_u64(a));
+  }
+
+  const run_out run = run_r2(sample, opts, cmds, opts.timeout);
+  s.command_line = run.command_line;
+  s.stderr_tail  = run.stderr_tail;
+  s.exit_code    = run.exit_code;
+
+  if (run.st != status::ok) {
+    s.st = run.st;
+    s.error = "xref resolution failed: " + run.error;
+    return s;
+  }
+
+  // r2 emits one JSON value per command, concatenated with no separator: the
+  // aflj array first, then one array per slot, in order.
+  const std::vector<json> docs = parse_json_stream(run.stdout_text);
+  const std::size_t expected = s.slots.size() + 1;
+  if (docs.size() != expected) {
+    s.st = status::bad_output;
+    s.error = "r2 produced " + std::to_string(docs.size()) +
+              " JSON document(s), expected " + std::to_string(expected);
+    return s;
+  }
+  if (!docs.front().is_array()) {
+    s.st = status::bad_output;
+    s.error = "aflj output is not a JSON array";
+    return s;
+  }
+  parse_function_list(docs.front(), s.functions.functions);
+
+  std::unordered_set<std::uint64_t> seen_global;
+  for (std::size_t i = 0; i < s.slots.size(); ++i) {
+    const json& doc = docs[i + 1];
+    bool had = false;
+    auto collect = [&](const json& x) {
+      if (!x.is_object()) return;
+      const std::uint64_t from = jnum(x, "from");
+      if (from == 0) return;
+      std::vector<std::uint64_t>& per_slot = s.sites_per_slot[i];
+      if (std::find(per_slot.begin(), per_slot.end(), from) == per_slot.end()) {
+        per_slot.push_back(from);
+      }
+      if (seen_global.insert(from).second) s.call_sites.push_back(from);
+      had = true;
+    };
+    if (doc.is_array()) { for (const auto& x : doc) collect(x); }
+    else collect(doc);
+    if (had) ++s.slots_with_xrefs;
+  }
+  return s;
+}
+
 }  // namespace
 
 xref_asm_result_t dump_xref_calls(const std::string& sample,
@@ -1889,70 +2072,23 @@ xref_asm_result_t dump_xref_calls(const std::string& sample,
     return res;
   }
 
-  // Function list first, so we can map call sites -> enclosing function.
-  function_list_result_t fl = list_functions(sample, opts);
-  if (fl.st != status::ok) {
-    res.st = fl.st;
-    res.error = "list_functions failed: " + fl.error;
+  // --- Stage 0 + 1: function list, then xrefs for every slot --------------
+  const xref_stage_t stage = collect_xref_stage(sample, targets, opts, dump.max_slots);
+  if (stage.st != status::ok) {
+    res.st = stage.st;
+    res.error = stage.error;
     res.seconds = seconds_since(started);
     return res;
   }
   res.r2_version = opts.r2_version;
+  res.command_line = stage.command_line;
+  res.stderr_tail = stage.stderr_tail;
+  res.exit_code = stage.exit_code;
+  res.slots_input = stage.slots.size();
+  res.xrefs_found = stage.call_sites.size();
+  res.slots_with_xrefs = stage.slots_with_xrefs;
 
-  // --- Stage 1: resolve xrefs for every slot via axtj ---------------------
-  std::vector<std::uint64_t> slots = targets;
-  if (slots.size() > dump.max_slots) slots.resize(dump.max_slots);
-  res.slots_input = slots.size();
-
-  std::vector<std::string> xref_cmds;
-  xref_cmds.reserve(slots.size());
-  for (std::uint64_t a : slots) {
-    xref_cmds.push_back("axtj @ " + hex_u64(a));
-  }
-
-  const run_out xref_run = run_r2(sample, opts, xref_cmds, opts.timeout);
-  res.command_line = xref_run.command_line;
-  res.stderr_tail = xref_run.stderr_tail;
-  res.exit_code = xref_run.exit_code;
-
-  if (xref_run.st != status::ok) {
-    res.st = xref_run.st;
-    res.error = "xref resolution failed: " + xref_run.error;
-    res.seconds = seconds_since(started);
-    return res;
-  }
-
-  // r2 emits one JSON array per `axtj @ <addr>` invocation, concatenated
-  // with no separator. Parse as a stream, one document per slot, in order.
-  const std::vector<json> xref_docs = parse_json_stream(xref_run.stdout_text);
-
-  std::vector<std::uint64_t> call_sites;
-  std::vector<std::uint64_t> slots_with_xrefs;
-  for (std::size_t i = 0; i < xref_docs.size() && i < slots.size(); ++i) {
-    const json& doc = xref_docs[i];
-    bool had = false;
-    auto collect = [&](const json& x) {
-      if (!x.is_object()) return;
-      const std::uint64_t from = jnum(x, "from");
-      if (from != 0) { call_sites.push_back(from); had = true; }
-    };
-    if (doc.is_array()) { for (const auto& x : doc) collect(x); }
-    else collect(doc);
-    if (had) slots_with_xrefs.push_back(slots[i]);
-  }
-
-  // Dedup call sites.
-  std::vector<std::uint64_t> unique_sites;
-  {
-    std::unordered_set<std::uint64_t> seen;
-    for (auto a : call_sites) {
-      if (seen.insert(a).second) unique_sites.push_back(a);
-    }
-  }
-  res.xrefs_found = unique_sites.size();
-  res.slots_with_xrefs = slots_with_xrefs.size();
-
-  if (unique_sites.empty()) {
+  if (stage.call_sites.empty()) {
     res.st = status::bad_output;
     res.error = "no xrefs found for any slot";
     res.seconds = seconds_since(started);
@@ -1962,8 +2098,8 @@ xref_asm_result_t dump_xref_calls(const std::string& sample,
   // Map each call site to its enclosing function.
   std::vector<std::uint64_t> functions_to_dump;
   std::unordered_set<std::uint64_t> seen_fn;
-  for (auto a : unique_sites) {
-    const function_info_t* f = find_enclosing(fl.functions, a);
+  for (auto a : stage.call_sites) {
+    const function_info_t* f = find_enclosing(stage.functions.functions, a);
     if (f == nullptr) continue;
     if (dump.dedup_functions) {
       if (!seen_fn.insert(f->offset).second) continue;
@@ -2073,6 +2209,60 @@ xref_asm_result_t dump_xref_calls(const std::string& sample,
 
   LOG_INFO("r2: dump_xref_calls: '{}' done in {:.3f}s — {} function(s), {} call site(s), {} bytes",
            path, res.seconds, res.functions_dumped, res.xrefs_found, res.bytes);
+  return res;
+}
+
+call_sites_result_t resolve_call_sites(const std::string& sample,
+                                       const std::vector<std::uint64_t>& targets,
+                                       const options& opts,
+                                       std::size_t max_slots) {
+  call_sites_result_t res;
+  const auto started = clock_type::now();
+
+  if (targets.empty()) {
+    res.st = status::bad_output;
+    res.error = "no target slots provided";
+    res.seconds = seconds_since(started);
+    return res;
+  }
+
+  const xref_stage_t stage = collect_xref_stage(sample, targets, opts, max_slots);
+  res.command_line = stage.command_line;
+  res.stderr_tail  = stage.stderr_tail;
+  res.exit_code    = stage.exit_code;
+  res.r2_version   = opts.r2_version;
+
+  if (stage.st != status::ok) {
+    res.st = stage.st;
+    res.error = stage.error;
+    res.seconds = seconds_since(started);
+    return res;
+  }
+
+  res.slots_input       = stage.slots.size();
+  res.slots_with_xrefs  = stage.slots_with_xrefs;
+
+  // Every input target gets an entry, even an empty one: the caller uses that
+  // to tell "nothing references this slot" from "this was never resolved".
+  for (std::size_t i = 0; i < stage.slots.size(); ++i) {
+    std::vector<callsite_t>& sites = res.by_target[stage.slots[i]];
+    for (const std::uint64_t a : stage.sites_per_slot[i]) {
+      const function_info_t* f = find_enclosing(stage.functions.functions, a);
+      if (f == nullptr) continue;
+      callsite_t c;
+      c.address         = a;
+      c.function        = f->name;
+      c.function_offset = f->offset;
+      c.function_size   = f->size;
+      sites.push_back(std::move(c));
+      ++res.sites_found;
+    }
+  }
+
+  res.st = status::ok;
+  res.seconds = seconds_since(started);
+  LOG_INFO("r2: resolve_call_sites done in {:.3f}s — {} slot(s), {} with xrefs, {} site(s)",
+           res.seconds, res.slots_input, res.slots_with_xrefs, res.sites_found);
   return res;
 }
 

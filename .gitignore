@@ -13,18 +13,45 @@ admin-terminal/*
 !admin-terminal/qiling_vm.py
 !qiling_dlls/
 qiling_dlls/*
-!qiling_dlls/_qiling_script.py
 !qiling_dlls/dll_collector.bat
 !qiling_dlls/known_hosts.ssh
-!qiling_dlls/_check_vm_connection.py
 !qiling_dlls/vm_info.json
-!qiling_dlls/_configure_quiling.py
-!qiling_dlls/_collect_qiling_artifacts.py
 !qiling_dlls/qilin-service.install.sh
 !qiling_dlls/qilin-check-service.sh
 !qiling_dlls/templates/
 qiling_dlls/templates/*
 !qiling_dlls/templates/*.j2
+# python/ is the single home for every Python script in the tree. The repo
+# ignores by default and whitelists, so python/ has to be re-included as a
+# directory before anything inside it can be (git will not descend into an
+# excluded directory). This does not untrack anything already tracked.
+!python/
+python/*
+!python/api/
+!python/templates/
+!python/templates/*.j2
+# ClamAV host-side tooling.
+!python/clamd/
+python/clamd/*
+!python/clamd/clamd-python.py
+!python/clamd/scan_remote.py
+!python/clamd/_collect_clamd_artifacts.py
+!python/clamd/_configure_clamd.pyc
+!python/clamd/vm_info.json
+!python/clamd/test_clamd_connection.sh
+!python/clamd/requirements.txt
+# Qiling emulation tooling. qiling_dlls/ keeps only what gets staged onto the
+# analysis VM (rootfs.tar.gz, examples/, templates/, dll_collector.bat), and its
+# basename is still the VM's remote_dir - see admin-terminal/vms.json.
+!python/qiling/
+python/qiling/*
+!python/qiling/_qiling_script.py
+!python/qiling/_configure_quiling.py
+!python/qiling/_check_vm_connection.py
+!python/qiling/_collect_qiling_artifacts.py
+!python/qiling/_build_dashboard.py
+!python/qiling/_cti_intel.py
+!python/qiling/requirements.txt
 !tests/
 tests/*
 !tests/test_server_queue.py
@@ -33,8 +60,67 @@ tests/*
 !tests/test_pipeline_cli.py
 !config/
 config/*
+!config/artifacts.yaml
 !config/systemd/
 config/systemd/*
 !config/systemd/qilin-service/
 config/systemd/qilin-service/*
 !config/systemd/qilin-service/*.service
+# MEGA evidence storage. The scripts are tracked; nothing else in here is.
+# The sealed credential no longer lives here at all - it moved to
+# %APPDATA%\IAProject\mega-secrets\ (see mega/credential.py secrets_dir()), so
+# `git add -A`, a repo backup or an archive of this tree cannot reach it. The
+# denies below stay as a backstop in case anything is ever re-sealed in place:
+# credential.key next to credentials.enc opens the account.
+!mega/
+mega/*
+!mega/login.py
+!mega/upload.py
+!mega/credential.py
+!mega/megacmd.py
+!mega/list.py
+!mega/recover.py
+!mega/README.md
+mega/credentials.enc
+mega/credential.key
+mega/*.gpg
+mega/*.key
+mega/*.enc
+mega/*.bak
+
+# Native orchestration wrapper for the MEGA uploader.
+!include/
+!include/mega/
+!include/mega/mega_runner.hpp
+!src/
+!src/mega/
+!src/mega/mega_runner.cpp
+
+# Admin orchestration panel - Flask backend. The repo ignores by default and
+# whitelists, so both the entry point and the package directory have to be
+# re-included before anything inside them can be added (git will not descend
+# into an excluded directory). Same trap that hid mega/megacmd.py.
+!python/admin_server.py
+!python/panel/
+!python/panel/*
+# HMAC key for the panel's session cookie. Generated on first run, 0600, and
+# signing-key shaped: anything holding it can mint a session. The !python/panel/*
+# above re-includes the whole directory, so it has to be denied explicitly or it
+# gets committed and every install starts sharing one signing key.
+python/panel/.session-key
+
+# Admin orchestration panel - React front end. Source and the lockfile are
+# tracked so the build is reproducible; node_modules and dist are not. dist is
+# a build artefact, and committing it makes the served bundle a tracked file
+# that silently goes stale.
+!admin-panel.ps1
+!admin-web/
+admin-web/node_modules
+admin-web/dist
+!admin-web/package.json
+!admin-web/package-lock.json
+!admin-web/vite.config.ts
+!admin-web/tsconfig.json
+!admin-web/index.html
+!admin-web/src
+!admin-web/src/**

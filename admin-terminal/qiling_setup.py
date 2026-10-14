@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import ipaddress
+import json
 import os
 import re
 import shlex
@@ -14,9 +15,14 @@ from pathlib import Path, PurePosixPath
 
 import core
 
+# qiling_dlls/ holds only what gets staged onto the analysis VM (rootfs
+# archive + tree, the DLL collector, vm_info.json). Its basename is also the
+# VM's remote_dir, so it must not be renamed. The Python tooling itself lives
+# with the rest of the tree in python/qiling/.
 QILING_DIR = Path(core.REPO) / "qiling_dlls"
+QILING_SCRIPTS = Path(core.REPO) / "python" / "qiling"
 COLLECTOR = QILING_DIR / "dll_collector.bat"
-SCRIPT = QILING_DIR / "_qiling_script.py"
+SCRIPT = QILING_SCRIPTS / "_qiling_script.py"
 ARCHIVE = QILING_DIR / "rootfs.tar.gz"
 ROOTFS = QILING_DIR / "examples" / "rootfs"
 RESULTS = QILING_DIR / "results"
@@ -142,10 +148,11 @@ def allow_vm_subnet_firewall() -> None:
         "-Action Allow -Protocol TCP -RemotePort 22,80 "
         "-RemoteAddress 192.168.56.0/24 -Profile Any | Out-Null"
     )
-    if _run_elevated(script):
+    code = _run_elevated(script)
+    if code:
         raise QilingSetupError(
             "could not create the scoped HTTP/SSH firewall rules "
-            f"(exit {result.returncode})")
+            f"(exit {code})")
 
 
 def _remote_settings(config: dict) -> tuple[str, str, int, PurePosixPath]:
@@ -179,27 +186,138 @@ def _remote_settings(config: dict) -> tuple[str, str, int, PurePosixPath]:
     return host, username, port, remote_dir
 
 
+# Hosts already probed in this process, so the bootstrap runs at most once.
+_BOOTSTRAPPED: set[tuple[str, int, str]] = set()
+
+
+def _vm_password(config: dict) -> str:
+    """SSH password from vms.json, falling back to qiling_dlls/vm_info.json."""
+    password = str(config.get("password", "") or "").strip()
+    if password:
+        return password
+    try:
+        info = json.loads(
+            (QILING_DIR / "vm_info.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(info.get("VM_PASSWORD", "") or "").strip()
+
+
+def _batch_login_probe(host: str, username: str, port: int,
+                       known_hosts: Path) -> subprocess.CompletedProcess:
+    """Non-interactive login check - what every later ssh/sftp call uses."""
+    return subprocess.run(
+        ["ssh", "-p", str(port),
+         "-o", "BatchMode=yes",
+         "-o", "StrictHostKeyChecking=accept-new",
+         "-o", f"UserKnownHostsFile={known_hosts.resolve().as_posix()}",
+         "-o", "ConnectTimeout=8",
+         f"{username}@{host}", "true"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False,
+    )
+
+
+def _ensure_vm_key(config: dict, known_hosts: Path) -> None:
+    """Best-effort bootstrap: install our public key so BatchMode ssh works.
+
+    The CLI always runs with BatchMode=yes (no password prompts), so password
+    auth can never succeed from it.  When key login is not working yet, log in
+    once with paramiko (AutoAddPolicy + the configured password), append our
+    public key to the VM user's authorized_keys, and verify.  Never raises -
+    the real SSH call below reports the definitive error.
+    """
+    host, username, port, _remote_dir = _remote_settings(config)
+    if str(config.get("identity_file", "")).strip():
+        return                                  # caller manages its own key
+    attempt = (host, port, username)
+    if attempt in _BOOTSTRAPPED:
+        return
+    _BOOTSTRAPPED.add(attempt)
+
+    try:
+        probe = _batch_login_probe(host, username, port, known_hosts)
+    except OSError as exc:
+        print(f"  SSH probe could not run: {exc}")
+        return
+    if probe.returncode == 0:
+        return
+
+    password = _vm_password(config)
+    if not password:
+        detail = (probe.stderr or "").strip() or "permission denied"
+        print(f"  SSH key login to {username}@{host} is not ready ({detail}) "
+              "and no password is configured (admin-terminal/vms.json "
+              "'password' or qiling_dlls/vm_info.json 'VM_PASSWORD')")
+        return
+    try:
+        import paramiko
+    except ImportError:
+        print("  paramiko is needed to install the SSH key automatically "
+              "(py -m pip install paramiko); continuing without it")
+        return
+
+    ssh_dir = Path.home() / ".ssh"
+    ssh_dir.mkdir(exist_ok=True)
+    key_path = ssh_dir / "id_ed25519"
+    if not key_path.is_file():
+        generated = subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "",
+             "-C", "iaproject-qiling", "-f", str(key_path)],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", check=False)
+        if not key_path.is_file():
+            print(f"  ssh-keygen failed: {generated.stderr.strip()}")
+            return
+    public_key = Path(f"{key_path}.pub").read_text(
+        encoding="utf-8").strip()
+    if not public_key:
+        return
+
+    client = paramiko.SSHClient()
+    try:
+        try:
+            client.load_system_host_keys()      # ~/.ssh/known_hosts
+        except OSError:
+            pass
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(hostname=host, port=port, username=username,
+                       password=password, timeout=10,
+                       allow_agent=False, look_for_keys=False)
+        quoted = shlex.quote(public_key)
+        _, out, err = client.exec_command(
+            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+            "touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys "
+            f"&& (grep -qxF {quoted} ~/.ssh/authorized_keys || "
+            f"echo {quoted} >> ~/.ssh/authorized_keys)")
+        if out.channel.recv_exit_status():
+            detail = err.read().decode(errors="replace").strip()
+            print(f"  could not install the SSH public key on "
+                  f"{username}@{host}: {detail}")
+            return
+    except Exception as exc:
+        print(f"  SSH key bootstrap for {username}@{host} failed: {exc}")
+        return
+    finally:
+        client.close()
+
+    if _batch_login_probe(host, username, port, known_hosts).returncode == 0:
+        print(f"  SSH public key installed; BatchMode login to "
+              f"{username}@{host} works")
+    else:
+        print(f"  SSH key installed on {username}@{host} but key login "
+              "still fails - check the VM's sshd configuration")
+
+
 def _ssh_base(config: dict) -> tuple[list[str], str, str]:
     host, username, port, remote_dir = _remote_settings(config)
     known_hosts = Path(
         core.known_hosts_path(config.get("known_hosts_file", "")))
-    if not known_hosts.is_file():
-        raise QilingSetupError(
-            f"trusted host-key file missing: {known_hosts}; add the VM's "
-            "verified SSH host key before connecting")
-    with known_hosts.open(encoding="utf-8", errors="replace") as fh:
-        trusted_entries = [
-            line for line in fh
-            if line.strip() and not line.lstrip().startswith("#")
-        ]
-    if not trusted_entries:
-        raise QilingSetupError(
-            f"{known_hosts} has no trusted host keys; verify the VM key "
-            "out of band, then add its known_hosts entry")
+    known_hosts.parent.mkdir(parents=True, exist_ok=True)
 
     options = [
         "-o", "BatchMode=yes",
-        "-o", "StrictHostKeyChecking=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
         "-o", f"UserKnownHostsFile={known_hosts.resolve().as_posix()}",
         "-o", "ConnectTimeout=8",
     ]
@@ -211,6 +329,8 @@ def _ssh_base(config: dict) -> tuple[list[str], str, str]:
         if not key_path.is_file():
             raise QilingSetupError(f"SSH identity file not found: {key_path}")
         options.extend(["-i", str(key_path)])
+
+    _ensure_vm_key(config, known_hosts)
 
     destination = f"{username}@{host}"
     ssh = ["ssh", "-p", str(port), *options, destination]
@@ -236,7 +356,7 @@ def _ssh(config: dict, command: str, *, check: bool = True) -> subprocess.Comple
 
 def remote_rootfs_exists(config: dict) -> bool:
     """Check both emulated Windows trees on the VM using verified SSH."""
-    _ssh, _sftp, remote_base = _ssh_base(config)
+    _ssh_cmd, _sftp, remote_base = _ssh_base(config)
     result = _ssh(
         config,
         f"test -d {remote_base}/examples/rootfs/x86_windows/Windows/System32 "
@@ -257,16 +377,27 @@ def _sftp_quote(path: str) -> str:
     return '"' + path.replace("\\", "/").replace('"', '\\"') + '"'
 
 
+def _sftp_batch(sftp: list[str], batch: str) -> subprocess.CompletedProcess:
+    """Run a batch script on stdin.
+
+    Unlike ssh (which takes the remote command after the destination),
+    sftp parses only options before the destination, so -b must precede it.
+    """
+    *options, destination = sftp
+    return subprocess.run(
+        [*options, "-b", "-", destination], input=batch,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False,
+    )
+
+
 def _upload(config: dict, files: list[tuple[Path, str]]) -> None:
     _ssh, sftp, _remote_base = _ssh_base(config)
     batch = "".join(
         f"put -p {_sftp_quote(str(local))} {_sftp_quote(remote)}\n"
         for local, remote in files
     )
-    result = subprocess.run(
-        [*sftp, "-b", "-"], input=batch, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=False,
-    )
+    result = _sftp_batch(sftp, batch)
     if result.returncode:
         detail = (result.stderr or result.stdout).strip()
         raise QilingSetupError(
@@ -278,10 +409,7 @@ def _download(config: dict, remote: str, local: Path) -> None:
     _ssh, sftp, _remote_base = _ssh_base(config)
     local.parent.mkdir(parents=True, exist_ok=True)
     batch = f"get {_sftp_quote(remote)} {_sftp_quote(str(local))}\n"
-    result = subprocess.run(
-        [*sftp, "-b", "-"], input=batch, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=False,
-    )
+    result = _sftp_batch(sftp, batch)
     if result.returncode:
         detail = (result.stderr or result.stdout).strip()
         raise QilingSetupError(
@@ -289,8 +417,30 @@ def _download(config: dict, remote: str, local: Path) -> None:
             + (f": {detail}" if detail else ""))
 
 
-def deploy_and_run(config: dict, sample: str) -> str:
-    """Upload the harness/sample and missing rootfs, run it remotely, fetch zip."""
+def _sample_is_x86(sample_path: Path) -> bool:
+    """True when the PE COFF Machine field says 32-bit x86 (0x014C)."""
+    try:
+        with sample_path.open("rb") as fh:
+            if fh.read(2) != b"MZ":
+                return False
+            fh.seek(0x3C)
+            pe_offset = int.from_bytes(fh.read(4), "little")
+            if not 0 < pe_offset <= 0x10000:
+                return False
+            fh.seek(pe_offset + 4)
+            machine = int.from_bytes(fh.read(2), "little")
+    except OSError:
+        return False
+    return machine == 0x014C
+
+
+def deploy_and_run(config: dict, sample: str,
+                   harness_args: tuple[str, ...] | list[str] = ()) -> str:
+    """Upload the harness/sample and missing rootfs, run it remotely, fetch zip.
+
+    `harness_args` are extra options for _qiling_script.py (e.g. --timeout),
+    inserted between --out and the remote sample path.
+    """
     sample_path = Path(sample).expanduser().resolve()
     if not sample_path.is_file():
         raise QilingSetupError(f"executable not found: {sample_path}")
@@ -339,11 +489,14 @@ def deploy_and_run(config: dict, sample: str) -> str:
         raise QilingSetupError("remote_python must be an executable name")
     stem = re.sub(r"[^A-Za-z0-9._-]", "_", sample_path.stem).lstrip(".")
     output_name = f"{stem or 'sample'}_qiling_out.zip"
+    rootfs_arch = "x86_windows" if _sample_is_x86(sample_path) \
+        else "x8664_windows"
+    extra = "".join(f" {shlex.quote(str(arg))}" for arg in harness_args)
     command = (
         f"cd {remote_dir_shell} && {shlex.quote(remote_python)} "
         f"{remote_dir_shell}/_qiling_script.py --rootfs "
-        f"{remote_dir_shell}/examples/rootfs/x8664_windows --out "
-        f"{remote_dir_shell}/{shlex.quote(output_name)} "
+        f"{remote_dir_shell}/examples/rootfs/{rootfs_arch} --out "
+        f"{remote_dir_shell}/{shlex.quote(output_name)}{extra} "
         f"{remote_dir_shell}/{shlex.quote(safe_name)}"
     )
     log_path = str(core.ensure_admin_logs())

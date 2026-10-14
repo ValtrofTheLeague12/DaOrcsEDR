@@ -70,6 +70,7 @@ result render(const options& opts) {
     add_opt(args, "--stix",       opts.stix);
     add_opt(args, "--navigator",  opts.navigator);
     add_opt(args, "--ml",         opts.ml);
+    add_opt(args, "--die",        opts.die);
     add_opt(args, "--files-root", opts.files_root);
     add_opt(args, "--asm-json",   opts.asm_json);
     add_opt(args, "--callgraph",  opts.callgraph_dot);

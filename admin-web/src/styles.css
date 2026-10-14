@@ -1,0 +1,1357 @@
+/* ==========================================================================
+   Admin console design system
+
+   HeroUI supplies component primitives and the theme tokens. This file adds
+   the layer that makes it read as a modern console rather than a stack of
+   boxes: depth, motion, and a small set of repeated surface treatments.
+
+   Everything colour-related resolves to HeroUI's own tokens, so the whole
+   thing restyles from the data-theme attribute with no extra work.
+   ========================================================================== */
+
+@import "tailwindcss";
+@import "@heroui/styles";
+
+/* --- brand --------------------------------------------------------------- */
+
+:root {
+  color-scheme: dark;
+
+  /* Typography.
+   *
+   * These three variables are the whole font system, because HeroUI resolves
+   * every component through var(--font-sans) / var(--font-mono) and Tailwind's
+   * font-sans / font-mono utilities read the same names. Setting them here
+   * retypes the entire app - including HeroUI internals - with no per-component
+   * overrides.
+   *
+   * No webfont on purpose. The panel is a loopback-bound operator tool that is
+   * expected to work on an isolated lab network, so a Google Fonts <link> would
+   * make typography fail closed on the machine that matters. Instead: the best
+   * fonts already installed. Windows 11 ships "Segoe UI Variable", a genuine
+   * variable font (wght 100-900, real optical sizing) that beats every generic
+   * fallback - the old stack landed on plain Segoe UI, which is why the type
+   * read thin and slightly dated. Display is the separate optical size meant for
+   * large text and is used for page titles only. Cascadia Mono ships with the
+   * terminal and is far more legible than Consolas at the 10-11px this app runs
+   * its numbers at. Non-Windows fall through to the same faces the OS already
+   * prefers, so nothing is downloaded either way.
+   */
+  --font-sans:
+    "Aptos", "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", Inter,
+    system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-display:
+    "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", Inter,
+    system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --mono:
+    "Cascadia Mono", "Cascadia Code", ui-monospace, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  /* HeroUI and Tailwind both read this name; alias it to the stack above so
+     every `font-mono` in the app and every HeroUI <code> agree. */
+  --font-mono: var(--mono);
+
+  /* One place for the accent glow intensity, so hover/focus/active all match. */
+  --glow: 0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent),
+          0 8px 30px -12px color-mix(in oklab, var(--accent) 45%, transparent);
+  --surface-raised: color-mix(in oklab, var(--surface) 92%, var(--accent) 8%);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --console-border: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --console-muted-surface: color-mix(in oklab, var(--surface) 88%, transparent);
+  --console-shadow: 0 12px 32px -26px color-mix(in oklab, var(--foreground) 30%, transparent);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background:
+    radial-gradient(ellipse at 50% -25rem,
+      color-mix(in oklab, var(--accent) 5%, transparent), transparent 62%),
+    var(--background);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+
+  /* 450, not 400. This app is overwhelmingly 10-12px text on a dark surface,
+     which is exactly the case where a 400-weight humanist sans renders thin and
+     slightly grey after antialiasing. 450 is the smallest step that actually
+     reads as solid at this size, and on a non-variable fallback it rounds to the
+     nearest static weight, so it is safe everywhere. */
+  font-weight: 450;
+
+  /* Never fake a weight the font does not have: a synthesised bold on a
+     variable face is visibly fatter than the real one and breaks alignment in
+     the tabular number columns. */
+  font-synthesis-weight: none;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Ambient wash so large flat areas are not dead. Fixed + pointer-events-none
+   so it costs nothing to scroll and never eats a click. */
+.ambient {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(65rem 35rem at 50% -12rem,
+      color-mix(in oklab, var(--accent) 5%, transparent), transparent 72%);
+}
+
+/* --- surfaces ------------------------------------------------------------ */
+
+/* Stat tile. Glass rather than bordered: the data should carry the emphasis,
+   not the container. */
+.stat-tile {
+  position: relative;
+  width: 100%;
+  padding: 1rem 1.1rem;
+  border-radius: 0.8rem;
+  background: var(--console-muted-surface);
+  border: 1px solid var(--console-border);
+  box-shadow: 0 1px 2px color-mix(in oklab, var(--foreground) 3%, transparent);
+  transition:
+    border-color 160ms var(--ease),
+    background-color 160ms var(--ease),
+    box-shadow 160ms var(--ease);
+}
+
+.stat-tile:hover {
+  border-color: color-mix(in oklab, var(--accent) 24%, var(--console-border));
+  box-shadow: var(--console-shadow);
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+}
+
+/* Clickable tiles get a focus ring rather than relying on hover alone. */
+button.stat-tile:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--glow);
+}
+
+/* Sidebar reads as a distinct plane rather than a flat column. */
+.sidebar-glass {
+  min-height: 0;
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  border-right: 1px solid var(--console-border);
+}
+
+.nav-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+
+/* --- nav ----------------------------------------------------------------- */
+
+/* The active marker is a bar, not a background swap - it survives the eye
+   scanning a long list much better, and it reads at a glance. */
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  min-height: 2.35rem;
+  border-radius: 0.55rem;
+  border: 0;
+  background: transparent;
+  color: var(--default-500);
+  font-size: 0.78rem;
+  font-weight: 520;
+  letter-spacing: -0.006em;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 160ms var(--ease),
+    background-color 160ms var(--ease);
+}
+
+.nav-item:hover {
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+}
+
+.nav-item.active {
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 9%, var(--surface));
+}
+
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: -0.25rem;
+  top: 50%;
+  translate: 0 -50%;
+  width: 3px;
+  height: 1.1rem;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: none;
+}
+
+/* --- typography helpers -------------------------------------------------- */
+
+/* Root type scale - one step up.
+ *
+ * The app was authored around 10-12px everywhere, which is at the floor of
+ * comfortable for a monitor read at arm's length and looked especially thin
+ * once antialiased on a dark surface. Rather than bump every size class
+ * individually, the scale is inflated once here so every Tailwind text-sm,
+ * text-xs and text-[11px] in the codebase grows together and stays in
+ * proportion. Anything using an explicit rem value (the custom .page-title and
+ * .section-label below, the tables) is absolute and unaffected.
+ *
+ * Chosen deliberately small: a large jump would reflow every card and break the
+ * meters and table columns, which are laid out to these sizes.
+ */
+html {
+  font-size: 100%;
+}
+
+/* Page title - the single h1/h2 at the top of each panel.
+ *
+ * Professional here means quiet, not loud: larger than the old 20px, but with
+ * negative tracking so the glyphs knit together instead of drifting apart, and
+ * a heavier weight than semibold so it reads as a heading and not as body copy
+ * that happens to be bigger. The Display optical size is used here because this
+ * is the one place the app renders text large enough for it to matter. */
+.page-title {
+  font-family: var(--font-display);
+  font-size: clamp(1.55rem, 2.2vw, 1.9rem);
+  font-weight: 640;
+  letter-spacing: -0.024em;
+  line-height: 1.15;
+  color: var(--foreground);
+}
+
+.app-shell {
+  min-height: 100%;
+  min-width: 0;
+}
+
+.app-main {
+  min-width: 0;
+  background: color-mix(in oklab, var(--background) 70%, transparent);
+  scrollbar-gutter: stable;
+}
+
+.app-main > * {
+  max-width: 100%;
+}
+
+/* Card titles. Styled centrally off HeroUI's own class + slot rather than
+   per-panel classes, so every card in the app shares one voice.
+   14px/600 with slight tightening: enough presence to label a group without
+   competing with the page title or with the numbers inside it.
+
+   The double selector is deliberate. HeroUI sets `.card__title` to
+   font-weight medium at specificity 0,1,0; matching class AND attribute gives
+   0,2,0, so this wins regardless of how the stylesheet is layered. The plain
+   attribute selector is kept as a fallback for any card whose slot class was
+   swapped out. */
+.card__title[data-slot="card-title"],
+[data-slot="card-title"] {
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1.35;
+  color: var(--foreground);
+}
+
+[data-slot="card"] {
+  border-color: var(--console-border);
+  border-radius: 0.85rem;
+  background: var(--console-muted-surface);
+  box-shadow: 0 1px 2px color-mix(in oklab, var(--foreground) 3%, transparent);
+}
+
+[data-slot="card-header"] {
+  gap: 0.75rem;
+  padding: 1rem 1.05rem 0.75rem;
+}
+
+[data-slot="card-content"] {
+  padding: 0.75rem 1.05rem 1.05rem;
+}
+
+/* Numbers. Tabular figures are not cosmetic here - the tiles, the tables and the
+   meters are all read by comparing columns, and proportional digits make a
+   value jump sideways on every refresh. The tracking is tightened to pull the
+   figures together the way a monospaced face would. */
+.metric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "cv01" 1;
+  letter-spacing: -0.025em;
+}
+
+/* Small-caps run-in label above a group. 11px at 650 with wide tracking is the
+   only combination that stays legible at that size on a dark surface; at 600 it
+   greys out, and past 0.1em tracking it stops reading as a word. */
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--default-500);
+  line-height: 1.3;
+}
+
+/* Section divider. Same weight as .eyebrow but pushed to full foreground
+   contrast: a section heading is structure, not a caption, and at default-400
+   it disappeared against the ambient wash. */
+.section-label {
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.085em;
+  text-transform: uppercase;
+  color: var(--default-600);
+  line-height: 1.3;
+}
+
+/* --- controls ------------------------------------------------------------ */
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--console-border);
+  background: var(--console-muted-surface);
+  color: var(--default-600);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: border-color 160ms var(--ease), background-color 160ms var(--ease),
+    color 160ms var(--ease);
+}
+
+.btn-ghost:hover {
+  border-color: color-mix(in oklab, var(--accent) 35%, transparent);
+  background: color-mix(in oklab, var(--accent) 7%, var(--surface));
+  color: var(--accent);
+}
+
+.field {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.6rem;
+  background: var(--console-muted-surface);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  outline: none;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+
+.field::placeholder {
+  color: var(--default-400);
+}
+
+.field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
+select.field {
+  cursor: pointer;
+}
+
+/* The one filled button in the app. Solid accent with a matching glow, so the
+   primary action is findable without a visual tour. */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 1rem;
+  min-height: 2.35rem;
+  border-radius: 0.6rem;
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--accent-foreground, white);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 160ms var(--ease), background-color 160ms var(--ease),
+    opacity 160ms var(--ease);
+  box-shadow: none;
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* --- evidence timeline ---------------------------------------------------- */
+
+/* The Remote tab is a sequence of uploads in time, so it is drawn as one
+   rather than as a stack of unrelated cards. The rail is the point: a column
+   of boxes with dates in them invites reading each row alone, and the whole
+   reason this page exists is the relationship BETWEEN uploads - the gap, the
+   rate. A vertical line makes that relationship visible before you read a
+   single number.
+ *
+ * The rail fades at both ends so it reads as a continuing sequence rather than
+ * as a bracket drawn around whatever happens to be on the page. */
+.timeline {
+  position: relative;
+}
+
+.timeline::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in oklab, var(--foreground) 14%, transparent) 10%,
+    color-mix(in oklab, var(--foreground) 14%, transparent) 90%,
+    transparent
+  );
+}
+
+.timeline-item {
+  position: relative;
+  padding-left: 28px;
+}
+
+/* The node sits centred on the rail. `--node` is set inline from the row's
+   `where` state, so the colour logic stays in the component and this stays a
+   pure surface treatment. */
+.timeline-node {
+  position: absolute;
+  left: 3px;
+  top: 18px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--node, var(--default-400));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--surface) 80%, transparent);
+  transition: box-shadow 220ms var(--ease);
+}
+
+/* A bundle the panel only remembers gets a hollow node. Filled would claim a
+   presence that has not been confirmed on the current read. */
+.timeline-node[data-hollow="true"] {
+  background: color-mix(in oklab, var(--surface) 70%, transparent);
+  border: 1.5px solid var(--node, var(--default-400));
+}
+
+.timeline-card {
+  border-radius: 0.7rem;
+  border: 1px solid var(--console-border);
+  background: var(--console-muted-surface);
+  padding: 0.75rem 0.875rem;
+  transition:
+    border-color 220ms var(--ease),
+    background-color 220ms var(--ease),
+    transform 220ms var(--ease);
+}
+
+.timeline-card:hover {
+  border-color: color-mix(in oklab, var(--node, var(--accent)) 25%, var(--console-border));
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+}
+
+/* A bundle with no archive, or one whose two recorded digests disagree, is
+   the finding this page exists to surface. A left edge in the tone colour says
+   it without spending a full alert's worth of vertical space. */
+.timeline-card[data-flag="true"] {
+  border-left: 2px solid var(--flag, var(--warning));
+}
+
+/* --- chart frame ---------------------------------------------------------- */
+
+/* A faint baseline grid behind the bars. Gives the eye something to compare
+   heights against, which is the entire job of a bar chart - without it, a bar
+   is only meaningful relative to the tallest one. */
+.chart-frame {
+  position: relative;
+  border-radius: 0.5rem;
+  background:
+    repeating-linear-gradient(
+      to top,
+      color-mix(in oklab, var(--foreground) 5%, transparent) 0 1px,
+      transparent 1px 25%
+    );
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+}
+
+/* --- artifact dashboard -------------------------------------------------- */
+
+.artifact-page {
+  width: 100%;
+  max-width: 88rem;
+  margin-inline: auto;
+}
+
+.artifact-page-header,
+.artifact-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+}
+
+.artifact-page-header {
+  margin-bottom: 1.25rem;
+}
+
+.artifact-page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.artifact-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in oklab, var(--accent) 9%, var(--surface));
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease), border-color 160ms var(--ease),
+    box-shadow 160ms var(--ease), opacity 160ms var(--ease);
+}
+
+.artifact-refresh:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 15%, var(--surface));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 10%, transparent);
+}
+
+.artifact-refresh:focus-visible,
+.artifact-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.artifact-refresh:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.artifact-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.artifact-metric {
+  min-width: 0;
+  min-height: 8.25rem;
+  padding: 0.9rem 1rem;
+}
+
+.artifact-metric-icon,
+.artifact-section-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.artifact-metric-icon {
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 0.6rem;
+  background: color-mix(in oklab, currentColor 12%, transparent);
+}
+
+.artifact-tone-accent { color: var(--accent); }
+.artifact-tone-success { color: var(--success); }
+.artifact-tone-warning { color: var(--warning); }
+.artifact-tone-danger { color: var(--danger); }
+
+.artifact-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.9rem;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+}
+
+.artifact-section-heading {
+  align-items: flex-start;
+}
+
+.artifact-section-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 22%, transparent);
+  border-radius: 0.8rem;
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+.artifact-highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.artifact-highlight,
+.artifact-ranking-card {
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  border-radius: 0.8rem;
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+}
+
+.artifact-highlight {
+  padding: 0.9rem 1rem;
+}
+
+.artifact-ranking-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.artifact-ranking-card {
+  overflow: hidden;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+
+.artifact-ranking-card:hover {
+  border-color: color-mix(in oklab, var(--accent) 22%, transparent);
+  box-shadow: var(--console-shadow);
+}
+
+.artifact-ranking-card [data-slot="card-header"] {
+  align-items: flex-start;
+}
+
+.artifact-ranking-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artifact-ranking-row {
+  display: grid;
+  grid-template-columns: 1.8rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 2.35rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+}
+
+.artifact-ranking-position {
+  color: var(--default-400);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.artifact-ranking-name {
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-ranking-size {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.artifact-ranking-empty,
+.artifact-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 8rem;
+  padding: 1.25rem;
+  border: 1px dashed color-mix(in oklab, var(--foreground) 13%, transparent);
+  border-radius: 0.8rem;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  text-align: center;
+  color: var(--default-500);
+}
+
+.artifact-bundle-section {
+  min-width: 0;
+}
+
+.artifact-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.8rem;
+  background: var(--console-muted-surface);
+}
+
+.artifact-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: var(--default-500);
+  font-size: 0.75rem;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease), color 160ms var(--ease),
+    border-color 160ms var(--ease);
+}
+
+.artifact-tab:hover {
+  color: var(--foreground);
+}
+
+.artifact-tab.active {
+  border-color: color-mix(in oklab, var(--accent) 20%, transparent);
+  background: color-mix(in oklab, var(--accent) 11%, var(--surface));
+  color: var(--accent);
+  box-shadow: none;
+}
+
+.artifact-tab-count {
+  min-width: 1.25rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  color: var(--default-500);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.artifact-tab.active .artifact-tab-count {
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.artifact-bundle-details {
+  display: grid;
+  grid-template-columns: minmax(5rem, 1fr) minmax(0, 1.4fr);
+  gap: 0.35rem 1rem;
+  margin-top: 0.65rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
+  color: var(--default-500);
+  font-size: 0.7rem;
+}
+
+.artifact-bundle-details > :nth-child(even) {
+  overflow-wrap: anywhere;
+  text-align: right;
+  color: var(--default-400);
+}
+
+.artifact-cache-note {
+  overflow: hidden;
+  padding-top: 0.6rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
+  color: var(--default-400);
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .artifact-summary-grid,
+  .artifact-highlight-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .artifact-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .artifact-page-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .artifact-stats {
+    padding: 0.75rem;
+  }
+
+  .artifact-ranking-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 420px) {
+  .artifact-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .artifact-metric {
+    min-height: 7rem;
+  }
+
+  .artifact-section-heading {
+    gap: 0.65rem;
+  }
+
+  .artifact-highlight-grid,
+  .artifact-ranking-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --- application layout -------------------------------------------------- */
+
+/* --- network and VM fleet ----------------------------------------------- */
+
+.network-page {
+  display: flex;
+  width: 100%;
+  max-width: 96rem;
+  flex-direction: column;
+  gap: 1rem;
+  margin-inline: auto;
+}
+
+.network-page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.25rem;
+  margin-bottom: 0.2rem;
+}
+
+.network-page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.network-refresh,
+.fleet-vm-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 28%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface));
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease), border-color 160ms var(--ease),
+    box-shadow 160ms var(--ease), opacity 160ms var(--ease);
+}
+
+.network-refresh:hover,
+.fleet-vm-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, var(--surface));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 9%, transparent);
+}
+
+.network-refresh:focus-visible,
+.fleet-vm-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.fleet-vm-action:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.fleet-vm-action.start {
+  border-color: color-mix(in oklab, var(--success) 35%, transparent);
+  background: color-mix(in oklab, var(--success) 8%, var(--surface));
+  color: var(--success);
+}
+
+.fleet-vm-action.start:hover:not(:disabled) {
+  border-color: var(--success);
+  background: color-mix(in oklab, var(--success) 14%, var(--surface));
+}
+
+.fleet-vm-action.stop {
+  border-color: color-mix(in oklab, var(--danger) 35%, transparent);
+  background: color-mix(in oklab, var(--danger) 7%, var(--surface));
+  color: var(--danger);
+}
+
+.fleet-vm-action.stop:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: color-mix(in oklab, var(--danger) 13%, var(--surface));
+}
+
+.network-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.network-summary-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, var(--surface) 90%, transparent);
+}
+
+.network-summary-icon {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in oklab, var(--accent) 20%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in oklab, var(--accent) 9%, transparent);
+  color: var(--accent);
+}
+
+.network-summary-value {
+  margin-top: 0.2rem;
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 1.15rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.network-panel-card {
+  overflow: hidden;
+  border-color: color-mix(in oklab, var(--foreground) 9%, var(--console-border));
+  background: color-mix(in oklab, var(--surface) 96%, transparent);
+  box-shadow: 0 8px 28px color-mix(in oklab, var(--foreground) 3%, transparent);
+}
+
+.network-panel-card [data-slot="card-header"] {
+  padding-bottom: 0.7rem;
+}
+
+.network-map-content {
+  overflow: hidden;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
+  background:
+    radial-gradient(circle at center, color-mix(in oklab, var(--accent) 5%, transparent), transparent 62%),
+    color-mix(in oklab, var(--surface) 90%, transparent);
+}
+
+/* VirtualBox detail cards use a slightly more deliberate surface than the
+   general inventory cards, so build health and guest reachability stand out. */
+.vbox-status {
+  --vbox-card-surface: color-mix(in oklab, var(--surface) 96%, transparent);
+}
+
+.vbox-status-card {
+  min-width: 0;
+  overflow: hidden;
+  border-color: color-mix(in oklab, var(--foreground) 10%, var(--console-border));
+  border-radius: 0.9rem;
+  background: var(--vbox-card-surface);
+  box-shadow: 0 5px 20px -15px color-mix(in oklab, var(--foreground) 28%, transparent);
+  transition:
+    border-color 180ms var(--ease),
+    box-shadow 180ms var(--ease),
+    transform 180ms var(--ease);
+}
+
+.vbox-status-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--accent) 25%, var(--console-border));
+  box-shadow: var(--console-shadow);
+}
+
+.vbox-build-card {
+  position: relative;
+  background:
+    linear-gradient(110deg, color-mix(in oklab, var(--accent) 7%, transparent), transparent 48%),
+    var(--vbox-card-surface);
+}
+
+.vbox-build-card::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--accent), color-mix(in oklab, var(--accent) 20%, transparent));
+  content: "";
+}
+
+.vbox-card-header {
+  padding-bottom: 0.7rem;
+}
+
+.vbox-card-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--font-display);
+  font-weight: 620;
+  letter-spacing: -0.012em;
+}
+
+.vbox-card-title::before {
+  width: 0.45rem;
+  height: 0.45rem;
+  flex: 0 0 auto;
+  border-radius: 0.15rem;
+  background: color-mix(in oklab, var(--accent) 75%, var(--foreground));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 10%, transparent);
+  content: "";
+}
+
+.vbox-card-content {
+  color: var(--foreground);
+}
+
+.vbox-status .text-xs {
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.vbox-status .font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-vm-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.fleet-vm-card {
+  min-width: 0;
+  overflow: hidden;
+  border-color: color-mix(in oklab, var(--foreground) 9%, var(--console-border));
+  background: color-mix(in oklab, var(--surface) 96%, transparent);
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease),
+    transform 160ms var(--ease);
+}
+
+.fleet-vm-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--accent) 24%, var(--console-border));
+  box-shadow: var(--console-shadow);
+}
+
+.fleet-vm-indicator {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--default-400);
+}
+
+.fleet-vm-indicator.is-running {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 15%, transparent);
+}
+
+.fleet-vm-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.fleet-vm-facts > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--surface) 96%, transparent);
+}
+
+.fleet-vm-facts span,
+.fleet-vm-services > .eyebrow {
+  color: var(--default-400);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.fleet-vm-facts strong {
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-vm-services {
+  display: flex;
+  min-height: 2rem;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.fleet-vm-log-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.3rem 0.6rem;
+  color: var(--default-500);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.fleet-vm-log {
+  width: 100%;
+  min-height: 5.25rem;
+  resize: vertical;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  border-radius: 0.55rem;
+  outline: none;
+  background: color-mix(in oklab, var(--surface) 96%, transparent);
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.fleet-vm-log:focus-visible {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 10%, transparent);
+}
+
+@media (max-width: 1100px) {
+  .network-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .network-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .network-page-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .fleet-vm-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 420px) {
+  .network-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fleet-vm-facts {
+    gap: 0.35rem;
+  }
+
+  .fleet-vm-facts > div {
+    padding-inline: 0.45rem;
+  }
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 75%, white);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1050px) {
+  .app-shell {
+    grid-template-columns: 205px minmax(0, 1fr);
+  }
+
+  .app-main {
+    padding-inline: 1.25rem;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: auto;
+    min-height: 100%;
+  }
+
+  .sidebar-glass {
+    max-height: 48vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--console-border);
+  }
+
+  .sidebar-glass > :first-child,
+  .sidebar-glass > :last-child {
+    flex: 0 0 auto;
+  }
+
+  .nav-scroll {
+    display: flex;
+    flex: 0 1 auto;
+    gap: 0.75rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-block: 0.6rem;
+    scroll-snap-type: x proximity;
+  }
+
+  .nav-scroll > div {
+    flex: 0 0 11rem;
+    scroll-snap-align: start;
+  }
+
+  .app-main {
+    min-height: 55vh;
+    overflow: visible;
+    padding: 1.25rem 1rem 2rem;
+    scrollbar-gutter: auto;
+  }
+}
+
+@media (max-width: 420px) {
+  .nav-scroll > div {
+    flex-basis: 9.5rem;
+  }
+
+  .app-main {
+    padding-inline: 0.75rem;
+  }
+
+  [data-slot="card-header"] {
+    padding-inline: 0.85rem;
+  }
+
+  [data-slot="card-content"] {
+    padding-inline: 0.85rem;
+  }
+}
+
+/* --- log viewer ---------------------------------------------------------- */
+
+.log-pane {
+  max-height: 62vh;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.65;
+  /* Cascadia's ligatures turn `->` and `==` in trace output into single glyphs,
+     which is nice, but operators grepping raw output want the source text. */
+  font-variant-ligatures: none;
+  font-feature-settings: "calt" 0, "liga" 0;
+}
+
+.log-row:hover {
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+}
+
+/* --- login --------------------------------------------------------------- */
+
+/* A single, quiet focal point. Deliberately not a gradient wall: this is an
+   operator tool, and a busy background fights the form. */
+.auth-shell {
+  display: flex;
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.5rem;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 23rem;
+  border-radius: 1rem;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 9%, transparent);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 24px 60px -24px color-mix(in oklab, var(--foreground) 30%, transparent);
+}
+
+/* --- motion -------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Scrollbars, themed rather than default-grey. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
+}

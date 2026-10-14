@@ -19,10 +19,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import subprocess
 import sys
 import tempfile
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -42,10 +44,17 @@ def check(condition: bool, message: str, detail: str = "") -> None:
     failures.append(message)
 
 
-def run_analyzer(analyzer: Path, args: list[str], cwd: Path, timeout: int = 120):
+def run_analyzer(
+    analyzer: Path,
+    args: list[str],
+    cwd: Path,
+    timeout: int = 120,
+    extra_env: dict[str, str] | None = None,
+):
     env = os.environ.copy()
     env["STATIC_ANALYZER_CURSES"] = "0"
     env["CTI_SKIP"] = "1"
+    env.update(extra_env or {})
     # Unconditional, like build.ps1: ucrt64 must be *first* - a DLL later in
     # the PATH can shadow one of the analyzer's and the exe then dies with
     # 0xC0000135 before printing anything.
@@ -96,7 +105,7 @@ def main() -> int:
           "unknown option exits 2", run.stdout)
 
     run = run_analyzer(analyzer, ["--list-phases"], REPO)
-    check(run.returncode == 0 and all(n in run.stdout for n in ("strings", "model", "export")),
+    check(run.returncode == 0 and all(n in run.stdout for n in ("strings", "model", "export", "die")),
           "--list-phases exits 0 and names the phases", run.stdout)
 
     run = run_analyzer(analyzer, ["--list-phases", "--json"], REPO)
@@ -108,10 +117,11 @@ def main() -> int:
         check(
             run.returncode == 0
             and isinstance(catalog, list)
-            and len(catalog) == 26
+            and len(catalog) == 27
             and {"name", "description", "artifact", "service", "requires"} <= set(catalog[0])
-            and any(e["name"] == "strings" for e in catalog),
-            "--list-phases --json emits 26 catalog entries with all keys",
+            and any(e["name"] == "strings" for e in catalog)
+            and any(e["name"] == "die" for e in catalog),
+            "--list-phases --json emits 27 catalog entries with all keys",
             run.stdout,
         )
     except json.JSONDecodeError:
@@ -338,6 +348,114 @@ def main() -> int:
             )
         except AssertionError as exc:
             check(False, f"env probe manifest: {exc}")
+
+        # Artifact automation is a separate opt-in config. It must preserve
+        # ordinary exports by default and produce a verified local bundle when
+        # storage is enabled, without invoking MEGAcmd.
+        with tempfile.TemporaryDirectory(prefix="static-analyzer-artifacts-") as work:
+            workdir = Path(work)
+            config_dir = workdir / "config"
+            config_dir.mkdir()
+            artifact_config = config_dir / "artifacts.yaml"
+            artifact_config.write_text(
+                "store_artifact: false\n"
+                "upload_artifacts: false\n"
+                "timeout_seconds: 60\n",
+                encoding="utf-8",
+            )
+            run = run_analyzer(
+                analyzer, ["-p", '["strings"]', str(sample)], workdir
+            )
+            check(
+                run.returncode == 0
+                and not list((workdir / "exports").glob("*_artifact")),
+                "artifact config leaves bundle creation disabled by default",
+                run.stdout,
+            )
+
+            artifact_config.write_text(
+                "store_artifact: true\n"
+                "upload_artifacts: false\n"
+                "timeout_seconds: 60\n",
+                encoding="utf-8",
+            )
+            run = run_analyzer(
+                analyzer, ["-p", '["strings"]', str(sample)], workdir
+            )
+            bundles = list((workdir / "exports").glob("*_artifact"))
+            check(
+                run.returncode == 0
+                and len(bundles) == 1
+                and any(bundles[0].glob("*_evidence.tar.gz"))
+                and any(bundles[0].glob("*.sha256"))
+                and "[+] --no-upload: bundle is local only" in run.stdout,
+                "store_artifact creates a local sealed bundle without uploading",
+                run.stdout,
+            )
+            try:
+                manifest, _ = newest_manifest(workdir)
+                check(
+                    manifest["artifact_bundle"]["created"]
+                    and not manifest["artifact_bundle"]["uploaded"]
+                    and any("_artifact/" in path.replace("\\", "/")
+                            for path in manifest["artifacts"]),
+                    "run manifest records local artifact bundle output",
+                    json.dumps(manifest, indent=2),
+                )
+            except (AssertionError, KeyError) as exc:
+                check(False, f"artifact bundle manifest: {exc}")
+
+        class SlowCtiHandler(BaseHTTPRequestHandler):
+            def do_HEAD(self):
+                self.send_response(200)
+                self.end_headers()
+
+            def do_GET(self):
+                time.sleep(5)
+                body = b'{"objects":[]}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, _format, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), SlowCtiHandler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            cti_config = tmp / "cti-budget.json"
+            base_url = f"http://127.0.0.1:{server.server_port}"
+            cti_config.write_text(
+                json.dumps({
+                    "cache_dir": str(tmp / "cti-cache"),
+                    "provider_budget_seconds": 1,
+                    "endpoints": {
+                        "attack_stix": f"{base_url}/attack",
+                        "cisa_kev": f"{base_url}/kev",
+                    },
+                }),
+                encoding="utf-8",
+            )
+            started = time.monotonic()
+            run = run_analyzer(
+                analyzer,
+                ["-p", '["cti"]', str(sample)],
+                tmp,
+                timeout=30,
+                extra_env={"CTI_SKIP": "0", "CTI_CONFIG": str(cti_config)},
+            )
+            elapsed = time.monotonic() - started
+            check(
+                run.returncode == 0 and elapsed < 4.5,
+                "CTI knowledge downloads respect the shared one-second budget",
+                f"elapsed: {elapsed:.2f}s\n{run.stdout}",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=2)
 
     if failures:
         print(f"\n{len(failures)} test(s) failed:", file=sys.stderr)

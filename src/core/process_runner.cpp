@@ -1,4 +1,5 @@
 #include "process_runner.hpp"
+#include "debug_dump_macro.hpp"
 #include "logging.hpp"
 
 #include <algorithm>
@@ -525,6 +526,11 @@ run_result run(const std::string& program, const std::vector<std::string>& args,
            result.std_out.size(), result.stderr_truncated ? "/truncated" : "",
            result.std_err.size(), result.stderr_truncated ? "/truncated" : "");
 
+  SA_DUMP("proc run", "program", resolved, "status", to_string(result.status),
+          "exit", result.exit_code, "seconds", result.seconds,
+          "stdout_bytes", result.std_out.size(),
+          "stderr_bytes", result.std_err.size());
+
   return result;
 }
 
@@ -823,6 +829,11 @@ run_result run(const std::string& program, const std::vector<std::string>& args,
            resolved, to_string(result.status), result.exit_code, result.seconds,
            result.std_out.size(), result.stderr_truncated ? "/truncated" : "",
            result.std_err.size(), result.stderr_truncated ? "/truncated" : "");
+
+  SA_DUMP("proc run", "program", resolved, "status", to_string(result.status),
+          "exit", result.exit_code, "seconds", result.seconds,
+          "stdout_bytes", result.std_out.size(),
+          "stderr_bytes", result.std_err.size());
 
   return result;
 }

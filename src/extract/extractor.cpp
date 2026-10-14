@@ -4,7 +4,6 @@
 #include "extractor.hpp"
 #include "file_hasher.hpp"
 #include "logging.hpp"
-#include "process_runner.hpp"
 #include "yara_scanner.hpp"
 
 #include <algorithm>
@@ -856,6 +855,8 @@ bool iat_impl(iat_result_t& result, LIEF::Binary& binary,
               const std::string& path, std::size_t max_entries) {
   auto* pe = dynamic_cast<LIEF::PE::Binary*>(&binary);
   if (pe == nullptr) return true;
+
+  result.image_base = pe->optional_header().imagebase();
 
   auto push_entry = [&result, max_entries](iat_entry_t&& e) {
     if (result.entries.size() >= max_entries) { result.truncated = true; return; }
@@ -2213,31 +2214,6 @@ bool extract_debug_symbols(debug_symbols_t& result, const analyzer::file_info_t&
   });
 }
 
-std::string wsl_path(const std::string& path) {
-  if (path.size() >= 2 && path[1] == ':') {
-    std::string out = "/mnt/";
-    out += static_cast<char>(std::tolower(static_cast<unsigned char>(path[0])));
-    out += path.substr(2);
-    std::replace(out.begin(), out.end(), '\\', '/');
-    return out;
-  }
-  // A relative path is meaningless inside WSL: it is resolved against the WSL
-  // working directory, not the Windows one, so ".\a.exe" became ".a.exe" and
-  // the tool reported "No such file or directory". Make it absolute first.
-  std::error_code ec;
-  const std::filesystem::path absolute = std::filesystem::absolute(std::filesystem::path(path), ec);
-  if (ec) return path;
-  std::string native = absolute.string();
-  if (native.size() >= 2 && native[1] == ':') {
-    std::string out = "/mnt/";
-    out += static_cast<char>(std::tolower(static_cast<unsigned char>(native[0])));
-    out += native.substr(2);
-    std::replace(out.begin(), out.end(), '\\', '/');
-    return out;
-  }
-  return path;
-}
-
 bool extract_hexdump(hexdump_result_t& result, const analyzer::file_info_t& info,
                      std::size_t max_bytes) {
   result = {};
@@ -2284,36 +2260,6 @@ bool extract_hexdump(hexdump_result_t& result, const analyzer::file_info_t& info
   return true;
 }
 
-EXTRACTOR_NO_INSTRUMENT std::string strip_ansi(std::string text) {
-  std::string out;
-  for (std::size_t i = 0; i < text.size();) {
-    if (text[i] == '\x1b' && i + 1 < text.size() && text[i + 1] == '[') {
-      i += 2;
-      while (i < text.size() && !std::isalpha(static_cast<unsigned char>(text[i]))) ++i;
-      if (i < text.size()) ++i;
-    } else {
-      if (text[i] != '\0' && text[i] != '\r') out.push_back(text[i]);
-      ++i;
-    }
-  }
-  return out;
-}
-
-std::string trim_ascii(std::string value) {
-  while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) value.erase(value.begin());
-  while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back();
-  return value;
-}
-
-bool parse_number(const std::string& value, std::uint64_t& out) {
-  std::string token = trim_ascii(value);
-  if (token.empty()) return false;
-  const int base = token.size() > 2 && token[0] == '0' && (token[1] == 'x' || token[1] == 'X') ? 16 : 10;
-  char* end = nullptr;
-  out = std::strtoull(token.c_str(), &end, base);
-  return end != token.c_str() && *end == '\0';
-}
-
 bool extract_cminer(cminer_result_t& result, const analyzer::file_info_t& info,
                      std::size_t minimum_cave_size) {
   result = {};
@@ -2326,94 +2272,110 @@ bool extract_cminer(cminer_result_t& result, const analyzer::file_info_t& info,
   result.attempted = true;
   if (!check_file_ok(info, result.errors)) return false;
 
-  const char* configured = std::getenv("CMINER_PATH");
-  std::string local_path;
-  if (configured != nullptr && *configured != '\0') {
-    local_path = configured;
-  } else {
-    local_path = proc::find_in_path("static-analyzer-cminer");
-    if (local_path.empty()) {
-      local_path = std::string(STATIC_ANALYZER_SOURCE_DIR) + "/Cminer/Cminer";
-    }
-  }
-#ifdef _WIN32
-  const std::string wsl_cminer = wsl_path(local_path);
-  std::error_code path_ec;
-  const std::filesystem::path absolute_file = std::filesystem::absolute(info.filepath, path_ec);
-  const std::string wsl_file = wsl_path(path_ec ? info.filepath : absolute_file.string());
-  const std::string minimum = std::to_string(result.minimum_cave_size);
-  result.command = "wsl.exe -- " + wsl_cminer + " " + wsl_file + " " + minimum;
-#else
-  const std::string minimum = std::to_string(result.minimum_cave_size);
-  result.command = local_path + " " + info.filepath + " " + minimum;
-#endif
+  const auto started = clock_type::now();
+  result.command = "native in-process cave scan";
 
-  proc::run_options options;
-  options.timeout = std::chrono::seconds(120);
-  options.max_stdout_bytes = 16u * 1024u * 1024u;
-  options.max_stderr_bytes = 256u * 1024u;
-#ifdef _WIN32
-  const proc::run_result run = proc::run(
-      "wsl.exe", {"--", wsl_cminer, wsl_file, minimum}, options);
-#else
-  const proc::run_result run = proc::run(
-      local_path, {info.filepath, minimum}, options);
-#endif
-  result.exit_code = run.exit_code;
-  result.seconds = run.seconds;
-  result.output = strip_ansi(run.std_out);
-  result.stderr_tail = strip_ansi(run.std_err).substr(0, 4096);
-  if (run.status != proc::launch_status::ok) {
-    const extractor_error code = run.status == proc::launch_status::timed_out
-                                     ? extractor_error::cminer_timeout
-                                     : extractor_error::cminer_not_found;
-    add_error(result.errors, code, run.error.empty() ? proc::to_string(run.status) : run.error);
-    return false;
-  }
-  if (run.exit_code != 0) {
-    add_error(result.errors, extractor_error::cminer_failed,
-              "Cminer failed with exit code " + std::to_string(run.exit_code) +
-                  (result.stderr_tail.empty() ? "" : ": " + result.stderr_tail));
+  // The scan runs in-process: LIEF supplies the PE section table and the raw
+  // bytes are streamed in chunks. The bundled Cminer CLI shelled out through
+  // `system()` with unquoted paths, so a sample under "Program Files (x86)"
+  // died with `sh: Syntax error: "(" unexpected` before it could scan (and
+  // its .bak copy could not have been written under Program Files anyway).
+  auto binary = load_binary_safe(info.filepath, result.errors);
+  if (!binary) return false;
+  auto* pe = dynamic_cast<LIEF::PE::Binary*>(binary.get());
+  if (pe == nullptr) {
+    add_error(result.errors, extractor_error::unsupported_format,
+              "Cave scan expects a PE image: " + info.filepath);
     return false;
   }
 
-  std::istringstream input(result.output);
-  std::string line;
-  cminer_cave_t current;
-  bool in_cave = false;
-  const auto finish_cave = [&]() {
-    if (!in_cave) return;
-    result.total_cave_bytes += current.size;
-    result.largest_cave_bytes = std::max(result.largest_cave_bytes, current.size);
-    result.caves.push_back(current);
-    current = {};
-    in_cave = false;
+  struct cave_section_t {
+    std::string   name;
+    std::uint64_t raw_offset;
+    std::uint64_t raw_size;
+    std::uint64_t virtual_address;
   };
-  while (std::getline(input, line)) {
-    line = trim_ascii(line);
-    if (line == "[#] Cave 1" || line.rfind("[#] Cave ", 0) == 0) {
-      finish_cave();
-      in_cave = true;
-      current = {};
-      continue;
-    }
-    if (!in_cave) continue;
-    const auto colon = line.find(':');
-    if (colon == std::string::npos) continue;
-    const std::string key = trim_ascii(line.substr(0, colon));
-    const std::string value = trim_ascii(line.substr(colon + 1));
-    if (key == "[*] Section") current.section = value;
-    else if (key == "[*] Cave Size") {
-      std::string size_text = value;
-      const std::size_t byte_pos = size_text.find(" byte");
-      if (byte_pos != std::string::npos) size_text.resize(byte_pos);
-      parse_number(size_text, current.size);
-    } else if (key == "[*] Start Address") parse_number(value, current.start_address);
-    else if (key == "[*] End Address") parse_number(value, current.end_address);
-    else if (key == "[*] File Ofset") parse_number(value, current.file_offset);
+  std::vector<cave_section_t> sections;
+  sections.reserve(pe->sections().size());
+  for (auto& section : pe->sections()) {
+    if (section.sizeof_raw_data() == 0) continue;
+    cave_section_t item;
+    item.name = section.name();
+    item.raw_offset = section.offset();
+    item.raw_size = section.sizeof_raw_data();
+    item.virtual_address = section.virtual_address();
+    sections.push_back(std::move(item));
   }
-  finish_cave();
+  // Caves are located by file offset; the sorted table is walked in order
+  // and stops at the first section that starts after the cave.
+  std::sort(sections.begin(), sections.end(),
+            [](const cave_section_t& a, const cave_section_t& b) {
+              return a.raw_offset < b.raw_offset;
+            });
+  // Cminer printed objdump's VMA column, i.e. ImageBase + RVA.
+  const std::uint64_t image_base = pe->optional_header().imagebase();
+
+  std::ifstream input(info.filepath, std::ios::binary);
+  if (!input) {
+    add_error(result.errors, extractor_error::read_failed,
+              "Could not open the file for the cave scan: " + info.filepath);
+    return false;
+  }
+
+  const auto emit_cave = [&](std::uint64_t start, std::uint64_t size) {
+    // Like Cminer, only runs strictly longer than the threshold count.
+    if (size <= result.minimum_cave_size) return;
+    cminer_cave_t cave;
+    cave.size = size;
+    cave.file_offset = start;
+    // Caves outside any section keep their file offsets (Cminer's
+    // "No Section." case); inside a section the address is virtual.
+    cave.section = "No Section.";
+    cave.start_address = start;
+    cave.end_address = start + size;
+    for (const cave_section_t& section : sections) {
+      if (start < section.raw_offset) break;
+      if (start >= section.raw_offset + section.raw_size) continue;
+      cave.section = section.name.empty() ? "(unnamed)" : section.name;
+      cave.start_address =
+          image_base + section.virtual_address + (start - section.raw_offset);
+      cave.end_address = cave.start_address + size;
+      break;
+    }
+    result.total_cave_bytes += cave.size;
+    result.largest_cave_bytes = std::max(result.largest_cave_bytes, cave.size);
+    result.caves.push_back(cave);
+  };
+
+  // Stream in 64 KiB chunks and carry the run across chunk boundaries; a run
+  // that reaches EOF is flushed after the loop (Cminer dropped that cave).
+  std::array<char, 65536> buffer{};
+  std::uint64_t position = 0;
+  std::uint64_t run_start = 0;
+  std::uint64_t run_length = 0;
+  while (input) {
+    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const std::streamsize got = input.gcount();
+    if (got <= 0) break;
+    for (std::streamsize i = 0; i < got; ++i) {
+      if (buffer[static_cast<std::size_t>(i)] == '\0') {
+        if (run_length == 0) run_start = position;
+        ++run_length;
+      } else if (run_length > 0) {
+        emit_cave(run_start, run_length);
+        run_length = 0;
+      }
+      ++position;
+    }
+  }
+  if (run_length > 0) emit_cave(run_start, run_length);
+
+  result.seconds = seconds_since(started);
+  result.exit_code = 0;
   result.available = true;
+  LOG_DEBUG("extractor: extract_cminer: '{}' -> {} cave(s), {} byte(s) in {:.4f}s",
+            info.filename, result.caves.size(), result.total_cave_bytes,
+            result.seconds);
   return true;
 }
 

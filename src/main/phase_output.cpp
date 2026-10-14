@@ -301,6 +301,19 @@ void run_export(context& ctx) {
     }
   }
 
+  // ---------- Detect It Easy export ----------
+  // Same policy as the ML score: only a scan that actually ran (and succeeded)
+  // is worth recording. A skipped phase (die module not installed) or a failed
+  // scan leaves no artifact rather than a file full of "ok: false".
+  if (planner::has(ctx, planner::phase_id::die) &&
+      ctx.die_result.st == die_runner::status::ok) {
+    const auto die_path = exporter::write_die_json(ctx.stem, ctx.die_result);
+    if (!die_path.empty()) {
+      console::success("Detect It Easy result written to " + die_path.string());
+      ctx.exported_artifacts.push_back(die_path.string());
+    }
+  }
+
   // ---------- known-PE roster export ----------
   // Same reasoning as the ML score: only a lookup that consulted a roster is
   // worth recording. write_known_pe_json() enforces that, so the check here is
@@ -359,7 +372,23 @@ void run_export(context& ctx) {
     if (planner::has(ctx, planner::phase_id::iat) && !ctx.malapi_hits.empty()) {
       nlohmann::json marr = nlohmann::json::array();
       for (const auto& h : ctx.malapi_hits) {
-        nlohmann::json mh = {{"function", h.function}, {"status", h.status}};
+        nlohmann::json mh = {
+            {"function",       h.function},
+            {"status",         h.status},
+            {"dll",            h.dll},
+            {"hint",           h.hint},
+            {"ordinal",        h.ordinal},
+            {"is_ordinal",     h.is_ordinal},
+            {"is_delay",       h.is_delay},
+            {"iat_rva",        h.iat_rva},
+            {"sites_resolved", h.sites_resolved},
+            {"call_sites",     nlohmann::json::array()},
+        };
+        for (const auto& site : h.call_sites) {
+          mh["call_sites"].push_back({{"function",         site.function},
+                                      {"function_offset",  site.function_offset},
+                                      {"address",          site.address}});
+        }
         try {
           mh["data"] = nlohmann::json::parse(h.raw_json);
         } catch (const std::exception&) {
@@ -453,6 +482,9 @@ void run_dashboard(context& ctx) {
   // flag when the file was never written (ML skipped), and load_json() treats
   // a missing path as "no ML section" rather than an error.
   vopts.ml            = exporter::dir::artifact(ctx.stem, "ml", "ml").string();
+  // Detect It Easy result (same reconstruct-every-path pattern: the generator
+  // treats a missing file as "no DIE section" rather than an error).
+  vopts.die           = exporter::dir::artifact(ctx.stem, "die", "die").string();
   // The dashboard's file catalog is rooted at this run's directory, so it
   // lists only this sample's artifacts instead of every sample under exports/.
   vopts.files_root    = exporter::dir::run_root(ctx.stem).string();
@@ -514,6 +546,27 @@ void run_summary(context& ctx) {
              ctx.capa_report.ok()
                  ? (std::to_string(ctx.capa_report.capabilities.size()) + " capabilities")
                  : std::string("failed: ") + capa::to_string(ctx.capa_report.st));
+  }
+
+  // Detect It Easy. Skipped (optional die-python install) and failed scans are
+  // reported distinctly, mirroring the ML score block below.
+  if (planner::has(ctx, planner::phase_id::die)) {
+    using die_st = die_runner::status;
+    if (!ctx.die_skip_reason.empty()) {
+      print_kv("DIE", "skipped (" + ctx.die_skip_reason + ")");
+    } else if (ctx.die_result.st != die_st::ok) {
+      print_kv_colored("DIE",
+                       std::string("failed: ") +
+                           die_runner::to_string(ctx.die_result.st),
+                       console::red);
+    } else {
+      std::ostringstream os;
+      os << ctx.die_result.packers.size() << " packer(s), "
+         << ctx.die_result.compilers.size() << " compiler(s)";
+      if (ctx.die_result.packed) os << ", PACKED";
+      else if (ctx.die_result.unknown_only) os << ", no match";
+      print_kv("DIE", os.str());
+    }
   }
 
   // ML score. Reported in the banded vocabulary the service uses, never as a

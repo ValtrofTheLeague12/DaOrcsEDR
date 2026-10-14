@@ -1,426 +1,189 @@
-"""Verify, connect to, and control the Qiling analysis VM.
-
-Every library function returns an ``(ok, detail)`` tuple and never prints or
-exits, so admin-terminal (admin-terminal/qiling_vm.py) can drive exactly the
-same checks and power actions.  Running this file directly prints the report:
-
-    python qiling_dlls/_check_vm_connection.py
-    python qiling_dlls/_check_vm_connection.py --ssh
-    python qiling_dlls/_check_vm_connection.py --json
-
-The VM identity (name, IP, SSH port) comes from vm_info.json next to this
-file; SSH credentials come from admin-terminal/vms.json or the CLI flags.
-"""
-from __future__ import annotations
-
-import argparse
-import hashlib
-import json
 import os
 import pathlib
-import re
-import shutil
-import socket
+import json
 import subprocess
+import hashlib
+import shutil
 import sys
-import time
-from typing import NamedTuple
+from colorama import Fore,Back,init
 
-VBOXMANAGE_SHA256 = "e058bc8a9bf9b8cf81b58efd18c16ae563d08b9641aea4732b336a0d619b7294"
-VM_INFO_FILE = pathlib.Path(__file__).resolve().with_name("vm_info.json")
+vboxmanage_sha256 = "e058bc8a9bf9b8cf81b58efd18c16ae563d08b9641aea4732b336a0d619b7294"
 
-# VBoxManage prints machines as:  "Name with spaces" {uuid}
-_VM_LINE = re.compile(r'^"(?P<name>.+)"\s+\{(?P<uuid>[0-9a-fA-F-]+)\}',
-                      re.MULTILINE)
+init()
 
 
-class VmCheckError(RuntimeError):
-    """Configuration or environment problem that blocks a VM check."""
+def check_if_hosts_exists():
+    known_hosts_directory = pathlib.Path(os.getenv("USERPROFILE", os.getenv("HOME", ""))).joinpath(".ssh").joinpath("known_hosts")
+    if not os.path.exists(known_hosts_directory):
+        print(Fore.RED + "[-] Failed to find the known_hosts file. Please ensure that you have connected to the VM at least once before running this script." + Fore.RESET)
+        sys.exit(1)
 
 
-class Check(NamedTuple):
-    name: str
-    ok: bool
-    detail: str
+def shutdown_vm():
+    if  not is_vm_running(False):
+        print(Fore.RED + "[-] VM is already not running" + Fore.WHITE)
+        return False
+    print(Fore.CYAN + "Shutting down the Qiling VM" + Fore.WHITE)
+    shutdown_command = subprocess.run(["VBoxManage","controlvm",]) 
 
+def check_vboxmanage_digest():
+    vboxmanage_path = shutil.which("VBoxManage")
+    print(Fore.GREEN + "Virtual Box Path: {}".format(vboxmanage_path)+ Fore.WHITE)
+    if not vboxmanage_path:
+        print(Fore.RED + "[-] VBoxManage is not available in the system PATH. Please ensure that VirtualBox is installed and VBoxManage is in your PATH." + Fore.RESET)
+        return False
+    if os.path.getsize(vboxmanage_path) == 0:
+        print(Fore.RED + "[-] VboxManage binary is empty. Please ensure that VirtualBox is installed correctly." + Fore.RESET)
+        return False
+    print(Fore.CYAN + "Calculating the Digest of the Virtual Box Terminal" + Fore.WHITE)
+    VboxManage_digest = ""
+    with open(vboxmanage_path, "rb") as f:
+        VboxManage_digest = hashlib.sha256(f.read()).hexdigest()
+        print(Fore.GREEN + "HexDigest : {}".format(VboxManage_digest) + Fore.WHITE) 
+    if not VboxManage_digest:
+        print(Fore.RED + "[-] Failed to calculate the SHA256 digest of VBoxManage. Please ensure that VirtualBox is installed correctly." + Fore.RESET)
+        return False
+    if VboxManage_digest != vboxmanage_sha256:
+        print(Fore.RED + "[-] The SHA256 digest of VBoxManage does not match the expected value. Please ensure that you are using the correct version of VirtualBox." + Fore.RESET)
+        return False
+    print(Fore.GREEN + "[+] The SHA256 digest of VBoxManage matches the expected value" + Fore.WHITE)
+    return True 
 
-# ---------------------------------------------------------------------------
-# vm_info.json
-# ---------------------------------------------------------------------------
+def check_if_vboxmanage_exists():
+    print("[+] Checking if VBoxManage is available in the system PATH...")
+    if not shutil.which("VBoxManage"):
+        print(Fore.RED + "[-] VBoxManage is not available in the system PATH. Please ensure that VirtualBox is installed and VBoxManage is in your PATH." + Fore.RESET)
+        sys.exit(1)
+    print(Fore.GREEN + "[+] VBoxManage is available in the system PATH." + Fore.RESET)
+    return True
+
+def is_vm_running(start_vm: bool = False) -> bool:
+    info = load_vm_info()
+    print(Fore.GREEN  + "[+] Checking if the Qiling VM is running..." + Fore.WHITE)
+    vm_name = info.get("VM_NAME")
+    if not vm_name:
+        print(Fore.RED + "[-] VM_NAME not found in vm_info.json. Please ensure that the file is correctly formatted." + Fore.RESET)
+        sys.exit(1)
+    is_it_running = subprocess.run(["VBoxManage", "list", "runningvms"], capture_output=True, text=True)
+    if is_it_running.returncode != 0:
+        print(Fore.RED + "[-] Failed to check if the VM is running. Please ensure that VirtualBox is installed and VBoxManage is in your PATH." + Fore.RESET)
+        sys.exit(1)
+    found = False
+    stdout = is_it_running.stdout.strip()
+    for i in stdout.split():
+        if i.find(vm_name) != -1:
+            print(Fore.GREEN + "[+] The Qiling VM is running." + Fore.WHITE)
+            found = True
+    if found:
+        print(Fore.GREEN + "[+] The Qiling VM is running." + Fore.WHITE)
+        return True
+    else:
+        print(Fore.RED + "[-] The Qiling VM is not running." + Fore.RESET)
+        if not start_vm:
+            print(Fore.YELLOW + "[!] run_vm flag is set off , not starting the script." + Fore.RESET) 
+            return False
+        run_vm = subprocess.run(["VBoxManage", "startvm", vm_name, "--type", "headless"], capture_output=True, text=True)
+        if run_vm.returncode != 0:
+            print(Fore.RED + "[-] Failed to start the VM. Please ensure that VirtualBox is installed and VBoxManage is in your PATH." + Fore.RESET)
+            return False
+        print(Fore.GREEN + "[+] The Qiling VM has been started." + Fore.WHITE)
+        return True
+
+def stop_vm():
+    if not is_vm_running():
+        print(Fore.RED + "[-] The Qiling VM is not running. Cannot stop a VM that is not running." + Fore.RESET)
+        return False
+    info = load_vm_info()
+    vm_name = info.get("VM_NAME")
+    stop_vm = subprocess.run(["VBoxManage", "controlvm", vm_name, "poweroff"], capture_output=True, text=True)
+    if stop_vm.returncode != 0:
+        print(Fore.RED + "[-] Failed to stop the VM. Please ensure that VirtualBox is installed and VBoxManage is in your PATH." + Fore.RESET)
+        return False
+    print(Fore.GREEN + "[+] The Qiling VM has been stopped." + Fore.WHITE)
+    return True
+
 def load_vm_info() -> dict:
-    """Read and validate vm_info.json (VM_NAME, VM_IP, VM_PORT|PORT)."""
-    if not VM_INFO_FILE.is_file():
-        raise VmCheckError(
-            f"{VM_INFO_FILE.name} not found in {VM_INFO_FILE.parent}")
-    try:
-        data = json.loads(VM_INFO_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise VmCheckError(f"cannot parse {VM_INFO_FILE.name}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise VmCheckError(f"{VM_INFO_FILE.name} must contain a JSON object")
-
-    name = str(data.get("VM_NAME", "")).strip()
-    ip = str(data.get("VM_IP", "")).strip()
-    if not name:
-        raise VmCheckError(
-            "VM_NAME is missing - set the VirtualBox machine name in "
-            f"{VM_INFO_FILE.name}")
-    if not ip:
-        raise VmCheckError(f"VM_IP is missing in {VM_INFO_FILE.name}")
-    try:
-        port = int(data.get("VM_PORT", data.get("PORT", 22)))
-    except (TypeError, ValueError) as exc:
-        raise VmCheckError(f"PORT must be an integer in {VM_INFO_FILE.name}") \
-            from exc
-    if not 1 <= port <= 65535:
-        raise VmCheckError(f"PORT must be between 1 and 65535 in "
-                           f"{VM_INFO_FILE.name}")
-    # Keep extra keys (e.g. GENERATE_ROOTFS_IF_NOT_FOUND) for callers.
-    return {**data, "VM_NAME": name, "VM_IP": ip, "PORT": port}
-
-
-def _vm_name(vm_name: str | None = None) -> str:
-    return vm_name if vm_name else load_vm_info()["VM_NAME"]
-
-
-def _endpoint(config: dict | None = None) -> tuple[str, int]:
-    """(host, port) from the config, falling back to vm_info.json."""
-    config = config or {}
-    info: dict = {}
-    try:
-        info = load_vm_info()
-    except VmCheckError:
-        pass
-    host = str(config.get("host") or info.get("VM_IP") or "").strip()
-    raw_port = config.get("port") or info.get("PORT") or 22
-    try:
-        port = int(raw_port)
-    except (TypeError, ValueError):
-        port = 22
-    if not 1 <= port <= 65535:
-        port = 22
-    return host, port
-
-
-# ---------------------------------------------------------------------------
-# VBoxManage
-# ---------------------------------------------------------------------------
-def vboxmanage_path() -> str:
-    path = shutil.which("VBoxManage")
-    if not path:
-        raise VmCheckError(
-            "VBoxManage not found in PATH - install VirtualBox or add it to PATH")
-    return path
-
-
-def check_if_vboxmanage_exists() -> str:
-    return vboxmanage_path()
-
-
-def _run(args: list[str], timeout: float = 90) -> subprocess.CompletedProcess:
-    try:
-        return subprocess.run(
-            [vboxmanage_path(), *args], capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout)
-    except OSError as exc:
-        raise VmCheckError(f"could not run VBoxManage: {exc}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise VmCheckError(
-            f"VBoxManage {' '.join(args)} timed out after {timeout:.0f}s") \
-            from exc
-
-
-def _run_checked(args: list[str], timeout: float = 90) -> subprocess.CompletedProcess:
-    result = _run(args, timeout=timeout)
-    if result.returncode:
-        detail = (result.stderr or result.stdout).strip() \
-            or f"exit code {result.returncode}"
-        raise VmCheckError(f"VBoxManage {' '.join(args)} failed: {detail}")
-    return result
-
-
-def check_vboxmanage_digest() -> tuple[bool, str]:
-    """SHA-256 of VBoxManage against the pinned build.  Mismatch = failed
-    check, never an abort, so the rest of the report still runs."""
-    try:
-        path = vboxmanage_path()
-    except VmCheckError as exc:
-        return False, str(exc)
-    try:
-        if os.path.getsize(path) == 0:
-            return False, f"{path} is empty - reinstall VirtualBox"
-    except OSError as exc:
-        return False, f"cannot read {path}: {exc}"
-
-    digest = hashlib.sha256()
-    try:
-        with open(path, "rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-    except OSError as exc:
-        return False, f"cannot hash {path}: {exc}"
-    hexdigest = digest.hexdigest()
-    if hexdigest != VBOXMANAGE_SHA256:
-        return False, (f"{path} sha256 {hexdigest[:16]}... != pinned "
-                       f"{VBOXMANAGE_SHA256[:16]}...")
-    return True, f"{path} sha256 matches"
-
-
-# ---------------------------------------------------------------------------
-# VM registry / power state
-# ---------------------------------------------------------------------------
-def _parse_vm_names(output: str) -> list[str]:
-    return [match.group("name") for match in _VM_LINE.finditer(output)]
-
-
-def list_vms() -> list[str]:
-    return _parse_vm_names(_run_checked(["list", "vms"]).stdout)
-
-
-def list_running_vms() -> list[str]:
-    return _parse_vm_names(_run_checked(["list", "runningvms"]).stdout)
-
-
-def does_qiling_vm_exists(vm_name: str | None = None) -> tuple[bool, str]:
-    name = _vm_name(vm_name)
-    registered = list_vms()
-    if name in registered:
-        return True, f"VM '{name}' is registered"
-    shown = ", ".join(registered) or "none"
-    return False, f"VM '{name}' not registered (have: {shown})"
-
-
-vm_exists = does_qiling_vm_exists
-
-
-def is_vm_running(vm_name: str | None = None) -> tuple[bool, str]:
-    name = _vm_name(vm_name)
-    if name in list_running_vms():
-        return True, f"VM '{name}' is running"
-    return False, f"VM '{name}' is not running"
-
-
-def _wait_until(predicate, timeout: float, interval: float = 1.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    file_dict = {}
+    filepath = pathlib.Path(__file__).parent.joinpath("vm_info.json").resolve()
+    print(Fore.GREEN + "[+] Checking if the Qiling VM is available..." + Fore.WHITE)
+    if not os.path.exists(str(filepath)):
+        print(Fore.RED + "[-] Failed to find the vm_info.json file. Please ensure that the file exists in the qiling_dlls directory." + Fore.RESET)
+        sys.exit(1)
+    print(Fore.GREEN + "[+] Found the VM INFO..." + Fore.WHITE)
+    with open(filepath, "r") as f:
         try:
-            if predicate():
-                return True
-        except VmCheckError:
-            pass  # transient VBoxManage failure - keep polling
-        time.sleep(interval)
+            content = f.read()
+            print(Fore.CYAN + "[+] vm_info.json parameter : \n {}".format(content) + Fore.WHITE)
+            file_dict  = json.loads(content)
+        except json.JSONDecodeError as e:
+            print(Fore.RED + f"[-] Failed to parse the vm_info.json file: {e}" + Fore.RESET)
+            sys.exit(0)
+    print(Fore.GREEN + "[+] Testing VM IP: {}".format(file_dict["VM_IP"]) + Fore.WHITE)
+    return file_dict
+
+    
+
+def does_qiling_vm_exists():
+    l = load_vm_info()
+    vm_name = l.get("VM_NAME")
+    if not vm_name:
+        print(Fore.RED + "[-] Please setup the name of the Virtual Machine in the vm_info.json file" + Fore.WHITE)
+        return False
+    sub_command = subprocess.run(["VBoxManage","list","vms"],text=True,capture_output=True)
+    if sub_command.returncode != 0:
+        print(Fore.RED + "[-] Failed to exectue the required command..." + Fore.WHITE)
+        return False
+    output = sub_command.stdout.strip()
+    for i in output.split(" "):
+        if i.find(vm_name) != -1:
+            print(Fore.GREEN + "[+] Qiling VM Has been found Succesfully" + Fore.WHITE)
+            return True
+    print(Fore.RED + "[-] Check if the VM is Installed Correctlty" + Fore.WHITE)
     return False
 
+def  check_vm_connection(hostname, username, password):
+    """
+    Check the connection to a virtual machine using SSH.
 
-def start_vm(vm_name: str | None = None, headless: bool = True,
-             timeout: float = 60) -> tuple[bool, str]:
-    name = _vm_name(vm_name)
-    if is_vm_running(name)[0]:
-        return True, f"VM '{name}' is already running"
-    result = _run(["startvm", name, "--type",
-                   "headless" if headless else "gui"], timeout=timeout)
-    if result.returncode:
-        detail = (result.stderr or result.stdout).strip() \
-            or f"exit code {result.returncode}"
-        if is_vm_running(name)[0]:
-            return True, f"VM '{name}' is already running"
-        return False, f"could not start '{name}': {detail}"
-    if _wait_until(lambda: name in list_running_vms(), min(timeout, 30)):
-        return True, f"VM '{name}' started (headless)"
-    return False, f"'{name}' start accepted but the VM never showed as running"
-
-
-def stop_vm(vm_name: str | None = None, timeout: float = 45) -> tuple[bool, str]:
-    """Hard poweroff (VBoxManage controlvm poweroff)."""
-    name = _vm_name(vm_name)
-    if not is_vm_running(name)[0]:
-        return True, f"VM '{name}' is already stopped"
-    _run_checked(["controlvm", name, "poweroff"], timeout=timeout)
-    if _wait_until(lambda: name not in list_running_vms(), min(timeout, 30)):
-        return True, f"VM '{name}' powered off"
-    return False, f"'{name}' poweroff sent but the VM is still running"
-
-
-def shutdown_vm(vm_name: str | None = None,
-                timeout: float = 90) -> tuple[bool, str]:
-    """Graceful shutdown: ACPI power button, wait for the guest to stop."""
-    name = _vm_name(vm_name)
-    if not is_vm_running(name)[0]:
-        return True, f"VM '{name}' is already stopped"
-    _run_checked(["controlvm", name, "acpipowerbutton"], timeout=timeout)
-    if _wait_until(lambda: name not in list_running_vms(), timeout):
-        return True, f"VM '{name}' shut down gracefully"
-    return False, (f"'{name}' ignored the ACPI power button after "
-                   f"{timeout:.0f}s - use poweroff")
-
-
-# ---------------------------------------------------------------------------
-# Connectivity
-# ---------------------------------------------------------------------------
-def tcp_reachable(host: str, port: int, timeout: float = 2.0) -> tuple[bool, str]:
-    if not host:
-        return False, "no VM host configured"
-    try:
-        with socket.create_connection((host, int(port)), timeout=timeout):
-            pass
-    except OSError as exc:
-        return False, f"{host}:{port} unreachable ({exc})"
-    return True, f"{host}:{port} reachable"
-
-
-def check_vm_connection(hostname: str, username: str,
-                        password: str | None = None, port: int = 22,
-                        known_hosts: str | None = None,
-                        identity_file: str | None = None,
-                        timeout: float = 10) -> tuple[bool, str]:
-    """SSH login probe with paramiko and strict host-key checking.
-
-    The server key must already be trusted (known_hosts / ~/.ssh/known_hosts);
-    unknown keys are rejected, never auto-added.
+    :param hostname: The hostname or IP address of the VM.
+    :param username: The username to use for SSH authentication.
+    :param password: The password to use for SSH authentication.
+    :return: True if the connection is successful, False otherwise.
     """
     try:
-        import paramiko
-    except ImportError:
-        return False, "paramiko is not installed (pip install paramiko)"
-    if not username:
-        return False, "no SSH username configured"
-
-    client = paramiko.SSHClient()
-    try:
-        try:
-            client.load_system_host_keys()          # ~/.ssh/known_hosts
-        except OSError:
-            pass
-        if known_hosts:
-            trusted = pathlib.Path(known_hosts).expanduser()
-            if trusted.is_file():
-                try:
-                    client.load_system_host_keys(str(trusted))
-                except OSError:
-                    return False, f"cannot read known_hosts file {trusted}"
-            else:
-                return False, f"known_hosts file missing: {trusted}"
-        client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        client.connect(
-            hostname, port=int(port), username=username, password=password,
-            key_filename=str(pathlib.Path(identity_file).expanduser())
-            if identity_file else None,
-            timeout=timeout, banner_timeout=timeout, auth_timeout=timeout,
-            allow_agent=not password, look_for_keys=not password)
-        transport = client.get_transport()
-        version = transport.remote_version if transport else "unknown"
-        return True, f"{username}@{hostname}:{port} ok ({version})"
-    except paramiko.BadHostKeyException as exc:
-        return False, f"host key for {hostname} CHANGED - {exc}"
-    except paramiko.AuthenticationException:
-        return False, f"authentication failed for {username}@{hostname}"
-    except (socket.timeout, TimeoutError, OSError) as exc:
-        return False, f"{hostname}:{port} unreachable ({exc})"
-    except paramiko.SSHException as exc:
-        text = str(exc)
-        if "known_hosts" in text or "not found" in text:
-            return False, (f"no trusted host key for {hostname}; verify it "
-                           "out of band and add it to known_hosts")
-        return False, f"SSH error: {text}"
-    finally:
+       
+        client = paramiko.SSHClient()
+        
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(hostname, username=username, password=password)
         client.close()
-
-
-# ---------------------------------------------------------------------------
-# Combined report (used by admin-terminal and the CLI)
-# ---------------------------------------------------------------------------
-def run_checks(config: dict | None = None, ssh: bool = False) -> list[Check]:
-    """Run every check in order; a failing check never stops the report."""
-    config = config or {}
-    checks: list[Check] = []
-
-    def record(name: str, fn, *args, **kwargs) -> bool:
-        try:
-            ok, detail = fn(*args, **kwargs)
-        except VmCheckError as exc:
-            ok, detail = False, str(exc)
-        except Exception as exc:  # noqa: BLE001 - a report must not crash
-            ok, detail = False, f"{type(exc).__name__}: {exc}"
-        checks.append(Check(name, bool(ok), str(detail)))
-        return bool(ok)
-
-    record("VBoxManage", lambda: (True, vboxmanage_path()))
-    record("digest", check_vboxmanage_digest)
-    if record("VM exists", does_qiling_vm_exists):
-        record("VM power", is_vm_running)
-    else:
-        checks.append(Check("VM power", False, "skipped - VM not registered"))
-
-    host, port = _endpoint(config)
-    record("VM endpoint", lambda: (bool(host), host or "no host configured"))
-    if host:
-        record("VM TCP", lambda: tcp_reachable(host, port))
-
-    if ssh:
-        username = str(config.get("username", "")).strip()
-        identity = str(config.get("identity_file", "") or "").strip()
-        known_hosts = str(config.get("known_hosts_file", "") or "").strip()
-        if not username or username.upper().startswith("YOUR_"):
-            checks.append(Check("SSH", False,
-                                "no username set (admin-terminal/vms.json "
-                                "or --username)"))
-        else:
-            record("SSH", lambda: check_vm_connection(
-                host, username, port=port,
-                known_hosts=known_hosts or None,
-                identity_file=identity or None))
-    return checks
-
-
-def should_run_or_not(config: dict | None = None, ssh: bool = False,
-                      as_json: bool = False) -> bool:
-    """Print the verification report (CLI).  True when every check passed."""
-    from colorama import Fore, init
-
-    init()
-    checks = run_checks(config, ssh=ssh)
-    if as_json:
-        print(json.dumps([check._asdict() for check in checks], indent=2))
-        return all(check.ok for check in checks)
-
-    print(Fore.CYAN + f"{'#' * 6} QILING Machine Verification {'#' * 6}"
-          + Fore.RESET)
-    for check in checks:
-        colour = Fore.GREEN if check.ok else Fore.RED
-        mark = "[+]" if check.ok else "[-]"
-        print(f"{colour}{mark} {check.name}: {check.detail}{Fore.RESET}")
-    if all(check.ok for check in checks):
-        print(Fore.GREEN + "[+] all checks passed" + Fore.RESET)
         return True
-    print(Fore.RED + "[-] one or more checks failed" + Fore.RESET)
-    return False
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Verify the Qiling analysis VM (VirtualBox + SSH)")
-    parser.add_argument("--ssh", action="store_true",
-                        help="also verify the SSH login (paramiko)")
-    parser.add_argument("--json", action="store_true",
-                        help="print the checks as JSON")
-    parser.add_argument("--host", help="override the VM address "
-                                       "(default: vm_info.json VM_IP)")
-    parser.add_argument("--port", type=int, help="override the SSH port")
-    parser.add_argument("--username", help="SSH user for --ssh")
-    parser.add_argument("--known-hosts", dest="known_hosts",
-                        help="known_hosts file holding the trusted VM key")
-    parser.add_argument("--identity", help="SSH private key for --ssh")
-    args = parser.parse_args(argv)
-
-    config = {
-        "host": args.host or "",
-        "port": args.port or 0,
-        "username": args.username or "",
-        "known_hosts_file": args.known_hosts or "",
-        "identity_file": args.identity or "",
-    }
-    return 0 if should_run_or_not(config, ssh=args.ssh, as_json=args.json) else 1
-
-
+    except Exception as e:
+        print(f"Connection failed: {e}")
+        return False
+    
+def should_run_or_not():
+    print(Fore.CYAN + f"{'#' * 6} QILING Machine Verification f{'#' * 6}" + Fore.WHITE)
+    print(Fore.CYAN + f"Checking if the VBoxManage Utility Exists" + Fore.WHITE)
+    vbox_exists = check_if_vboxmanage_exists()
+    if not vbox_exists:
+        print(Fore.RED + "Failed to find Vbox Manage executable do you have VirtualBox Intsalled ?" + Fore.WHITE)
+        return False
+    print(Fore.CYAN + "Checking if the Digest of VBoxManage is Valid" + Fore.WHITE)
+    digest_check = check_vboxmanage_digest()
+    if not digest_check:
+        print(Fore.RED + "[-] Mismatched Digest... Check if you have installed the right Virtual Box Tool" + Fore.WHITE)
+        return False
+    print(Fore.CYAN + "Checking if VM Exists..."+ Fore.WHITE)
+    existance_check = does_qiling_vm_exists() 
+    if not existance_check:
+        print(Fore.RED + "[-] Qiling VM was not found..." + Fore.WHITE) 
+        return False
+    print(Fore.CYAN + "[+] Is the  VM Running or not" + Fore.WHITE)
+    run_check = is_vm_running(False)
+    if not run_check:
+        print(Fore.RED + "[-] VM is not running" + Fore.WHITE)
+        return False
+    print(Fore.CYAN + "[]") 
 if __name__ == "__main__":
-    sys.exit(main())
+    should_run_or_not() 

@@ -4,7 +4,7 @@
 // Pipeline planner
 //
 // Decides *which* analysis phases run and *in what order*. main() no longer
-// hardcodes the 26 run_* calls: it loads a pipeline config (YAML or JSON,
+// hardcodes the 27 run_* calls: it loads a pipeline config (YAML or JSON,
 // Jenkins-style stages or a flat phase list) and hands it to run_phases().
 //
 //   static_analyzer.exe sample.exe                       # built-in default
@@ -54,6 +54,7 @@ enum class phase_id : std::uint8_t {
   got,
   histogram,
   packer,
+  die,
   opcodes,
   debug,
   signature,
@@ -92,6 +93,15 @@ struct phase_info {
   std::vector<phase_id> requires_phases;  // auto-inserted when missing
 };
 
+struct artifact_options {
+  bool store_artifact = false;
+  bool upload_artifacts = false;
+  std::string remote_root = "/";
+  int timeout_seconds = 900;
+  std::string source;
+  std::string uploader_script;
+};
+
 struct pipeline_config {
   std::string name = "default";
   std::string description;
@@ -102,6 +112,7 @@ struct pipeline_config {
   // Stages exactly as written (informational; execution follows `phases`).
   std::vector<std::pair<std::string, std::vector<phase_id>>> stages;
   std::vector<std::pair<std::string, std::string>> environment;
+  artifact_options artifacts;
   bool full = false;  // contains the complete default phase set
 };
 
@@ -117,7 +128,7 @@ std::string to_name(phase_id p);
 bool has(const pipeline_config& cfg, phase_id p);
 bool has(const context& ctx, phase_id p);  // via ctx.active_plan
 
-// The classic 26-phase order, built into the binary.
+// The classic 27-phase order, built into the binary.
 pipeline_config parse_default();
 
 // spec: a file path (.yaml/.yml/.json), a bare pipeline name resolved
@@ -125,6 +136,10 @@ pipeline_config parse_default();
 // an inline JSON array/object, or "default".
 // Throws std::runtime_error with a user-facing message.
 pipeline_config load(const std::string& spec);
+
+// Load config/artifacts.yaml from the working directory or beside the
+// executable. A missing file uses safe defaults (no archive or cloud upload).
+artifact_options load_artifact_options();
 
 // Export cfg.environment into the process environment (both the OS block, so
 // children see it, and the CRT copy, so getenv() sees it).

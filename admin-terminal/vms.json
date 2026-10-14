@@ -4,11 +4,12 @@
     "host": "192.168.56.105",
     "port": 22,
     "kind": "ssh",
-    "username": "kali",
+    "username": "qilin",
     "remote_dir": "qiling_dlls",
-    "remote_python": "python3",
+    "remote_python": "python3.13",
+    "password": "",
     "known_hosts_file": "~/.ssh/known_hosts",
-    "hint": "Analysis VM SSH; verify its key in ~/.ssh/known_hosts"
+    "hint": "Analysis VM SSH; password falls back to qiling_dlls/vm_info.json"
   },
   "capev2": {
     "name": "CAPEv2",

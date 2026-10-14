@@ -4,522 +4,598 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Threat Dashboard — {{ payload.meta.stem }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{
-  --bg:#0a0e16;--bg2:#0e1420;--panel:#111a2a;--panel2:#162036;
-  --line:#1c2a44;--line2:#284066;
-  --fg:#e2eaf6;--dim:#6b7f9e;--accent:#4d8dff;--cyan:#22d3ee;
-  --red:#ff4d5e;--orange:#ff9f43;--yellow:#ffd166;--green:#2ee6a8;
-  --purple:#a78bfa;--pink:#f472b6;
-  --mono:'Ubuntu Mono','JetBrains Mono',Consolas,monospace;
-  --ui:'Ubuntu Mono','JetBrains Mono',Consolas,monospace;
-  --base:17px;
-  --c-ctrl:#ff9f43;--c-call:#22d3ee;--c-ret:#ff4d5e;--c-data:#7aa2ff;--c-arith:#34d399;--c-cmp:#f472b6;--c-stack:#a78bfa;--c-simd:#c084fc;--c-nop:#4b5b74;--c-misc:#8b9cb5;
-  --r:10px;--rs:7px;
-  --shadow:0 8px 32px rgba(0,0,0,.45);
-  --tr:all .2s cubic-bezier(.4,0,.2,1);
-  --glow-1:rgba(77,141,255,.16);--glow-2:rgba(34,211,238,.11);--glow-3:rgba(167,139,250,.09);
-  --grid-line:rgba(140,175,230,.05);
-  --panel-sheen:rgba(255,255,255,.045);
-  --header-blur:14px;
+:root {
+  --bg-base: #06090e;
+  --bg-surface: #0c111a;
+  --bg-elevated: #121926;
+  --bg-overlay: #182234;
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --primary: #38bdf8;
+  --primary-glow: rgba(56, 189, 248, 0.18);
+  --accent-cyan: #06b6d4;
+  --status-clean: #10b981;
+  --status-suspicious: #f59e0b;
+  --status-malicious: #f43f5e;
+  --status-purple: #8b5cf6;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-card: 0 4px 20px -2px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
 }
-[data-theme=light]{
-  --bg:#eef1f6;--bg2:#f8fafc;--panel:#fff;--panel2:#f1f5f9;
-  --line:#d8e1ee;--line2:#b8c8de;
-  --fg:#1e293b;--dim:#64748b;--accent:#2563eb;--cyan:#0891b2;
-  --red:#dc2626;--orange:#d97706;--yellow:#ca8a04;--green:#059669;
-  --purple:#7c3aed;--pink:#db2777;
-  --shadow:0 8px 32px rgba(0,0,0,.1);
-  --glow-1:rgba(37,99,235,.09);--glow-2:rgba(8,145,178,.07);--glow-3:rgba(124,58,237,.06);
-  --grid-line:rgba(30,55,95,.035);
-  --panel-sheen:rgba(255,255,255,.6);
+[data-theme="light"] {
+  --bg-base: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f1f5f9;
+  --bg-overlay: #e2e8f0;
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.16);
+  --text-main: #0f172a;
+  --text-muted: #475569;
+  --text-dim: #94a3b8;
+  --primary: #0284c7;
+  --primary-glow: rgba(2, 132, 199, 0.12);
+  --accent-cyan: #0891b2;
+  --status-clean: #059669;
+  --status-suspicious: #d97706;
+  --status-malicious: #e11d48;
+  --status-purple: #7c3aed;
+  --shadow-card: 0 4px 16px -2px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.8);
 }
-*{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-body{
-  background:
-    radial-gradient(ellipse 900px 560px at 8% -8%, var(--glow-1), transparent 60%),
-    radial-gradient(ellipse 680px 480px at 92% 4%, var(--glow-2), transparent 58%),
-    radial-gradient(ellipse 760px 620px at 50% 112%, var(--glow-3), transparent 62%),
-    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0/46px 46px,
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0/46px 46px,
-    var(--bg);
-  background-attachment:fixed,fixed,fixed,fixed,fixed,fixed;
-  color:var(--fg);font:17px/1.6 'Ubuntu Mono','JetBrains Mono',Consolas,monospace;min-height:100vh}
-a{color:var(--accent);text-decoration:none}
-::-webkit-scrollbar{width:6px;height:6px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--line2);border-radius:3px}
-
-header{display:flex;align-items:center;gap:14px;padding:14px 24px;background:linear-gradient(180deg,rgba(14,20,32,.94),rgba(14,20,32,.86));backdrop-filter:blur(var(--header-blur));-webkit-backdrop-filter:blur(var(--header-blur));border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50;flex-wrap:wrap;box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 14px 28px -20px rgba(0,0,0,.65)}
-[data-theme=light] header{background:linear-gradient(180deg,rgba(248,250,252,.94),rgba(248,250,252,.86))}
-header::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;background:linear-gradient(90deg,transparent,rgba(34,211,238,.45),transparent);pointer-events:none}
-header h1{font-size:17px;font-weight:700;background:linear-gradient(135deg,var(--fg),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.sha{font-family:var(--mono);font-size:13px;color:var(--cyan);background:rgba(34,211,238,.07);padding:3px 9px;border-radius:5px;border:1px solid rgba(34,211,238,.15);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.badge{padding:4px 13px;border-radius:20px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.7px}
-.badge.clean{background:rgba(46,230,168,.1);color:var(--green);border:1px solid rgba(46,230,168,.3);box-shadow:0 0 14px -4px rgba(46,230,168,.35)}
-.badge.suspicious{background:rgba(255,209,102,.1);color:var(--yellow);border:1px solid rgba(255,209,102,.3);box-shadow:0 0 14px -4px rgba(255,209,102,.35)}
-.badge.malicious{background:rgba(255,77,94,.1);color:var(--red);border:1px solid rgba(255,77,94,.3);box-shadow:0 0 14px -4px rgba(255,77,94,.4)}
-.score{margin-left:auto;font-family:var(--mono);font-size:32px;font-weight:800;color:var(--fg);text-shadow:0 0 18px rgba(77,141,255,.35)}
-.score small{display:block;font-size:11px;color:var(--dim);letter-spacing:2px;font-weight:400}
-.hbtn{background:none;border:1px solid var(--line);color:var(--dim);width:34px;height:34px;border-radius:var(--rs);cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;transition:var(--tr);flex-shrink:0}
-.hbtn:hover{border-color:var(--accent);color:var(--accent);background:rgba(77,141,255,.08)}
-
-nav{display:flex;gap:2px;padding:0 24px;background:linear-gradient(180deg,rgba(14,20,32,.9),rgba(14,20,32,.82));backdrop-filter:blur(var(--header-blur));-webkit-backdrop-filter:blur(var(--header-blur));border-bottom:1px solid var(--line);position:sticky;top:57px;z-index:40;overflow-x:auto;scrollbar-width:none}
-[data-theme=light] nav{background:linear-gradient(180deg,rgba(248,250,252,.9),rgba(248,250,252,.82))}
-nav::-webkit-scrollbar{display:none}
-nav button{background:none;border:none;color:var(--dim);padding:11px 16px;cursor:pointer;font-size:16px;font-weight:500;border-bottom:2px solid transparent;white-space:nowrap;font-family:inherit;transition:var(--tr);position:relative}
-nav button:hover{color:var(--fg);background:rgba(77,141,255,.04)}
-nav button.on{color:var(--cyan);border-bottom-color:var(--cyan);background:rgba(34,211,238,.06)}
-
-main{padding:24px;max-width:1500px;margin:0 auto}
-section{display:none;animation:fadeIn .3s ease}
-section.on{display:block}
-@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-
-.grid{display:grid;gap:16px}
-.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
-
-.card{background:linear-gradient(165deg,var(--panel) 0%,var(--panel2) 150%);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;transition:var(--tr);position:relative;overflow:hidden}
-.card::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 18% -15%,var(--panel-sheen),transparent 55%);pointer-events:none}
-.card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),var(--cyan));opacity:0;transition:var(--tr);z-index:1}
-.card:hover{border-color:var(--line2);box-shadow:var(--shadow),0 0 0 1px rgba(77,141,255,.06)}
-.card:hover::before{opacity:1}
-.card h3{margin:0 0 14px;font-size:13px;text-transform:uppercase;letter-spacing:1.2px;color:var(--dim);font-weight:600;display:flex;align-items:center;gap:8px}
-.card h3::before{content:'';width:3px;height:13px;background:var(--accent);border-radius:2px;flex-shrink:0}
-
-.kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);align-items:center;transition:var(--tr)}
-.kv:hover{background:rgba(77,141,255,.03)}
-.kv:last-child{border-bottom:none}
-.kv span:first-child{color:var(--dim);font-size:16px}
-.kv span:last-child{font-family:var(--mono);text-align:right;word-break:break-all;font-size:16px;font-weight:500}
-
-table{width:100%;border-collapse:collapse;font-size:16px}
-th,td{text-align:left;padding:7px 11px;border-bottom:1px solid var(--line)}
-th{color:var(--dim);font-weight:600;text-transform:uppercase;font-size:12px;letter-spacing:.7px;background:rgba(77,141,255,.02);position:sticky;top:0}
-tr:hover td{background:rgba(77,141,255,.04)}
-.mono{font-family:var(--mono)}
-.chip{display:inline-block;padding:3px 9px;border-radius:11px;background:rgba(77,141,255,.1);color:#8ab4ff;font-size:13px;margin:2px 3px 2px 0;font-family:var(--mono);transition:var(--tr);cursor:pointer;border:1px solid transparent}
-.chip:hover{background:rgba(77,141,255,.18);border-color:rgba(77,141,255,.3)}
-.chip.red{background:rgba(255,77,94,.1);color:#ff9aa4;border-color:rgba(255,77,94,.2)}
-.chip.yellow{background:rgba(255,209,102,.1);color:#ffe39a;border-color:rgba(255,209,102,.2)}
-.chip.green{background:rgba(46,230,168,.08);color:#8df0cd;border-color:rgba(46,230,168,.2)}
-.chip.purple{background:rgba(167,139,250,.1);color:#c4b5fd;border-color:rgba(167,139,250,.2)}
-.chip.orange{background:rgba(255,159,67,.1);color:#ffd29a;border-color:rgba(255,159,67,.2)}
-
-.bar{height:7px;background:var(--line);border-radius:4px;overflow:hidden;min-width:55px}
-.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--cyan));border-radius:4px;transition:width .5s ease}
-.bar.hot>i{background:linear-gradient(90deg,var(--orange),var(--red))}
-
-.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:22px}
-.stat-card{background:linear-gradient(165deg,var(--panel) 0%,var(--panel2) 150%);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;text-align:center;transition:var(--tr);position:relative;overflow:hidden}
-.stat-card::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 20% -20%,var(--panel-sheen),transparent 55%);pointer-events:none}
-.stat-card:hover{border-color:var(--line2);box-shadow:var(--shadow);transform:translateY(-2px)}
-.stat-card .sv{font-size:32px;font-weight:800;font-family:var(--mono);color:var(--fg)}
-.stat-card .sl{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-top:3px}
-.stat-card .si{font-size:22px;margin-bottom:4px;opacity:.7}
-
-.search{width:100%;padding:9px 13px;background:var(--bg);border:1px solid var(--line);border-radius:var(--rs);color:var(--fg);font-family:var(--mono);font-size:16px;transition:var(--tr);outline:none}
-.search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,141,255,.12)}
-.search::placeholder{color:var(--dim)}
-.note{color:var(--dim);font-size:16px;line-height:1.65;margin:10px 0 0;max-width:70ch}
-.note code{font-family:var(--mono);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:15px}
-
-.tree{max-height:70vh;overflow:auto}
-.tree details{border-bottom:1px solid var(--line);transition:var(--tr)}
-.tree details:hover{border-bottom-color:var(--line2)}
-.tree summary{cursor:pointer;padding:9px 5px;font-family:var(--mono);color:#a8c4e8;font-size:16px;display:flex;align-items:center;gap:7px;transition:var(--tr);list-style:none}
-.tree summary::-webkit-details-marker{display:none}
-.tree summary::before{content:'▶';font-size:11px;transition:transform .2s;flex-shrink:0;color:var(--dim)}
-.tree details[open] summary::before{transform:rotate(90deg)}
-.tree summary:hover{color:var(--cyan);background:rgba(34,211,238,.03)}
-.tree .imp{padding:2px 0 2px 28px;font-family:var(--mono);font-size:15px;color:#7a8fa8;transition:var(--tr)}
-.tree .imp.flag{color:var(--red);font-weight:600;background:rgba(255,77,94,.04);padding:2px 6px;border-radius:4px;margin:1px 0}
-
-.asmbar{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
-.asmbar select,.asmbar input{padding:8px 11px;background:var(--bg);border:1px solid var(--line);border-radius:var(--rs);color:var(--fg);font-family:var(--mono);font-size:16px;transition:var(--tr);outline:none}
-.asmbar select:focus,.asmbar input:focus{border-color:var(--accent)}
-.asmbar select{min-width:200px}
-#asm{height:64vh;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:var(--r);font-family:var(--mono);font-size:16px;line-height:26px}
-.asmrow{display:grid;grid-template-columns:5px 104px 132px 30px minmax(0,1fr) 48px;gap:10px;align-items:center;min-height:28px;height:28px;padding:0 13px;white-space:pre;transition:var(--tr);box-sizing:border-box}
-.asmrow:hover{background:rgba(77,141,255,.06);padding-left:17px;padding-right:17px}
-.asmrow.head{display:block;height:28px;line-height:28px;background:rgba(34,211,238,.05);color:var(--cyan);border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-weight:600;padding:0 13px}
-.adr{color:#4f6380}
-.byt{color:#37517a}
-.mn{color:#dce7f5}
-.t-call{color:var(--cyan)}
-.t-jmp,.t-cjmp,.t-ujmp{color:var(--orange)}
-.t-ret{color:var(--red)}
-.t-mov,.t-lea{color:#7aa2ff}
-.op-imm{color:var(--yellow)}
-.tgt{color:var(--purple);cursor:pointer;text-decoration:underline dotted}
-.tgt:hover{color:#fff}
-.imp-call{color:var(--red);font-weight:600}
-
-.warn{padding:11px 15px;border-radius:var(--rs);background:rgba(255,159,67,.06);border:1px solid rgba(255,159,67,.25);color:#ffcf9a;margin-bottom:14px;font-size:16px;display:flex;align-items:center;gap:9px}
-.warn::before{content:'⚠';flex-shrink:0}
-
-svg.graph{width:100%;background:radial-gradient(ellipse at 50% 40%,rgba(77,141,255,.05),transparent 70%),var(--bg);border:1px solid var(--line);border-radius:var(--r);cursor:grab;transition:var(--tr)}
-svg.graph:hover{border-color:var(--line2)}
-svg.graph:active{cursor:grabbing}
-
-#detail{position:fixed;right:0;top:0;bottom:0;width:min(440px,100vw);background:rgba(14,20,32,.98);backdrop-filter:blur(14px);border-left:1px solid var(--line);display:flex;flex-direction:column;z-index:120;box-shadow:-12px 0 40px rgba(0,0,0,.5);transform:translateX(105%);transition:transform .28s cubic-bezier(.4,0,.2,1);visibility:hidden}
-#detail.open{transform:none;visibility:visible}
-#detailHead{display:flex;align-items:flex-start;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--line);flex-shrink:0}
-#detailHead .dt-badge{font-size:12px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;padding:3px 9px;border-radius:12px;border:1px solid;white-space:nowrap;margin-top:2px}
-#detailHead .dt-title{flex:1;font-size:18px;font-weight:700;color:var(--fg);word-break:break-all;line-height:1.35}
-#detailHead .dt-sub{display:block;font-size:13px;color:var(--dim);font-weight:400;margin-top:3px;font-family:var(--mono)}
-#detailHead .dt-x{background:none;border:1px solid var(--line);color:var(--dim);width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:18px;flex-shrink:0;transition:var(--tr)}
-#detailHead .dt-x:hover{border-color:var(--red);color:var(--red)}
-#detailBody{flex:1;overflow-y:auto;padding:14px 18px 24px;font-size:12.5px;line-height:1.55}
-#detailBody .dt-sect{font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin:16px 0 8px;display:flex;align-items:center;gap:8px}
-#detailBody .dt-sect:first-child{margin-top:0}
-#detailBody .dt-sect::after{content:"";flex:1;height:1px;background:var(--line)}
-#detailBody .dt-kv{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid rgba(28,42,68,.5);font-size:15px}
-#detailBody .dt-kv:last-child{border-bottom:none}
-#detailBody .dt-kv .k{color:var(--dim);flex-shrink:0}
-#detailBody .dt-kv .v{color:var(--fg);font-family:var(--mono);text-align:right;word-break:break-all}
-#detailBody .dt-chip{display:inline-block;padding:3px 8px;margin:3px 4px 0 0;border-radius:6px;background:var(--panel2);border:1px solid var(--line);font-size:13px;font-family:var(--mono);color:var(--fg)}
-#detailBody .dt-chip.flag{border-color:rgba(255,77,94,.45);color:var(--red);background:rgba(255,77,94,.08)}
-#detailBody .dt-empty{color:var(--dim);font-style:italic;padding:8px 0}
-#detailBody .dt-list{margin:0;padding:0;list-style:none}
-#detailBody .dt-list li{padding:6px 0;border-bottom:1px solid rgba(28,42,68,.5);font-size:15px}
-#detailBody .dt-list li:last-child{border-bottom:none}
-#detailBody .dt-list .li-main{font-family:var(--mono);color:var(--cyan);font-size:15px}
-#detailBody .dt-list .li-sub{color:var(--dim);font-size:13px;margin-top:2px}
-#detailBody .dt-desc{color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:10px 12px;font-size:15px;line-height:1.55;margin-top:6px}
-#detailBody .dt-attacks{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
-#detailBody .dt-attacks span{background:rgba(255,77,94,.1);border:1px solid rgba(255,77,94,.3);color:var(--red);padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
-#detailBody code{font-family:var(--mono);font-size:13px;background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--cyan);word-break:break-all}
-
-.legend{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px 14px;margin-top:12px;font-size:11.5px;color:var(--dim)}
-.legend .li{display:flex;align-items:center;gap:6px}
-.legend .ld{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-
-/* ═══ ATT&CK / STIX section ═══ */
-.sx-matrix{display:grid;gap:9px;grid-auto-flow:column;grid-auto-columns:minmax(178px,1fr);overflow-x:auto;padding-bottom:6px}
-/* ═══ ATT&CK tactics: procedures, tooling, detection guidance ═══ */
-.tk-wrap{display:grid;gap:10px}
-.tk-filters{display:flex;flex-wrap:wrap;gap:7px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 11px}
-.tk-filters input[type=search]{flex:1;min-width:190px}
-.tk-chips{display:flex;flex-wrap:wrap;gap:5px}
-.tk-chip{padding:4px 10px;border-radius:13px;font-size:11.5px;cursor:pointer;user-select:none;
-  background:var(--panel);border:1px solid var(--line);color:var(--dim);font-weight:600;transition:var(--tr)}
-.tk-chip:hover{border-color:var(--accent);color:var(--fg)}
-.tk-chip.on{background:rgba(46,230,168,.13);border-color:rgba(46,230,168,.5);color:#2ee6a8}
-.tk-chip.tk-tools.on{background:rgba(46,230,168,.13);border-color:rgba(46,230,168,.5);color:#2ee6a8}
-.tk-chip.tk-malware.on{background:rgba(255,77,94,.13);border-color:rgba(255,77,94,.5);color:var(--red)}
-.tk-chip.tk-groups.on{background:rgba(255,209,102,.14);border-color:rgba(255,209,102,.5);color:#ffd166}
-.tk-chip.tk-detect.on{background:rgba(122,162,247,.15);border-color:rgba(122,162,247,.5);color:#7aa2f7}
-.tk-reset{margin-left:auto;padding:4px 10px;border-radius:7px;font-size:11.5px;cursor:pointer;
-  background:transparent;border:1px solid var(--line);color:var(--dim)}
-.tk-reset:hover{border-color:var(--red);color:var(--red)}
-.tk-count{font-size:11.5px;color:var(--dim);white-space:nowrap}
-.tk-tac{border:1px solid var(--line);border-radius:9px;background:var(--panel2);overflow:hidden}
-.tk-tachead{display:flex;align-items:center;gap:9px;padding:8px 11px;cursor:pointer;background:var(--panel)}
-.tk-tachead:hover{border-color:var(--accent)}
-.tk-tacname{font-size:12.5px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px}
-.tk-tacmeta{font-size:11.5px;color:var(--dim);margin-left:auto;white-space:nowrap}
-.tk-caret{color:var(--dim);font-size:11px;transition:var(--tr)}
-.tk-tac.open .tk-caret{transform:rotate(90deg)}
-.tk-tacbody{display:none;padding:9px 11px 11px;gap:7px;flex-direction:column}
-.tk-tac.open .tk-tacbody{display:flex}
-.tk-proc{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:9px 11px}
-.tk-prochead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-.tk-pid{font-family:var(--mono);font-size:12.5px;font-weight:700;color:#ff9f43}
-.tk-pname{font-size:13px;font-weight:600}
-.tk-sub{font-size:10px;background:rgba(167,139,250,.14);border:1px solid rgba(167,139,250,.4);color:#a78bfa;padding:1px 6px;border-radius:9px}
-.tk-hits{font-size:10.5px;background:rgba(255,209,102,.14);border:1px solid rgba(255,209,102,.4);color:#ffd166;padding:1px 6px;border-radius:9px;white-space:nowrap}
-.tk-row{display:flex;gap:7px;align-items:baseline;font-size:12px;margin-top:5px;line-height:1.5}
-.tk-lbl{flex:0 0 60px;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--dim);font-weight:700}
-.tk-lbl.tools{color:#2ee6a8}
-.tk-lbl.malware{color:var(--red)}
-.tk-lbl.groups{color:#ffd166}
-.tk-lbl.detect{color:#7aa2f7}
-.tk-vals{display:flex;flex-wrap:wrap;gap:4px}
-.tk-val{font-size:11.5px;padding:1px 7px;border-radius:5px;background:var(--panel2);border:1px solid var(--line)}
-.tk-val.tools{color:#2ee6a8;border-color:rgba(46,230,168,.35)}
-.tk-val.malware{color:var(--red);border-color:rgba(255,77,94,.35)}
-.tk-val.groups{color:#ffd166;border-color:rgba(255,209,102,.35)}
-.tk-val.id{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
-.tk-more{font-size:11px;color:var(--dim);font-style:italic}
-.tk-det{font-size:11.5px;color:var(--fg);line-height:1.55;background:rgba(122,162,247,.06);border-left:2px solid rgba(122,162,247,.45);padding:5px 9px;border-radius:0 6px 6px 0}
-.tk-detname{font-size:11px;color:#7aa2f7;font-weight:600;display:block;margin-bottom:2px}
-.tk-none{font-size:11.5px;color:var(--dim);font-style:italic}
-.tk-empty{padding:26px;text-align:center;color:var(--dim);font-size:13px}
-@media (max-width:820px){.tk-lbl{flex-basis:100%}.tk-reset{margin-left:0}}
-.sx-tac{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px}
-.sx-tac h4{font-size:11.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--dim);margin-bottom:7px;display:flex;justify-content:space-between;gap:6px}
-.sx-tac h4 b{color:var(--accent)}
-.sx-tech{display:block;width:100%;text-align:left;margin-bottom:4px;padding:5px 7px;font-size:12px;cursor:pointer;
-  background:rgba(255,159,67,.1);border:1px solid rgba(255,159,67,.32);border-radius:6px;color:var(--fg);font-family:var(--mono);transition:var(--tr)}
-.sx-tech:hover{background:rgba(255,159,67,.2);border-color:var(--orange)}
-.sx-tech code{color:var(--orange);font-weight:700;margin-right:4px}
-.sx-tech.dim{opacity:.4}
-.sx-graph{background:var(--panel2);border:1px solid var(--line);border-radius:9px;overflow:hidden}
-.sx-graph svg{display:block;width:100%;height:620px;cursor:grab}
-.sx-graph svg:active{cursor:grabbing}
-.sx-node circle{stroke:var(--bg);stroke-width:1.5px;cursor:pointer}
-.sx-node text{font-size:10.5px;fill:var(--fg);pointer-events:none}
-.sx-node.dim{opacity:.15}
-.sx-node.hit circle{stroke:var(--yellow);stroke-width:2.5px}
-.sx-link{stroke:var(--line2);stroke-width:1.1px;fill:none}
-.sx-linklabel{font-size:9.5px;fill:var(--dim);text-anchor:middle;pointer-events:none;
-  font-family:var(--mono);text-shadow:0 0 4px var(--panel2),0 0 4px var(--panel2),0 0 4px var(--panel2)}
-.sx-toolbar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
-/* Own tab class, not .mtab: the map-view handler binds every .mtab on the page
-   to drawThreat(), which would fire for these too. */
-.sxtab{background:var(--panel);border:1px solid var(--line);color:var(--dim);padding:7px 15px;border-radius:8px;cursor:pointer;font-size:15px;font-family:var(--mono);transition:var(--tr)}
-.sxtab:hover{color:var(--fg);border-color:var(--line2)}
-.sxtab.on{background:rgba(34,211,238,.09);border-color:var(--cyan);color:var(--cyan)}
-.sx-toolbar input{font-family:var(--mono);font-size:13px;background:var(--panel);color:var(--fg);
-  border:1px solid var(--line2);border-radius:6px;padding:6px 10px;min-width:200px}
-.sx-toolbar input:focus{outline:none;border-color:var(--accent)}
-.sx-note{color:var(--dim);font-size:11.5px;margin-top:9px;line-height:1.6}
-/* D3FEND: one block per ATT&CK technique, chips for the countermeasures. */
-.d3f-tech{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:7px 8px;margin-bottom:6px}
-.d3f-tech h5{font-size:12.5px;font-family:var(--mono);color:var(--fg);margin-bottom:5px;font-weight:600}
-.d3f-tech h5 code{color:var(--orange);font-weight:700;margin-right:5px}
-.d3f-tech h5 span{color:var(--dim);font-weight:400}
-.d3f-chip{display:inline-flex;align-items:baseline;gap:5px;background:rgba(34,211,238,.08);
-  border:1px solid rgba(34,211,238,.3);border-radius:12px;padding:3px 9px;margin:0 5px 5px 0;
-  font-size:11.5px;color:var(--fg);cursor:default}
-.d3f-chip b{color:var(--cyan);font-family:var(--mono);font-weight:700}
-.d3f-chip i{font-style:normal;color:var(--dim);font-size:10.5px}
-.d3f-chip .d3f-rel{color:var(--dim);font-size:10.5px}
-.d3f-chip .d3f-rel em{font-style:normal;color:var(--green)}
-.d3f-none{font-size:11.5px;color:var(--dim);font-style:italic}
-
-.copy-btn{background:none;border:1px solid var(--line);color:var(--dim);padding:3px 8px;border-radius:5px;cursor:pointer;font-size:13px;font-family:var(--mono);transition:var(--tr);margin-left:8px}
-.copy-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(77,141,255,.06)}
-.copy-btn.copied{border-color:var(--green);color:var(--green)}
-
-.pi{font-size:15px;color:var(--dim);padding:0 0 14px;display:flex;align-items:center;gap:8px}
-.pi span{color:var(--accent);font-weight:600}
-
-.threat-controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-.fbtn{background:var(--panel);border:1px solid var(--line);color:var(--dim);padding:5px 13px;border-radius:14px;cursor:pointer;font-size:13px;font-family:var(--mono);transition:var(--tr)}
-.fbtn:hover{border-color:var(--accent);color:var(--fg)}
-.fbtn.active{background:rgba(77,141,255,.12);border-color:var(--accent);color:var(--cyan)}
-
-.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
-.chart-row.single{grid-template-columns:1fr}
-.chart-box{background:linear-gradient(165deg,var(--panel) 0%,var(--panel2) 150%);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;transition:var(--tr);position:relative;overflow:hidden}
-.chart-box::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 15% -20%,var(--panel-sheen),transparent 55%);pointer-events:none;z-index:0}
-.chart-box>*{position:relative;z-index:1}
-.chart-box:hover{border-color:var(--line2)}
-.chart-box h3{margin-bottom:14px}
-.chart-box svg{display:block;overflow:visible}
-.d3-tip{position:absolute;background:rgba(14,20,32,.95);border:1px solid var(--line2);border-radius:6px;padding:7px 11px;font-size:13px;font-family:var(--mono);color:var(--fg);pointer-events:none;z-index:60;box-shadow:var(--shadow);display:none;line-height:1.6;max-width:220px;backdrop-filter:blur(6px)}
-.d3-tip .dt-l{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-.d3-tip .dt-v{color:var(--cyan);font-weight:700;font-size:16px}
-
-.gnode{cursor:pointer;transition:var(--tr)}
-.gnode:hover circle{stroke:#fff;stroke-width:2}
-.gedge{stroke:#2c3f5e;stroke-width:1;opacity:.5;transition:var(--tr)}
-.gedge.highlighted{stroke:var(--cyan);stroke-width:2;opacity:1}
-.gedge.dimmed{opacity:.08}
-.gnode.dimmed{opacity:.15}
-.gnode.highlighted circle{stroke:#fff;stroke-width:2.5}
-
-/* ── threat map: info graph ────────────────────────────────────────── */
-#viewInfo{display:none;background:linear-gradient(180deg,rgba(17,26,42,.96),rgba(10,14,22,.96));border:1px solid var(--line);border-radius:var(--r);padding:14px;box-shadow:var(--shadow)}
-#viewInfo .threat-controls{padding:10px 12px;background:rgba(10,14,22,.72);border:1px solid var(--line);border-radius:8px}
-#viewInfo .card{background:var(--panel);border-color:var(--line2);box-shadow:0 10px 28px rgba(0,0,0,.2)}
-#threatSvg{display:block;width:100%;min-height:640px;background:radial-gradient(ellipse at 50% 45%,#172640 0%,#0a0e16 78%);border:1px solid var(--line2);border-radius:8px;overflow:visible}
-#threat .gedge{stroke:#42638f;stroke-width:1.4;opacity:.48;fill:none}
-#threat .gedge.highlighted{stroke:var(--cyan);stroke-width:2.4;opacity:1}
-#threat .gedge.dimmed{opacity:.06}
-#threat .gnode{cursor:pointer;transition:opacity .15s}
-#threat .gnode circle.core{stroke:rgba(255,255,255,.8);stroke-width:1.5}
-#threat .gnode:hover circle.core{stroke:#fff;stroke-width:3}
-#threat .gnode.highlighted circle.core{stroke:#fff;stroke-width:3}
-#threat .gnode.dimmed{opacity:.12}
-#threat .gnode text{font-family:var(--mono);paint-order:stroke;stroke:#0a0e16;stroke-width:3px;stroke-linejoin:round}
-#threat .gnode .result-badge{fill:#0a0e16;stroke-width:1}
-#threat .gnode .result-count{font-family:var(--mono);font-size:10px;font-weight:700;text-anchor:middle}
-#threat .gnode .node-label{font-size:12px;font-weight:600;fill:#b8cbe5}
-#threat .gnode .node-sub{font-size:10px;fill:#7188a8}
-#threat .info-node rect.info-box{fill:#162238;stroke:#42638f;stroke-width:1.2;rx:7}
-#threat .info-node:hover rect.info-box{fill:#203453;stroke:var(--cyan);stroke-width:2}
-#threat .info-node .node-label{font-size:12px;font-weight:600;fill:#dbe8f8}
-#threat .info-node .node-sub{font-size:10px;fill:#7f99ba}
-#threat .info-node .core{stroke:#dbe8f8;stroke-width:1}
-#threat .graph-empty{fill:var(--dim);font-family:var(--mono);font-size:17px;text-anchor:middle}
-#viewInfo .legend{padding:12px 4px 2px}
-#viewInfo .graph-note{margin:8px 4px 0;color:var(--dim);font-size:11.5px;font-family:var(--mono)}
-
-.map-tabs{display:flex;gap:6px;margin:0 0 14px}
-.mtab{background:var(--panel);border:1px solid var(--line);color:var(--dim);padding:7px 15px;border-radius:8px;cursor:pointer;font-size:15px;font-family:var(--mono);transition:var(--tr)}
-.mtab:hover{color:var(--fg);border-color:var(--line2)}
-.mtab.on{background:rgba(34,211,238,.09);border-color:var(--cyan);color:var(--cyan)}
-.geo-wrap{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:16px;align-items:start}
-.geo-side{display:flex;flex-direction:column;gap:14px;min-width:0}
-.geo-panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;overflow:auto;max-height:270px}
-.geo-panel h4{margin:0 0 10px;font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);font-weight:600}
-.geo-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(28,42,68,.5);font-size:11.5px;cursor:pointer;font-family:var(--mono)}
-.geo-row:last-child{border-bottom:none}
-.geo-row:hover{background:rgba(77,141,255,.05)}
-.geo-row .cc{font-weight:700;color:var(--cyan);width:24px;flex-shrink:0}
-.geo-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
-.geo-row .ct{color:var(--dim);font-variant-numeric:tabular-nums}
-.geo-row .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.geo-row .kv2{color:var(--dim);font-size:10.5px}
-svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
-[data-theme=light] svg.geo{background:radial-gradient(ellipse at 50% 42%,#e3edf9 0%,var(--bg) 72%)}
-.geo-sphere{fill:transparent;stroke:var(--line2);stroke-width:.8}
-.geo-grat{fill:none;stroke:var(--line2);stroke-width:.35;opacity:.4}
-.geo-country{fill:rgba(38,58,92,.9);stroke:var(--line2);stroke-width:.5;cursor:pointer;transition:fill .15s}
-[data-theme=light] .geo-country{fill:#d9e3f0}
-.geo-country:hover{fill:rgba(77,141,255,.45)}
-.geo-country.has-ioc{fill:rgba(58,84,126,.98)}
-.geo-country.sel{fill:rgba(34,211,238,.38);stroke:var(--cyan);stroke-width:1}
-.geo-bub{cursor:pointer;transition:opacity .15s}
-.geo-bub circle.core{stroke:rgba(255,255,255,.6);stroke-width:1}
-.geo-bub text{font-family:var(--mono);font-size:11px;font-weight:700;fill:#e6eefb;text-anchor:middle;pointer-events:none}
-[data-theme=light] .geo-bub text{fill:#0f172a}
-.geo-bub .ring{fill:none;stroke-width:1.2;opacity:.55}
-.geo-bub .pulse{fill:none;stroke-width:1.4;transform-box:fill-box;transform-origin:center;animation:geoPulse 2.6s ease-out infinite}
-@keyframes geoPulse{0%{transform:scale(.55);opacity:.75}100%{transform:scale(2.4);opacity:0}}
-.geo-bub.dim{opacity:.16}
-.geo-arc{fill:none;stroke:var(--orange);stroke-width:1;stroke-dasharray:4 3;opacity:.5}
-.geo-arc.hot{stroke:var(--red);stroke-width:1.8;opacity:.95}
-.geo-cclbl{font-family:var(--mono);font-size:9.5px;font-weight:700;fill:var(--cyan);text-anchor:middle;pointer-events:none}
-.geo-empty{color:var(--dim);font-size:15px;padding:4px 0}
-.geo-hint{font-size:11.5px;color:var(--dim);margin-top:10px}
-/* ── call graph controls ────────────────────────────────────────── */
-.cg-ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-.cg-ctl select,.cg-ctl input[type=text]{padding:7px 10px;background:var(--bg);border:1px solid var(--line);border-radius:var(--rs);color:var(--fg);font-family:var(--mono);font-size:15px;outline:none}
-.cg-ctl select:focus,.cg-ctl input:focus{border-color:var(--accent)}
-.cg-ctl label{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--dim);font-family:var(--mono);cursor:pointer}
-.cg-ctl input[type=range]{width:110px;accent-color:var(--accent)}
-.cg-node{cursor:pointer}
-.cg-node rect{fill:#1b2536;stroke:#35507f;stroke-width:1;rx:5;transition:fill .15s,stroke .15s}
-[data-theme=light] .cg-node rect{fill:#e8eef7;stroke:#9db4d0}
-.cg-node text{font-family:var(--mono);font-size:12px;fill:#c8d8ee;pointer-events:none}
-[data-theme=light] .cg-node text{fill:#16283f}
-.cg-node.entry rect{stroke:var(--green);stroke-width:1.7}
-.cg-node.hot rect{stroke:var(--orange)}
-.cg-node.focus rect{fill:rgba(77,141,255,.3);stroke:var(--cyan);stroke-width:1.9}
-.cg-node.hit rect{stroke:var(--yellow);stroke-width:2}
-.cg-node.dim{opacity:.14}
-.cg-line{fill:none;stroke:#2c3f5e;stroke-width:1;opacity:.5}
-.cg-line.dim{opacity:.05}
-.cg-line.hot{stroke:var(--cyan);stroke-width:1.8;opacity:1}
-.cg-depth{font-family:var(--mono);font-size:11px;fill:var(--dim);text-anchor:middle}
-.cg-note{font-size:13px;color:var(--dim);margin-top:8px;font-family:var(--mono)}
-.cg-ctl .sep{width:1px;height:20px;background:var(--line);margin:0 2px}
-
-/* ── assembly viewer ───────────────────────────────────────────── */
-.asmbar .fwrap{display:flex;gap:8px;align-items:center}
-.asmbar input[type=text]{width:auto}
-.asmbar .fsrch{width:190px}
-.asm-flex{display:flex;gap:10px;align-items:stretch}
-.asm-flex #asm{flex:1;min-width:0}
-.asm-mapwrap{position:relative;width:30px;flex:0 0 30px;height:64vh;background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden;cursor:pointer}
-.asm-mapwrap i{position:absolute;left:0;right:0;opacity:.9}
-.asm-win{position:absolute;left:0;right:0;border:1px solid var(--cyan);background:rgba(34,211,238,.14);pointer-events:none;box-shadow:0 0 0 1px rgba(34,211,238,.25)}
-.asm-stats{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:11.5px;color:var(--dim);font-family:var(--mono)}
-.asm-stack{display:flex;height:9px;border-radius:5px;overflow:hidden;background:var(--line);min-width:200px;flex:1}
-.asm-stack i{display:block;height:100%}
-.asm-legend{display:flex;gap:11px;flex-wrap:wrap;font-size:10.5px;color:var(--dim);font-family:var(--mono)}
-.asm-legend span{display:flex;align-items:center;gap:5px}
-.asm-legend b{width:8px;height:8px;border-radius:2px;display:block}
-.asm-mn{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 10px;font-family:var(--mono);font-size:13px;color:var(--dim);align-items:center}
-.asm-mn div{display:flex;align-items:center;gap:6px}
-.asm-mn .b{height:6px;background:linear-gradient(90deg,var(--accent),var(--cyan));border-radius:3px}
-.asmrow.blk{display:block;height:28px;line-height:28px;background:rgba(167,139,250,.07);border-left:2px solid var(--purple);color:var(--purple);font-size:13px;padding:0 13px}
-.catbar{display:block;width:3px;border-radius:2px;align-self:stretch;margin:1px 0;opacity:.85}
-.blkcol{color:#5d6f8c;font-size:12px;text-align:right}
-.lenbar{position:relative;height:6px;background:var(--line);border-radius:3px;align-self:center}
-.lenbar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--cyan))}
-.c-ctrl{background:var(--c-ctrl)}
-.c-call{background:var(--c-call)}
-.c-ret{background:var(--c-ret)}
-.c-data{background:var(--c-data)}
-.c-arith{background:var(--c-arith)}
-.c-cmp{background:var(--c-cmp)}
-.c-stack{background:var(--c-stack)}
-.c-simd{background:var(--c-simd)}
-.c-nop{background:var(--c-nop)}
-.c-misc{background:var(--c-misc)}
-.t-cmp,.t-test{color:var(--pink)}
-.t-arith,.t-add,.t-sub,.t-xor,.t-and,.t-or,.t-inc,.t-dec{color:#6ee7b7}
-.t-stack,.t-push,.t-pop,.t-leave,.t-enter{color:#c4b5fd}
-.t-simd{color:#d8b4fe}
-.t-nop{color:#5b6b83}
-.t-trap,.t-int{color:var(--red);font-weight:600}
-
-/* ── assembly viewer: controls ─────────────────────────────────── */
-.asm-lbl{font-size:11.5px;color:var(--dim);font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase}
-.asm-cats,.asm-blknav{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-.asm-cats .fbtn,.asm-blknav .fbtn{padding:4px 11px;font-size:12px;border-radius:12px}
-.asm-empty{padding:26px 18px;text-align:center;color:var(--dim);font-family:var(--mono);font-size:13px}
-.asm-empty b{color:var(--fg)}
-.asm-empty code{color:var(--yellow)}
-.tree-empty{padding:12px 4px;color:var(--dim);font-family:var(--mono);font-size:12px}
-
-/* ── assembly viewer: instruction rows ─────────────────────────── */
-/* The mnemonic carries the weight; operands are tinted by role so a glance
-   down the operand column reads as immediates / registers / symbols. */
-.mn{overflow:hidden;text-overflow:ellipsis}
-.op-mn{font-weight:600}
-.op-reg{color:#8fb3e0}
-.op-imm{color:var(--yellow)}
-.op-num{color:#f0b46b}
-.op-sym{color:var(--green)}
-.op-sz{color:#7d8fa8}
-.op-brk{color:#5d6f8c}
-.mn mark{background:rgba(255,209,102,.28);color:#fff2cc;border-radius:2px;padding:0 1px}
-.asmrow.hit{background:rgba(255,209,102,.07)}
-.asmrow.dim{opacity:.34}
-.asmrow .adr{white-space:nowrap}
-/* Sticky block banners: within a scrolling function the current basic block
-   stays labelled without stealing a whole row from the listing. */
-.asmrow.blk{position:sticky;top:0;z-index:2;backdrop-filter:blur(4px);
-  border-top:1px solid rgba(167,139,250,.18);border-bottom:1px solid rgba(167,139,250,.12)}
-.asmrow.blk b{color:#cbb6ff;font-weight:600}
-.asmrow.blk em{color:var(--dim);font-style:normal;font-size:12px}
-
-@media(max-width:768px){
-
-
-
-  header{padding:10px 14px;gap:8px}
-  header h1{font-size:17px}
-  .sha{display:none}
-  .score{font-size:24px}
-  main{padding:14px}
-  .g2,.chart-row{grid-template-columns:1fr}
-  .stats-row{grid-template-columns:repeat(2,1fr)}
-
-  .geo-wrap{grid-template-columns:1fr}
-  .geo-side{flex-direction:column}
-  .asmbar{flex-direction:column;align-items:stretch}
-  .asmbar select,.asmbar input{width:100%}
-  .asmbar .fwrap{flex-wrap:wrap}
-  .asm-flex{flex-direction:column}
-  .asm-mapwrap{width:100%;flex:0 0 26px;height:26px}
-  .asmrow{grid-template-columns:4px 78px 96px 22px minmax(0,1fr);font-size:13px;gap:6px}
-  .asmrow .lenbar{display:none}
-  nav button{padding:9px 13px;font-size:15px}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg-base);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
 }
-</style>
+.mono { font-family: var(--font-mono); }
+header {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 24px;
+  background: rgba(12, 17, 26, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.header-brand { display: flex; align-items: center; gap: 12px; }
+.header-brand h1 { font-size: 16px; font-weight: 700; color: var(--text-main); }
+.badge {
+  display: inline-flex; align-items: center; padding: 3px 9px;
+  border-radius: 999px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.badge.clean { background: rgba(16, 185, 129, 0.15); color: var(--status-clean); border: 1px solid rgba(16, 185, 129, 0.3); }
+.badge.suspicious { background: rgba(245, 158, 11, 0.15); color: var(--status-suspicious); border: 1px solid rgba(245, 158, 11, 0.3); }
+.badge.malicious { background: rgba(244, 63, 94, 0.15); color: var(--status-malicious); border: 1px solid rgba(244, 63, 94, 0.3); }
+.sha {
+  font-family: var(--font-mono); font-size: 11px; color: var(--primary);
+  background: var(--primary-glow); padding: 3px 8px; border-radius: var(--radius-sm);
+  border: 1px solid rgba(56, 189, 248, 0.25); max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.header-actions { display: flex; align-items: center; gap: 16px; }
+.score-box { text-align: right; }
+.score-box .num { font-family: var(--font-mono); font-size: 26px; font-weight: 800; line-height: 1; color: var(--text-main); }
+.score-box .label { font-size: 9px; font-weight: 600; color: var(--text-dim); letter-spacing: 0.1em; text-transform: uppercase; }
+.hbtn {
+  background: var(--bg-elevated); border: 1px solid var(--border-subtle); color: var(--text-muted);
+  width: 34px; height: 34px; border-radius: var(--radius-sm); cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.hbtn:hover { color: var(--text-main); border-color: var(--border-strong); background: var(--bg-overlay); }
+nav {
+  display: flex; gap: 6px; padding: 6px 24px;
+  background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle);
+  overflow-x: auto; scrollbar-width: none;
+}
+nav::-webkit-scrollbar { display: none; }
+nav button {
+  background: transparent; border: none; color: var(--text-muted);
+  padding: 8px 14px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+nav button:hover { color: var(--text-main); background: var(--border-subtle); }
+nav button.on { color: var(--primary); background: var(--primary-glow); font-weight: 600; }
+main { padding: 24px; max-width: 1600px; margin: 0 auto; }
+section { display: none; }
+section.on { display: block; animation: fadeIn 0.2s ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stat-card {
+  background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+  padding: 14px 16px; box-shadow: var(--shadow-card); transition: transform 0.2s;
+}
+.stat-card:hover { transform: translateY(-2px); border-color: var(--border-strong); }
+.stat-card .sl { font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-card .sv { font-family: var(--font-mono); font-size: 24px; font-weight: 700; color: var(--text-main); margin-top: 4px; }
+.grid { display: grid; gap: 16px; }
+.grid.g2 { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+.card {
+  background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+  padding: 20px; box-shadow: var(--shadow-card);
+}
+.card h3 {
+  font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-muted); margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+}
+.card h3::before { content: ""; width: 3px; height: 12px; background: var(--primary); border-radius: 2px; }
+.kv { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+.kv:last-child { border-bottom: none; }
+.kv span:first-child { color: var(--text-muted); font-size: 13px; }
+.kv span:last-child { font-family: var(--font-mono); font-size: 13px; color: var(--text-main); text-align: right; }
+.copy-btn {
+  background: var(--bg-elevated); border: 1px solid var(--border-subtle); color: var(--text-muted);
+  padding: 2px 7px; border-radius: var(--radius-sm); font-size: 11px; cursor: pointer; margin-left: 8px;
+}
+.copy-btn:hover { color: var(--text-main); border-color: var(--border-strong); }
+.chip {
+  display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-family: var(--font-mono); font-weight: 500; background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle); color: var(--text-muted); margin: 2px;
+}
+.chip.purple { background: rgba(139, 92, 246, 0.12); color: #c4b5fd; border-color: rgba(139, 92, 246, 0.3); }
+.chip.red { background: rgba(244, 63, 94, 0.12); color: #fda4af; border-color: rgba(244, 63, 94, 0.3); }
+.chip.green { background: rgba(16, 185, 129, 0.12); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3); }
+.chip.orange { background: rgba(245, 158, 11, 0.12); color: #fcd34d; border-color: rgba(245, 158, 11, 0.3); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border-subtle); }
+th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
+tr:hover td { background: var(--bg-elevated); }
+.bar { height: 6px; background: var(--bg-elevated); border-radius: 999px; overflow: hidden; min-width: 60px; }
+.bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent-cyan)); border-radius: 999px; }
+.search, input[type="search"], input[type="text"], select {
+  width: 100%; padding: 8px 12px; background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm); color: var(--text-main); font-family: var(--font-mono); font-size: 13px; outline: none;
+}
+.search:focus, input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-glow); }
+.fbtn, .ibtn {
+  background: var(--bg-elevated); border: 1px solid var(--border-subtle); color: var(--text-muted);
+  padding: 6px 12px; border-radius: var(--radius-sm); font-size: 12px; font-family: var(--font-mono);
+  cursor: pointer; transition: all 0.15s;
+}
+.fbtn:hover, .ibtn:hover { color: var(--text-main); border-color: var(--border-strong); background: var(--bg-overlay); }
+.fbtn.active, .ibtn.on { background: var(--primary-glow); border-color: var(--primary); color: var(--primary); font-weight: 600; }
+.ioc-row, .fam-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--radius-sm); transition: background 0.15s; }
+.ioc-row:hover, .fam-row:hover { background: var(--bg-elevated); }
+.ioc-val { flex: 1; font-family: var(--font-mono); font-size: 13px; word-break: break-all; }
+.ioc-kind { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; border: 1px solid; }
+.ioc-k-ip, .ioc-k-url { color: var(--primary); border-color: rgba(56, 189, 248, 0.4); background: var(--primary-glow); }
+.ioc-k-domain, .ioc-k-dns { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.1); }
+.ioc-k-hash { color: #f43f5e; border-color: rgba(244, 63, 94, 0.4); background: rgba(244, 63, 94, 0.1); }
+.ioc-k-email { color: #8b5cf6; border-color: rgba(139, 92, 246, 0.4); background: rgba(139, 92, 246, 0.1); }
+.ioc-k-encoded { color: #10b981; border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.1); }
+#detail {
+  position: fixed; right: 0; top: 0; bottom: 0; width: min(440px, 100vw);
+  background: var(--bg-surface); border-left: 1px solid var(--border-subtle);
+  display: flex; flex-direction: column; z-index: 120; box-shadow: -8px 0 32px rgba(0,0,0,0.5);
+  transform: translateX(105%); transition: transform 0.25s ease-out; visibility: hidden;
+}
+#detail.open { transform: none; visibility: visible; }
+#detailHead { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--border-subtle); }
+#detailHead .dt-title { flex: 1; font-size: 16px; font-weight: 700; word-break: break-all; }
+#detailHead .dt-sub { display: block; font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); margin-top: 3px; }
+#detailHead .dt-x { background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 20px; line-height: 1; }
+#detailHead .dt-x:hover { color: var(--text-main); }
+#detailBody { flex: 1; overflow-y: auto; padding: 16px 20px; }
+.dt-sect { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin: 16px 0 8px; }
+.dt-kv { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border-subtle); font-size: 13px; }
+.dt-kv .k { color: var(--text-muted); }
+.dt-kv .v { font-family: var(--font-mono); text-align: right; word-break: break-all; color: var(--text-main); }
+.chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.chart-row.single { grid-template-columns: 1fr; }
+.chart-box { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 18px; }
+.chart-box h3 { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px; }
+.chart-box svg { display: block; width: 100%; overflow: visible; }
+.d3-tip { position: absolute; background: var(--bg-overlay); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 10px; font-family: var(--font-mono); font-size: 12px; color: var(--text-main); pointer-events: none; z-index: 60; display: none; }
+/* ---------------------------------------------------------------------------
+   Restored render surfaces.
+
+   The views below (assembly, call graph, geo map, STIX, D3FEND, CAR, ML) are
+   drawn by script rather than by the template, so their stylesheets cannot
+   live in the Jinja markup. They are written against the same tokens as the
+   rest of the page: the alias block first, so the renderers can keep using
+   the short legacy names (--cyan, --dim, --c-call, ...) that their inline
+   styles and the D3 draw calls are built on.
+   --------------------------------------------------------------------------- */
+:root {
+  --fg: var(--text-main);
+  --dim: var(--text-dim);
+  --accent: var(--primary);
+  --cyan: var(--accent-cyan);
+  --green: var(--status-clean);
+  --red: var(--status-malicious);
+  --orange: var(--status-suspicious);
+  --purple: var(--status-purple);
+  --yellow: #fbbf24;
+  --pink: #ec4899;
+  --line: var(--border-subtle);
+  --line2: var(--border-strong);
+  --bg: var(--bg-base);
+  --bg2: var(--bg-surface);
+  --panel: var(--bg-surface);
+  --panel2: var(--bg-elevated);
+  --mono: var(--font-mono);
+  --r: var(--radius-md);
+  --rs: var(--radius-sm);
+  --shadow: var(--shadow-card);
+  --c-ctrl: #f59e0b; --c-call: #38bdf8; --c-ret: #f43f5e; --c-data: #7aa2ff;
+  --c-arith: #34d399; --c-cmp: #ec4899; --c-stack: #a78bfa; --c-simd: #c084fc;
+  --c-nop: #64748b; --c-misc: #94a3b8;
+}
+.chip.yellow { background: rgba(251, 191, 36, 0.12); color: #fcd34d; border-color: rgba(251, 191, 36, 0.3); }
+.stat-card .si { font-size: 18px; margin-bottom: 4px; opacity: 0.7; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; }
+.note { color: var(--text-dim); font-size: 13px; line-height: 1.6; margin: 10px 0 0; max-width: 70ch; }
+.note code { font-family: var(--font-mono); background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 1px 5px; }
+.warn {
+  display: flex; align-items: center; gap: 9px; padding: 11px 15px; margin-bottom: 14px;
+  background: rgba(245, 158, 11, 0.07); border: 1px solid rgba(245, 158, 11, 0.28);
+  color: #fcd34d; border-radius: var(--radius-sm); font-size: 13px;
+}
+.warn::before { content: "!"; flex-shrink: 0; font-weight: 700; }
+.empty { color: var(--text-dim); font-style: italic; padding: 8px 0; font-size: 13px; }
+.legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 14px; margin-top: 12px; font-size: 11px; color: var(--text-dim); }
+.legend .li { display: flex; align-items: center; gap: 6px; }
+.legend .ld { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.map-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+.mtab, .sxtab {
+  background: var(--bg-elevated); border: 1px solid var(--border-subtle); color: var(--text-muted);
+  padding: 7px 14px; border-radius: var(--radius-sm); cursor: pointer;
+  font-family: var(--font-mono); font-size: 12px; transition: all 0.15s;
+}
+.mtab:hover, .sxtab:hover { color: var(--text-main); border-color: var(--border-strong); }
+.mtab.on, .sxtab.on { background: var(--primary-glow); border-color: var(--accent-cyan); color: var(--accent-cyan); }
+h4.sub { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 0 0 10px; }
+
+/* --- collapsible trees (imports / exports) --- */
+.tree { max-height: 70vh; overflow: auto; }
+.tree details { border-bottom: 1px solid var(--border-subtle); }
+.tree summary {
+  cursor: pointer; padding: 9px 5px; font-family: var(--font-mono);
+  color: var(--text-muted); font-size: 13px; display: flex; align-items: center; gap: 7px;
+}
+.tree summary::before { content: "\25B8"; font-size: 10px; transition: transform 0.2s; flex-shrink: 0; color: var(--text-dim); }
+.tree details[open] summary::before { transform: rotate(90deg); }
+.tree summary:hover { color: var(--accent-cyan); }
+.tree .imp { padding: 3px 0 3px 26px; font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+.tree .imp.flag { color: var(--status-malicious); font-weight: 600; background: rgba(244, 63, 94, 0.05); border-radius: 4px; padding: 3px 6px; margin: 1px 0; }
+.tree-empty { padding: 12px 4px; color: var(--text-dim); font-family: var(--font-mono); font-size: 12px; }
+
+/* --- hex dump --- */
+.hex-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 11px; }
+.hexview {
+  max-height: 420px; overflow: auto; background: var(--bg-base);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  padding: 12px; margin: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
+}
+.hexrow { white-space: pre; }
+
+/* --- assembly viewer --- */
+.asmbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.asmbar .fwrap { display: flex; gap: 8px; align-items: center; }
+.asmbar input[type="text"] { width: auto; }
+.asmbar .fsrch { width: 190px; }
+.asm-lbl { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; }
+.asm-cats, .asm-blknav { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.asm-cats .fbtn, .asm-blknav .fbtn { padding: 4px 11px; font-size: 11px; border-radius: 999px; }
+.asm-flex { display: flex; gap: 10px; align-items: stretch; }
+.asm-flex #asm {
+  flex: 1; min-width: 0; height: 64vh; overflow: auto; background: var(--bg-base);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: 12px; line-height: 26px;
+}
+/* Row height is load-bearing: the listing is virtualised against a fixed
+   ROW constant in the viewer, so every row kind has to be exactly 28px or the
+   rendered slice drifts away from the scroll position. */
+.asmrow {
+  display: grid; grid-template-columns: 4px 92px 120px 26px minmax(0, 1fr) 44px;
+  gap: 10px; align-items: center; min-height: 28px; height: 28px; padding: 0 12px;
+  white-space: pre; box-sizing: border-box; transition: background 0.15s;
+}
+.asmrow:hover { background: var(--bg-elevated); }
+.asmrow.head {
+  display: block; height: 28px; line-height: 28px; background: var(--primary-glow);
+  color: var(--accent-cyan); border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle); font-weight: 600; padding: 0 12px;
+}
+.asmrow.blk {
+  display: block; height: 28px; line-height: 28px; position: sticky; top: 0; z-index: 2;
+  background: rgba(139, 92, 246, 0.08); border-left: 2px solid var(--status-purple);
+  color: #c4b5fd; font-size: 12px; padding: 0 12px;
+  border-top: 1px solid rgba(139, 92, 246, 0.18); border-bottom: 1px solid rgba(139, 92, 246, 0.12);
+}
+.asmrow.blk em { color: var(--text-dim); font-style: normal; font-size: 11px; }
+.catbar { display: block; width: 3px; border-radius: 2px; align-self: stretch; margin: 1px 0; opacity: 0.85; }
+.c-ctrl { background: var(--c-ctrl); } .c-call { background: var(--c-call); }
+.c-ret { background: var(--c-ret); }   .c-data { background: var(--c-data); }
+.c-arith { background: var(--c-arith); } .c-cmp { background: var(--c-cmp); }
+.c-stack { background: var(--c-stack); } .c-simd { background: var(--c-simd); }
+.c-nop { background: var(--c-nop); }    .c-misc { background: var(--c-misc); }
+.adr { color: var(--text-dim); white-space: nowrap; }
+.byt { color: #3f587f; }
+.blkcol { color: var(--text-dim); font-size: 11px; text-align: right; }
+.mn { color: #dce7f5; overflow: hidden; text-overflow: ellipsis; }
+.lenbar { position: relative; height: 5px; background: var(--bg-elevated); border-radius: 3px; align-self: center; }
+.lenbar i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--primary), var(--accent-cyan)); }
+.op-mn { font-weight: 600; }
+.op-reg { color: #8fb3e0; }  .op-imm { color: var(--yellow); }
+.op-num { color: #f0b46b; }  .op-sym { color: var(--green); }
+.op-sz { color: var(--text-muted); } .op-brk { color: var(--text-dim); }
+.mn mark { background: rgba(251, 191, 36, 0.3); color: #fff2cc; border-radius: 2px; padding: 0 1px; }
+.t-call { color: var(--cyan); } .t-jmp, .t-cjmp, .t-ujmp { color: var(--orange); }
+.t-ret { color: var(--red); } .t-mov, .t-lea { color: #7aa2ff; }
+.t-cmp, .t-test { color: var(--pink); }
+.t-arith, .t-add, .t-sub, .t-xor, .t-and, .t-or, .t-inc, .t-dec { color: #6ee7b7; }
+.t-stack, .t-push, .t-pop, .t-leave, .t-enter { color: #c4b5fd; }
+.t-simd { color: #d8b4fe; } .t-nop { color: var(--text-dim); }
+.t-trap, .t-int { color: var(--red); font-weight: 600; }
+.tgt { color: var(--status-purple); cursor: pointer; text-decoration: underline dotted; }
+.tgt:hover { color: #fff; }
+.imp-call { color: var(--red); font-weight: 600; }
+.asm-empty { padding: 26px 18px; text-align: center; color: var(--text-dim); font-family: var(--font-mono); font-size: 13px; }
+.asm-empty b { color: var(--text-main); } .asm-empty code { color: var(--yellow); }
+.asm-stats { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+.asm-stats b { color: var(--text-main); }
+.asm-stack { display: flex; height: 9px; border-radius: 5px; overflow: hidden; background: var(--bg-elevated); min-width: 200px; flex: 1; }
+.asm-stack i { display: block; height: 100%; }
+.asm-legend { display: flex; gap: 11px; flex-wrap: wrap; font-size: 10.5px; color: var(--text-dim); font-family: var(--font-mono); margin-bottom: 10px; }
+.asm-legend span { display: flex; align-items: center; gap: 5px; }
+.asm-legend b { width: 8px; height: 8px; border-radius: 2px; display: block; }
+.asm-mn { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); align-items: center; }
+.asm-mn div { display: flex; align-items: center; gap: 6px; }
+.asm-mn .b { height: 6px; background: linear-gradient(90deg, var(--primary), var(--accent-cyan)); border-radius: 3px; }
+.asm-mapwrap {
+  position: relative; width: 30px; flex: 0 0 30px; height: 64vh;
+  background: var(--bg-surface); border: 1px solid var(--border-subtle);
+  border-radius: 6px; overflow: hidden; cursor: pointer;
+}
+.asm-mapwrap i { position: absolute; left: 0; right: 0; opacity: 0.9; }
+.asm-win { position: absolute; left: 0; right: 0; border: 1px solid var(--accent-cyan); background: rgba(6, 182, 212, 0.16); pointer-events: none; }
+
+/* --- call graph --- */
+.cg-ctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.cg-ctl select { width: auto; min-width: 190px; }
+.cg-ctl input[type="text"] { width: 190px; }
+.cg-ctl label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); cursor: pointer; }
+.cg-ctl input[type="range"] { width: 110px; accent-color: var(--primary); }
+.cg-ctl .sep { width: 1px; height: 20px; background: var(--border-subtle); margin: 0 2px; }
+svg.graph {
+  display: block; width: 100%; background: var(--bg-base);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  cursor: grab;
+}
+svg.graph:active { cursor: grabbing; }
+.cg-node { cursor: pointer; }
+.cg-node rect { fill: var(--bg-overlay); stroke: #35507f; stroke-width: 1; rx: 5; }
+.cg-node text { font-family: var(--font-mono); font-size: 11px; fill: #c8d8ee; pointer-events: none; }
+.cg-node.entry rect { stroke: var(--green); stroke-width: 1.7; }
+.cg-node.hot rect { stroke: var(--orange); }
+.cg-node.hit rect { stroke: var(--yellow); stroke-width: 2; }
+.cg-node.dim { opacity: 0.14; }
+.cg-line { fill: none; stroke: #2c3f5e; stroke-width: 1; opacity: 0.5; }
+.cg-line.dim { opacity: 0.05; }
+.cg-line.hot { stroke: var(--accent-cyan); stroke-width: 1.8; opacity: 1; }
+.cg-note { font-size: 12px; color: var(--text-dim); margin-top: 8px; font-family: var(--font-mono); }
+
+/* --- threat map: geo + info graph --- */
+.geo-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+.geo-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.geo-panel { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px 14px; overflow: auto; max-height: 270px; }
+.geo-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border-subtle); font-size: 11px; cursor: pointer; font-family: var(--font-mono); }
+.geo-row:last-child { border-bottom: none; }
+.geo-row:hover { background: var(--bg-elevated); }
+.geo-row .cc { font-weight: 700; color: var(--accent-cyan); width: 24px; flex-shrink: 0; }
+.geo-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-main); }
+.geo-row .ct { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.geo-row .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+svg.geo { display: block; width: 100%; background: radial-gradient(ellipse at 50% 42%, #111d31 0%, var(--bg-base) 72%); }
+.geo-sphere { fill: transparent; stroke: var(--border-strong); stroke-width: 0.8; }
+.geo-grat { fill: none; stroke: var(--border-strong); stroke-width: 0.35; opacity: 0.4; }
+.geo-country { fill: #263a5c; stroke: var(--border-strong); stroke-width: 0.5; cursor: pointer; transition: fill 0.15s; }
+.geo-country:hover { fill: rgba(56, 189, 248, 0.45); }
+.geo-country.has-ioc { fill: #3a547e; }
+.geo-country.sel { fill: rgba(6, 182, 212, 0.38); stroke: var(--accent-cyan); stroke-width: 1; }
+.geo-bub { cursor: pointer; transition: opacity 0.15s; }
+.geo-bub circle.core { stroke: rgba(255, 255, 255, 0.6); stroke-width: 1; }
+.geo-bub text { font-family: var(--font-mono); font-size: 11px; font-weight: 700; fill: #e6eefb; text-anchor: middle; pointer-events: none; }
+.geo-bub .ring { fill: none; stroke-width: 1.2; opacity: 0.55; }
+.geo-bub .pulse { fill: none; stroke-width: 1.4; transform-box: fill-box; transform-origin: center; animation: geoPulse 2.6s ease-out infinite; }
+.geo-bub.dim { opacity: 0.16; }
+.geo-arc { fill: none; stroke: var(--orange); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.5; }
+.geo-arc.hot { stroke: var(--red); stroke-width: 1.8; opacity: 0.95; }
+.geo-cclbl { font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; fill: var(--accent-cyan); text-anchor: middle; pointer-events: none; }
+@keyframes geoPulse { 0% { transform: scale(0.55); opacity: 0.75; } 100% { transform: scale(2.4); opacity: 0; } }
+.geo-hint { font-size: 11px; color: var(--text-dim); margin-top: 10px; }
+.gnode { cursor: pointer; transition: opacity 0.15s; }
+.gnode circle.core { stroke: rgba(255, 255, 255, 0.8); stroke-width: 1.5; }
+.gnode:hover circle.core { stroke: #fff; stroke-width: 3; }
+.gnode.dimmed { opacity: 0.12; }
+.gnode .node-label { font-size: 11px; font-weight: 600; fill: #dbe8f8; }
+.gnode .node-sub { font-size: 10px; fill: #7f99ba; }
+.gnode rect.info-box { fill: var(--bg-elevated); stroke: #42638f; stroke-width: 1.2; rx: 7; }
+.gnode:hover rect.info-box { fill: var(--bg-overlay); stroke: var(--accent-cyan); stroke-width: 2; }
+.gnode.info-node .node-label { fill: #dbe8f8; }
+.gnode.info-node .node-sub { fill: #7f99ba; }
+.gnode.info-node .core { stroke: #dbe8f8; stroke-width: 1; }
+.gedge { stroke: #42638f; stroke-width: 1.4; opacity: 0.48; fill: none; }
+.gedge.highlighted { stroke: var(--accent-cyan); stroke-width: 2.4; opacity: 1; }
+.gedge.dimmed { opacity: 0.06; }
+.graph-empty { fill: var(--text-dim); font-family: var(--font-mono); font-size: 15px; text-anchor: middle; }
+
+/* --- ATT&CK / STIX --- */
+.sx-matrix { display: grid; gap: 9px; grid-auto-flow: column; grid-auto-columns: minmax(178px, 1fr); overflow-x: auto; padding-bottom: 6px; }
+.sx-tac { background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 9px; }
+.sx-tac h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 0 0 7px; display: flex; justify-content: space-between; gap: 6px; }
+.sx-tac h4 b { color: var(--primary); }
+.sx-tech {
+  display: block; width: 100%; text-align: left; margin-bottom: 4px; padding: 5px 7px;
+  font-size: 12px; cursor: pointer; font-family: var(--font-mono);
+  background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.32);
+  border-radius: 6px; color: var(--text-main); transition: all 0.15s;
+}
+.sx-tech:hover { background: rgba(245, 158, 11, 0.2); border-color: var(--orange); }
+.sx-tech code { color: var(--orange); font-weight: 700; margin-right: 4px; }
+.sx-toolbar { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.sx-toolbar input { width: auto; min-width: 200px; }
+.sx-graph { background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); overflow: hidden; }
+.sx-graph svg { display: block; width: 100%; height: 620px; cursor: grab; }
+.sx-graph svg:active { cursor: grabbing; }
+.sx-node circle { stroke: var(--bg-base); stroke-width: 1.5px; cursor: pointer; }
+.sx-node text { font-size: 10.5px; fill: var(--text-main); pointer-events: none; }
+.sx-node.dim { opacity: 0.15; }
+.sx-node.hit circle { stroke: var(--yellow); stroke-width: 2.5px; }
+.sx-link { stroke: var(--border-strong); stroke-width: 1.1px; fill: none; }
+.sx-linklabel { font-size: 9.5px; fill: var(--text-dim); text-anchor: middle; pointer-events: none; font-family: var(--font-mono); }
+.sx-note { color: var(--text-dim); font-size: 11px; margin-top: 9px; line-height: 1.6; }
+
+/* --- procedures & tooling (ATT&CK facet view) --- */
+.tk-wrap { display: grid; gap: 10px; }
+.tk-filters { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 9px 11px; }
+.tk-filters input[type="search"] { flex: 1; min-width: 190px; }
+.tk-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.tk-chip {
+  padding: 4px 10px; border-radius: 999px; font-size: 11px; cursor: pointer; user-select: none;
+  background: var(--bg-surface); border: 1px solid var(--border-subtle); color: var(--text-dim);
+  font-weight: 600; transition: all 0.15s;
+}
+.tk-chip:hover { border-color: var(--primary); color: var(--text-main); }
+.tk-chip.on { background: rgba(16, 185, 129, 0.13); border-color: rgba(16, 185, 129, 0.5); color: var(--status-clean); }
+.tk-chip.tk-malware.on { background: rgba(244, 63, 94, 0.13); border-color: rgba(244, 63, 94, 0.5); color: var(--status-malicious); }
+.tk-chip.tk-groups.on { background: rgba(251, 191, 36, 0.14); border-color: rgba(251, 191, 36, 0.5); color: var(--yellow); }
+.tk-chip.tk-detect.on { background: rgba(122, 162, 247, 0.15); border-color: rgba(122, 162, 247, 0.5); color: #7aa2f7; }
+.tk-reset { margin-left: auto; padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; background: transparent; border: 1px solid var(--border-subtle); color: var(--text-dim); }
+.tk-reset:hover { border-color: var(--red); color: var(--red); }
+.tk-count { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.tk-tac { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-elevated); overflow: hidden; }
+.tk-tachead { display: flex; align-items: center; gap: 9px; padding: 8px 11px; cursor: pointer; background: var(--bg-surface); }
+.tk-tachead:hover { border-color: var(--primary); }
+.tk-tacname { font-size: 12px; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase; letter-spacing: 0.04em; }
+.tk-tacmeta { font-size: 11px; color: var(--text-dim); margin-left: auto; white-space: nowrap; }
+.tk-caret { color: var(--text-dim); font-size: 10px; transition: transform 0.2s; }
+.tk-tac.open .tk-caret { transform: rotate(90deg); }
+.tk-tacbody { display: none; padding: 9px 11px 11px; gap: 7px; flex-direction: column; }
+.tk-tac.open .tk-tacbody { display: flex; }
+.tk-proc { border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg-surface); padding: 9px 11px; }
+.tk-prochead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.tk-pid { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--orange); }
+.tk-pname { font-size: 13px; font-weight: 600; }
+.tk-sub { font-size: 10px; background: rgba(139, 92, 246, 0.14); border: 1px solid rgba(139, 92, 246, 0.4); color: #a78bfa; padding: 1px 6px; border-radius: 999px; }
+.tk-hits { font-size: 10.5px; background: rgba(251, 191, 36, 0.14); border: 1px solid rgba(251, 191, 36, 0.4); color: var(--yellow); padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
+.tk-row { display: flex; gap: 7px; align-items: baseline; font-size: 12px; margin-top: 5px; line-height: 1.5; }
+.tk-lbl { flex: 0 0 60px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); font-weight: 700; }
+.tk-lbl.tools { color: var(--green); } .tk-lbl.malware { color: var(--red); }
+.tk-lbl.groups { color: var(--yellow); } .tk-lbl.detect { color: #7aa2f7; }
+.tk-vals { display: flex; flex-wrap: wrap; gap: 4px; }
+.tk-val { font-size: 11.5px; padding: 1px 7px; border-radius: 5px; background: var(--bg-elevated); border: 1px solid var(--border-subtle); }
+.tk-val.tools { color: var(--green); border-color: rgba(16, 185, 129, 0.35); }
+.tk-val.malware { color: var(--red); border-color: rgba(244, 63, 94, 0.35); }
+.tk-val.groups { color: var(--yellow); border-color: rgba(251, 191, 36, 0.35); }
+.tk-val.id { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-dim); }
+.tk-more { font-size: 11px; color: var(--text-dim); font-style: italic; }
+.tk-det { font-size: 11.5px; color: var(--text-main); line-height: 1.55; background: rgba(122, 162, 247, 0.06); border-left: 2px solid rgba(122, 162, 247, 0.45); padding: 5px 9px; border-radius: 0 6px 6px 0; }
+.tk-detname { font-size: 11px; color: #7aa2f7; font-weight: 600; display: block; margin-bottom: 2px; }
+.tk-none { font-size: 11.5px; color: var(--text-dim); font-style: italic; }
+.tk-empty { padding: 26px; text-align: center; color: var(--text-dim); font-size: 13px; }
+
+/* --- D3FEND --- */
+.d3f-tech { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 7px; padding: 7px 8px; margin-bottom: 6px; }
+.d3f-tech h5 { font-size: 12.5px; font-family: var(--font-mono); color: var(--text-main); margin: 0 0 5px; font-weight: 600; }
+.d3f-tech h5 code { color: var(--orange); font-weight: 700; margin-right: 5px; }
+.d3f-tech h5 span { color: var(--text-dim); font-weight: 400; }
+.d3f-chip {
+  display: inline-flex; align-items: baseline; gap: 5px; background: rgba(6, 182, 212, 0.08);
+  border: 1px solid rgba(6, 182, 212, 0.3); border-radius: 999px; padding: 3px 9px; margin: 0 5px 5px 0;
+  font-size: 11.5px; color: var(--text-main);
+}
+.d3f-chip b { color: var(--accent-cyan); font-family: var(--font-mono); font-weight: 700; }
+.d3f-chip i { font-style: normal; color: var(--text-dim); font-size: 10.5px; }
+.d3f-chip .d3f-rel { color: var(--text-dim); font-size: 10.5px; }
+.d3f-chip .d3f-rel em { font-style: normal; color: var(--green); }
+.d3f-none { font-size: 11.5px; color: var(--text-dim); font-style: italic; }
+
+/* --- CAR analytics --- */
+.car-bar-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+.car-bar-row .cbl { flex: 0 0 128px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.car-bar-row .cbar { flex: 1; height: 8px; background: var(--bg-elevated); border-radius: 999px; overflow: hidden; }
+.car-bar-row .cbar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--primary), var(--accent-cyan)); }
+.car-bar-row .cbar.gap i { background: linear-gradient(90deg, var(--status-suspicious), var(--status-malicious)); }
+.car-bar-row .cnum { flex: 0 0 40px; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); text-align: right; }
+.car-analytic { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 7px; padding: 8px 10px; margin-bottom: 6px; }
+.car-analytic h5 { margin: 0 0 4px; font-size: 12.5px; display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.car-analytic h5 b { font-family: var(--font-mono); color: var(--accent-cyan); font-weight: 700; }
+.car-analytic h5 .lv { font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid; text-transform: uppercase; letter-spacing: 0.04em; }
+.lv-h { color: #fda4af; border-color: rgba(244, 63, 94, 0.45); background: rgba(244, 63, 94, 0.1); }
+.lv-m { color: #fcd34d; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.1); }
+.lv-l { color: #6ee7b7; border-color: rgba(16, 185, 129, 0.45); background: rgba(16, 185, 129, 0.1); }
+.lv-n { color: var(--text-dim); border-color: var(--border-strong); }
+.car-analytic p { margin: 0; font-size: 11.5px; color: var(--text-muted); line-height: 1.5; }
+.car-analytic .plats { margin-top: 5px; }
+.car-lvl { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+
+/* --- detail drawer --- */
+#detailHead .dt-badge { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid; white-space: nowrap; margin-top: 3px; flex-shrink: 0; }
+#detailBody .dt-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+#detailBody .dt-chip { padding: 3px 8px; border-radius: 6px; background: var(--bg-elevated); border: 1px solid var(--border-subtle); font-size: 11px; font-family: var(--font-mono); color: var(--text-main); }
+#detailBody .dt-chip.flag { border-color: rgba(244, 63, 94, 0.45); color: var(--status-malicious); background: rgba(244, 63, 94, 0.08); }
+#detailBody .dt-empty { color: var(--text-dim); font-style: italic; padding: 8px 0; }
+#detailBody .dt-list { margin: 0; padding: 0; list-style: none; }
+#detailBody .dt-list li { padding: 6px 0; border-bottom: 1px solid var(--border-subtle); font-size: 12px; }
+#detailBody .dt-list li:last-child { border-bottom: none; }
+#detailBody .dt-list .li-main { font-family: var(--font-mono); color: var(--accent-cyan); font-size: 12px; word-break: break-all; }
+#detailBody .dt-list .li-sub { color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+#detailBody .dt-desc { color: var(--text-main); background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 7px; padding: 10px 12px; font-size: 12px; line-height: 1.55; margin-top: 6px; }
+#detailBody .dt-attacks { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+#detailBody .dt-attacks span { background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.3); color: var(--status-malicious); padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+#detailBody code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-elevated); padding: 1px 5px; border-radius: 4px; color: var(--accent-cyan); word-break: break-all; }
+
+@media (max-width: 860px) {
+  .geo-wrap { grid-template-columns: 1fr; }
+  .asmbar { flex-direction: column; align-items: stretch; }
+  .asmbar .fwrap { flex-wrap: wrap; }
+  .asm-flex { flex-direction: column; }
+  .asm-mapwrap { width: 100%; flex: 0 0 26px; height: 26px; }
+  .asmrow { grid-template-columns: 4px 72px 90px 22px minmax(0, 1fr); font-size: 11px; gap: 6px; }
+  .asmrow .lenbar { display: none; }
+  .tk-lbl { flex-basis: 100%; }
+  .tk-reset { margin-left: 0; }
+  .car-bar-row .cbl { flex-basis: 84px; }
+}</style>
 </head>
 <body>
 <header>
-  <h1>{{ payload.fileinfo.filename or payload.meta.stem }}</h1>
-  <span class="badge {{ payload.verdict.label }}">{{ payload.verdict.label }}</span>
-  <span class="sha" id="shaEl" title="{{ payload.hash.sha256 or '' }}">{{ payload.hash.sha256 or '' }}</span>
-  <div class="score">{{ payload.verdict.score }}<small>THREAT SCORE</small></div>
-  <button class="hbtn" id="themeBtn" title="Toggle theme">🌓</button>
-  <button class="hbtn" id="topBtn" title="Scroll to top">⬆</button>
+  <div class="header-brand">
+    <h1>{{ payload.fileinfo.filename or payload.meta.stem }}</h1>
+    <span class="badge {{ payload.verdict.label }}">{{ payload.verdict.label }}</span>
+    <span class="sha" id="shaEl" title="{{ payload.hash.sha256 or '' }}">{{ payload.hash.sha256 or '' }}</span>
+  </div>
+  <div class="header-actions">
+    <div class="score-box">
+      <div class="num">{{ payload.verdict.score }}</div>
+      <div class="label">Threat Score</div>
+    </div>
+    <div class="mono" style="font-size:11px;color:var(--text-dim)">{{ payload.meta.generated_at or '—' }}</div>
+    <button class="hbtn" id="themeBtn" title="Toggle theme">🌓</button>
+    <button class="hbtn" id="topBtn" title="Scroll to top">⬆</button>
+  </div>
 </header>
 
 <nav>
   <button class="on" data-t="overview">Overview</button>
   <button data-t="threat">Threat Map</button>
   <button data-t="stix">ATT&amp;CK / STIX</button>
+  <button data-t="d3fend">D3FEND</button>
+  <button data-t="car">CAR Analytics</button>
   <button data-t="sections">Sections</button>
   <button data-t="imports">Imports</button>
   <button data-t="exports">Exports</button>
@@ -534,11 +610,10 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
 
 <main>
 <section id="overview" class="on">
-  <div class="pi">Section <span>Overview</span> / {{ payload.meta.stem }}</div>
   <div class="stats-row" id="ovStats"></div>
   <div class="grid g2">
     <div class="card">
-      <h3>File</h3>
+      <h3>File Metadata</h3>
       <div class="kv"><span>Name</span><span>{{ payload.fileinfo.filename or '—' }}</span></div>
       <div class="kv"><span>Size</span><span>{{ payload.fileinfo.size_human or '—' }}</span></div>
       <div class="kv"><span>Magic</span><span>{{ payload.fileinfo.file_magic or '—' }}</span></div>
@@ -548,14 +623,38 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
       <div class="kv"><span>TLSH</span><span>{{ payload.hash.tlsh or '—' }}</span></div>
     </div>
     <div class="card">
-      <h3>Analysis</h3>
+      <h3>Analysis Highlights</h3>
       <div class="kv"><span>Sections</span><span>{{ payload.extraction.summary.num_sections or 0 }}</span></div>
       <div class="kv"><span>Strings</span><span>{{ payload.extraction.summary.num_strings or 0 }}</span></div>
       <div class="kv"><span>Instructions</span><span>{{ payload.extraction.summary.total_instructions or 0 }}</span></div>
       <div class="kv"><span>Functions (r2)</span><span>{{ payload.radare2.counts.functions or 0 }}</span></div>
       <div class="kv"><span>Capa capabilities</span><span>{{ payload.capa.counts.capabilities or 0 }}</span></div>
       <div class="kv"><span>Packed</span><span>{{ 'yes' if payload.verdict.packed else 'no' }}</span></div>
+      <div class="kv"><span>Detect It Easy</span><span>{% if payload.die and payload.die.available %}{{ payload.die.summary }}{% else %}not scanned{% endif %}</span></div>
       <div class="kv"><span>MalAPI hits</span><span>{{ payload.malapi|length }}</span></div>
+    </div>
+    <div class="card">
+      <h3>MITRE ATT&amp;CK</h3>
+      {% set aids = payload.capa.attack_ids or [] %}
+      {% set am = (((payload.cti or {}).get('attack_matrix')) or {}) %}
+      {% set amtactics = am.get('tactics') or [] %}
+      {% set amtot = am.get('totals') or {} %}
+      {% if aids or amtactics %}
+      <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px;">
+        <span class="mono" style="font-size:32px;font-weight:800;color:var(--primary)">{{ aids|length }}</span>
+        <span style="font-size:12px;color:var(--text-muted);text-transform:uppercase">techniques matched</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+        {% for t in amtactics[:8] %}
+        <span class="chip purple" title="{{ t.name }}">{{ t.name }} <b>{{ (t.procedures or [])|length }}</b></span>
+        {% endfor %}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        {% for a in aids[:12] %}<span class="chip red">{{ a }}</span>{% endfor %}
+      </div>
+      {% else %}
+      <div style="color:var(--text-dim);font-size:13px;">No ATT&amp;CK techniques identified.</div>
+      {% endif %}
     </div>
     <div class="card">
       <h3>Mitigations / Signature</h3>
@@ -577,237 +676,153 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
     <div class="card">
       <h3>Top Opcodes</h3>
       <table>
-        <tr><th>opcode</th><th>count</th><th>share</th></tr>
+        <tr><th>Opcode</th><th>Count</th><th>Share</th></tr>
         {% for o in (payload.extraction.opcodes.top_10 or []) %}
-        <tr><td class="mono">{{ o.opcode }}</td><td class="mono">{{ o.count }}</td>
-            <td><div class="bar"><i style="width:{{ '%.1f'|format((o.percent or 0) * 4) }}%"></i></div></td></tr>
+        <tr>
+          <td class="mono">{{ o.opcode }}</td>
+          <td class="mono">{{ o.count }}</td>
+          <td><div class="bar"><i style="width:{{ '%.1f'|format(o.percent or 0) }}%"></i></div></td>
+        </tr>
         {% endfor %}
       </table>
     </div>
   </div>
 </section>
 
-<section id="ml">
-  <div class="pi">Section <span>ML Score</span> / EMBER2024</div>
-  <div class="stats-row" id="mlStats"></div>
-  {% set ml = payload.ml or {} %}
-  {% if not ml or not ml.ok %}
-  <div class="card">
-    <h3>Model Verdict</h3>
-    {% if ml and ml.error %}
-    <div class="kv"><span>Status</span><span>{{ ml.error }}{% if ml.detail %} — {{ ml.detail }}{% endif %}</span></div>
-    {% else %}
-    <div class="dt-empty">ML scoring was skipped for this sample (no scoring service, or ML_SKIP set). The static analysis above is unaffected.</div>
-    {% endif %}
-    {% if ml and ml.verdict_note %}
-    <div class="kv"><span>Note</span><span>{{ ml.verdict_note }}</span></div>
-    {% endif %}
-  </div>
-  {% else %}
-  <div class="grid2">
-    <div class="card">
-      <h3>Model Verdict</h3>
-      {% set lvl = (ml.threat_level or '') %}
-      {% set lvl_colors = {'low':'#2ee6a8','moderate':'#ffd166','high':'#ff4d5e','critical':'#ff4d5e','n/a':'#6b7f9e'} %}
-      <div class="kv"><span>Threat level</span><span class="mono" style="color:{{ lvl_colors.get(lvl, '#6b7f9e') }}">{{ lvl or '—' }}</span></div>
-      <div class="kv"><span>Verdict</span><span>{{ ml.verdict or '—' }}</span></div>
-      <div class="kv"><span>P(malicious)</span><span class="mono">{{ '%.6f'|format(ml.malicious_probability or 0) }}</span></div>
-      {% if ml.threshold_margin is defined and ml.threshold_margin is not none %}
-      <div class="kv"><span>vs threshold</span><span class="mono">{{ '%+.4f'|format(ml.threshold_margin) }} (p − t)</span></div>
-      {% endif %}
-      <div class="kv"><span>Threshold</span><span class="mono">{{ ml.threshold }}</span></div>
-      <div class="kv"><span>PE input</span><span>{{ 'yes' if ml.is_pe else 'no' }}</span></div>
-      <div class="kv"><span>Uncalibrated</span><span>yes — banded verdict only, not a confidence</span></div>
-      {% if ml.verdict_note %}
-      <div class="kv"><span>Note</span><span>{{ ml.verdict_note }}</span></div>
-      {% endif %}
-    </div>
-    <div class="card">
-      <h3>Model</h3>
-      <div class="kv"><span>File</span><span class="mono">{{ ml.model or '—' }}</span></div>
-      <div class="kv"><span>SHA-256</span><span class="mono">{{ (ml.model_sha256 or '')[:16] }}…</span></div>
-      <div class="kv"><span>Trees</span><span>{{ ml.trees or 0 }}</span></div>
-      <div class="kv"><span>Features</span><span>{{ ml.features or 0 }}</span></div>
-      <div class="kv"><span>Source</span><span>{{ ml.feature_source or '—' }}</span></div>
-      <div class="kv"><span>Bytes scored</span><span>{{ ml.bytes or 0 }}</span></div>
-    </div>
+{% macro fam_cls(c) -%}
+{%- set c = (c or '')|lower -%}
+{%- if c in ('trojan','ransomware','worm','virus','malware','backdoor') -%}red
+{%- elif c in ('rat','spyware','keylogger','infrastructure','c2','botnet','loader','stealer') -%}orange
+{%- elif c in ('tool','miner','ddos','adware','pup','hacktool') -%}yellow
+{%- elif c == 'exploit' -%}purple
+{%- else -%}green
+{%- endif -%}
+{%- endmacro %}
+
+<section id="iocs">
+  {% set ioc = payload.ioc or {} %}
+  {% set domains = ioc.domains or [] %}
+  {% set ips = ioc.ips or [] %}
+  {% set urls = ioc.urls or [] %}
+  {% set emails = ioc.emails or [] %}
+  {% set dnsrec = ioc.dns or [] %}
+  {% set hashes = ioc.hashes or [] %}
+  {% set families = ioc.family_hits or [] %}
+  {% set encoded = ioc.encoded_flags or [] %}
+  {% set strings = ioc.string_indicators or [] %}
+  {% set net_total = domains|length + ips|length + urls|length + emails|length + dnsrec|length %}
+  {% set grand = net_total + hashes|length %}
+  {% macro val_of(it) %}{{ it.value if it is mapping else it }}{% endmacro %}
+  <div class="stats-row">
+    <div class="stat-card"><div class="sl">Total Indicators</div><div class="sv">{{ grand }}</div></div>
+    <div class="stat-card"><div class="sl">Domains</div><div class="sv">{{ domains|length }}</div></div>
+    <div class="stat-card"><div class="sl">IPs</div><div class="sv">{{ ips|length }}</div></div>
+    <div class="stat-card"><div class="sl">URLs</div><div class="sv">{{ urls|length }}</div></div>
+    <div class="stat-card"><div class="sl">Hashes</div><div class="sv">{{ hashes|length }}</div></div>
+    <div class="stat-card"><div class="sl">Families</div><div class="sv">{{ families|length }}</div></div>
   </div>
 
-  <div class="chart-row">
-    <div class="chart-box">
-      <h3>P(malicious) vs threshold</h3>
-      <div id="mlGauge"></div>
-      <div class="dt-desc">Threshold {{ ml.threshold }} · verdict {{ ml.verdict or '—' }} · threat
-        {{ lvl or '—' }} — the probability is uncalibrated, so the level is a band around
-        the threshold, not a confidence.</div>
+  <div class="card" style="margin-bottom:16px;">
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;">
+      <input type="search" id="iocSearch" class="search" placeholder="Filter indicators, domains, IPs, hashes…">
+      <button class="fbtn" id="iocCopyAll">Copy Visible</button>
+      <button class="fbtn" id="iocReset">Reset</button>
     </div>
-    <div class="chart-box">
-      <h3>SHAP by group (log-odds)</h3>
-      <div id="mlGroups"></div>
-      <div class="dt-desc">Red pushes towards malicious, green towards benign; the bar is the summed SHAP of the group.</div>
-    </div>
-  </div>
-  <div class="chart-row single">
-    <div class="chart-box">
-      <h3>Top Features (SHAP log-odds)</h3>
-      <div id="mlFeatures"></div>
-      <div class="dt-desc">Each feature's own contribution to the log-odds, in feature-index order.</div>
-    </div>
-  </div>
-
-  {% set expl = ml.explanation or {} %}
-  {% if expl and expl.group_rollup %}
-  <div class="card">
-    <h3>Group Attribution (SHAP log-odds)</h3>
-    <table>
-      <tr><th>group</th><th>shap</th><th>in analyzer</th></tr>
-      {% for g in expl.group_rollup %}
-      <tr><td class="mono">{{ g.group }}</td><td class="mono">{{ '%.4f'|format(g.shap_log_odds or 0) }}</td>
-          <td>{{ 'yes' if g.analyzer_implemented else 'no' }}</td></tr>
+    <div style="display:flex;gap:6px;flex-wrap:wrap" id="iocKinds">
+      <span class="chip on ioc-kind-chip" data-kind="all">All <b>{{ grand + families|length + encoded|length + strings|length }}</b></span>
+      {% for k, label, n in [('domain', 'Domains', domains|length), ('ip', 'IPs', ips|length), ('url', 'URLs', urls|length), ('email', 'E-mails', emails|length), ('hash', 'Hashes', hashes|length), ('family', 'Families', families|length)] %}
+      <span class="chip ioc-kind-chip" data-kind="{{ k }}">{{ label }} <b>{{ n }}</b></span>
       {% endfor %}
-    </table>
-    <div class="dt-desc">Base {{ '%.4f'|format(expl.base_log_odds or 0) }} + ΣSHAP {{ '%.4f'|format(expl.sum_shap or 0) }} = prediction {{ '%.4f'|format(expl.prediction_log_odds or 0) }} (consistency error {{ expl.consistency_error or 0 }}).</div>
+    </div>
   </div>
-  {% endif %}
-  {% if expl and expl.top_features %}
-  <div class="card">
-    <h3>Top Features (SHAP)</h3>
-    <table>
-      <tr><th>#</th><th>group</th><th>label / evidence</th><th>direction</th><th>shap</th></tr>
-      {% for f in expl.top_features %}
-      <tr><td class="mono">{{ f.feature_index }}</td><td class="mono">{{ f.group }}</td>
-          <td class="mono">{{ f.label or f.evidence or '—' }}</td>
-          <td>{{ f.direction or '—' }}</td>
-          <td class="mono">{{ '%.4f'|format(f.shap_log_odds or 0) }}</td></tr>
+
+  <div class="card" data-ioc-card="net">
+    <h3>Network &amp; Communication Indicators ({{ net_total }})</h3>
+    {% for kind, items in [('domain', domains), ('ip', ips), ('url', urls), ('email', emails), ('dns', dnsrec)] %}
+    {% for it in items %}
+    {% set v = val_of(it) %}
+    <div class="ioc-row" data-kind="{{ kind }}" data-key="{{ (v ~ ' ' ~ kind)|lower|e }}">
+      <span class="ioc-kind ioc-k-{{ kind }}">{{ kind }}</span>
+      <span class="ioc-val">{{ v }}</span>
+      <button class="copy-btn" data-copy-val="{{ v|e }}">Copy</button>
+    </div>
+    {% endfor %}
+    {% endfor %}
+  </div>
+
+  <div class="grid g2" style="margin-top:16px;">
+    <div class="card" data-ioc-card="hash">
+      <h3>Hashes ({{ hashes|length }})</h3>
+      {% for it in hashes %}
+      {% set v = val_of(it) %}
+      <div class="ioc-row" data-kind="hash" data-key="{{ ((it.type or '') ~ ' ' ~ v)|lower|e }}">
+        <span class="ioc-kind ioc-k-hash">{{ it.type or 'hash' }}</span>
+        <span class="ioc-val">{{ v }}</span>
+        <button class="copy-btn" data-copy-val="{{ v|e }}">Copy</button>
+      </div>
       {% endfor %}
-    </table>
-  </div>
-  {% endif %}
-  {% endif %}
-</section>
-
-<section id="tooling">
-  <div class="pi">Section <span>External Tooling</span></div>
-  <div class="stats-row" id="toolStats"></div>
-
-  <div class="grid2">
-    {% set yara = payload.extraction.yara or {} %}
-    <div class="card">
-      <h3>YARA</h3>
-      {% if not yara or not yara.attempted %}
-      <div class="dt-empty">YARA was not run for this sample.</div>
-      {% elif not yara.available %}
-      <div class="dt-empty">YARA unavailable &mdash; WSL or the scanner could not be started.</div>
-      {% else %}
-      <div class="kv"><span>Status</span>
-        <span style="color:{{ 'var(--green)' if yara.rules_matched else 'var(--dim)' }}">
-          {{ ('%d match(es)'|format(yara.rules_matched or 0)) if yara.rules_matched else 'no matches' }}
-        </span></div>
-      <div class="kv"><span>Rules loaded</span>
-        <span class="mono">{{ yara.rule_files_loaded or 0 }} / {{ yara.rule_files_found or 0 }}</span></div>
-      <div class="kv"><span>Rule files failed</span>
-        <span class="mono" style="color:{{ 'var(--red)' if yara.rule_files_failed else 'var(--dim)' }}">
-          {{ yara.rule_files_failed or 0 }}</span></div>
-      <div class="kv"><span>Workers</span><span class="mono">{{ yara.worker_threads or 0 }}</span></div>
-      <div class="kv"><span>Scan</span>
-        <span class="mono">exit {{ yara.exit_code if yara.exit_code is not none else '-' }} &middot;
-        {{ '%.3f'|format(yara.seconds or 0) }}s</span></div>
-      {% if yara.rules_directory %}
-      <div class="kv"><span>Rules dir</span><span class="mono">{{ yara.rules_directory }}</span></div>
-      {% endif %}
-      {% if yara.matches %}
-      <table>
-        <tr><th>rule</th><th>strings</th><th>offsets</th></tr>
-        {% for m in yara.matches %}
-        <tr>
-          <td class="mono" style="color:var(--orange)">{{ m.identifier }}</td>
-          <td class="mono" style="color:var(--cyan)">
-            {% for s in (m.strings or []) %}{{ s.identifier }}{% if not loop.last %}, {% endif %}{% endfor %}
-          </td>
-          <td class="mono" style="color:var(--dim)">
-            {% for s in (m.strings or []) %}{% for o in (s.offsets or []) %}{{ o }}{% if not loop.last %}, {% endif %}{% endfor %}{% if not loop.last %}; {% endif %}{% endfor %}
-          </td>
-        </tr>
-        {% endfor %}
-      </table>
-      {% else %}
-      <div class="dt-empty">No YARA rules matched this sample.</div>
-      {% endif %}
-      {% endif %}
     </div>
-
-    {% set cm = payload.extraction.cminer or {} %}
-    <div class="card">
-      <h3>Cminer <span style="font-weight:400;color:var(--dim);font-size:.8rem">code caves</span></h3>
-      {% if not cm or not cm.attempted %}
-      <div class="dt-empty">Cminer was not run for this sample.</div>
-      {% elif not cm.applicable %}
-      <div class="dt-empty">Cminer only analyzes PE files &mdash; skipped.</div>
-      {% elif not cm.available %}
-      <div class="dt-empty">Cminer unavailable &mdash; WSL or the Cminer binary could not be used.</div>
-      {% else %}
-      <div class="kv"><span>Caves</span>
-        <span class="mono" style="color:{{ 'var(--orange)' if cm.cave_count else 'var(--dim)' }}">
-          {{ cm.cave_count or 0 }}</span></div>
-      <div class="kv"><span>Total cave bytes</span><span class="mono">{{ cm.total_cave_bytes or 0 }}</span></div>
-      <div class="kv"><span>Largest cave</span><span class="mono">{{ cm.largest_cave_bytes or 0 }}</span></div>
-      <div class="kv"><span>Min cave size</span><span class="mono">{{ cm.minimum_cave_size or 0 }}</span></div>
-      <div class="kv"><span>Scan</span>
-        <span class="mono">exit {{ cm.exit_code if cm.exit_code is not none else '-' }} &middot;
-        {{ '%.3f'|format(cm.seconds or 0) }}s</span></div>
-      {% if cm.caves %}
-      <table>
-        <tr><th>section</th><th>size</th><th>start</th><th>end</th><th>file off</th></tr>
-        {% for c in cm.caves %}
-        <tr>
-          <td class="mono" style="color:var(--cyan)">{{ c.section }}</td>
-          <td class="mono" style="color:{{ 'var(--orange)' if c.size == cm.largest_cave_bytes else 'var(--fg)' }}">{{ c.size }}</td>
-          <td class="mono" style="color:var(--dim)">0x{{ '%x'|format(c.start_address) }}</td>
-          <td class="mono" style="color:var(--dim)">0x{{ '%x'|format(c.end_address) }}</td>
-          <td class="mono" style="color:var(--purple)">0x{{ '%x'|format(c.file_offset) }}</td>
-        </tr>
-        {% endfor %}
-      </table>
-      {% else %}
-      <div class="dt-empty">No code caves at or above the minimum size.</div>
-      {% endif %}
-      {% endif %}
+    <div class="card" data-ioc-card="family">
+      <h3>Malware Family Clues ({{ families|length }})</h3>
+      {% for f in families %}
+      <div class="fam-row" data-kind="family" data-key="{{ ((f.keyword or '') ~ ' ' ~ (f.classification or '') ~ ' ' ~ (f.in_string or ''))|lower|e }}">
+        <span class="chip {{ fam_cls(f.classification) }}">{{ f.classification or 'unknown' }}</span>
+        <span class="mono" style="font-weight:700;color:var(--text-main);min-width:110px">{{ f.keyword }}</span>
+        <span class="mono" style="font-size:11px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">{{ f.in_string|e }}</span>
+      </div>
+      {% endfor %}
     </div>
   </div>
 
-  {% set xxd = payload.extraction.xxd or {} %}
-  {% if xxd and xxd.output %}
-  <div class="card">
-    <h3>xxd <span style="font-weight:400;color:var(--dim);font-size:.8rem">WSL hex dump</span></h3>
-    <div class="hex-toolbar">
-      <span class="mono" style="color:var(--dim)">
-        {{ xxd.output_full_bytes or 0 }} bytes total
-        {%- if xxd.truncated %} &middot; showing a bounded preview{% endif %}
-        {%- if xxd.exit_code is not none %} &middot; exit {{ xxd.exit_code }}{% endif %}
-      </span>
-      <button class="copy-btn" id="copyXxd" style="margin-left:auto">Copy Preview</button>
+  <div class="grid g2" style="margin-top:16px;">
+    <div class="card" data-ioc-card="encoded">
+      <h3>Encoded / Obfuscated Strings ({{ encoded|length }})</h3>
+      {% for f in encoded %}
+      <div class="ioc-row" data-kind="encoded" style="align-items:flex-start;flex-direction:column;gap:4px"
+           data-key="{{ ((f.recipe or '') ~ ' ' ~ (f.original or '') ~ ' ' ~ (f.decoded or '') ~ ' ' ~ ((f.indicators or [])|join(' ')))|lower|e }}">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <span class="chip red">{{ f.recipe|e }}</span>
+          <button class="copy-btn" data-copy-val="{{ f.decoded|e }}">Copy</button>
+        </div>
+        <span class="ioc-val" style="color:var(--status-suspicious)">{{ (f.original or '')[:200]|e }}</span>
+        <span class="ioc-val" style="color:var(--text-muted)">{{ (f.decoded or '')[:300]|e }}</span>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          {% for ind in (f.indicators or []) %}<span class="chip orange">{{ ind|e }}</span>{% endfor %}
+          {% for u in (f.urls or []) %}<span class="chip green mono">{{ u|e }}</span>{% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <div style="color:var(--text-dim);font-size:13px;">No encoded strings flagged.</div>
+      {% endfor %}
     </div>
-    {# The dump must live in the element's TEXT, not an attribute: it contains
-       newlines and can contain '<' (byte 0x3c), which would terminate the
-       attribute or start a bogus tag. |e forces escaping even though this
-       template runs with autoescape disabled. #}
-    <pre id="xxdBody" class="hexview">{{ xxd.output | e }}</pre>
+    <div class="card" data-ioc-card="strings">
+      <h3>String Indicators ({{ strings|length }})</h3>
+      {% for s in strings %}
+      <div class="fam-row" data-kind="string" data-key="{{ ((s.name or '') ~ ' ' ~ (s.group or ''))|lower|e }}">
+        <span class="chip green">{{ s.group|e }}</span>
+        <span class="mono" style="font-weight:700;color:var(--text-main);min-width:150px">{{ s.name|e }}</span>
+        <span class="chip">{{ s.count or 0 }}</span>
+      </div>
+      {% if s.samples %}
+      <div class="mono" style="font-size:11px;color:var(--text-dim);padding:2px 0 8px;word-break:break-all">{{ (s.samples|join('  ·  '))[:400]|e }}</div>
+      {% endif %}
+      {% else %}
+      <div style="color:var(--text-dim);font-size:13px;">No string-table indicators hit.</div>
+      {% endfor %}
+    </div>
   </div>
-  {% endif %}
 </section>
 
 <section id="threat">
-  <div class="pi">Section <span>Threat Map</span></div>
   <div class="stats-row" id="threatStats"></div>
-
   <div class="map-tabs">
-    <button class="mtab on" data-view="geo">Geo Map · IOCs</button>
+    <button class="mtab on" data-view="geo">Geo Map &middot; IOCs</button>
     <button class="mtab" data-view="info">Info Graph</button>
   </div>
 
   <div id="viewGeo">
-    <div class="threat-controls">
-      <button class="fbtn kbtn active" data-kind="all">All IOCs</button>
+    <div class="map-tabs">
+      <button class="fbtn active kbtn" data-kind="all">All IOCs</button>
       <button class="fbtn kbtn" data-kind="ip">IPs</button>
       <button class="fbtn kbtn" data-kind="domain">Domains</button>
       <button class="fbtn kbtn" data-kind="url">URLs</button>
@@ -821,30 +836,30 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
       </div>
       <div class="geo-side">
         <div class="geo-panel">
-          <h4>Countries ({{ payload.geo.countries|length }})</h4>
+          <h4 class="sub">Countries ({{ (payload.geo.countries or [])|length }})</h4>
           <div id="geoCountries"></div>
         </div>
         <div class="geo-panel">
-          <h4>Unmapped · no geolocation ({{ payload.geo.stats.unmapped }})</h4>
+          <h4 class="sub">Unmapped &middot; no geolocation ({{ (payload.geo.stats or {}).get('unmapped', 0) }})</h4>
           <div id="geoUnmapped"></div>
         </div>
       </div>
     </div>
     <div class="legend">
-      <div class="li"><span class="ld" style="background:#ff4d5e"></span>Malicious</div>
-      <div class="li"><span class="ld" style="background:#ff9f43"></span>Suspicious</div>
-      <div class="li"><span class="ld" style="background:#22d3ee"></span>Unknown verdict</div>
-      <div class="li"><span class="ld" style="background:#2ee6a8"></span>Benign</div>
-      <div class="li"><span class="ld" style="background:#a78bfa"></span>Reported by CTI providers</div>
-      <div class="li"><span class="ld" style="background:#6b7f9e"></span>Country inferred from TLD</div>
+      <div class="li"><span class="ld" style="background:#f43f5e"></span>Malicious</div>
+      <div class="li"><span class="ld" style="background:#f59e0b"></span>Suspicious</div>
+      <div class="li"><span class="ld" style="background:#06b6d4"></span>Unknown verdict</div>
+      <div class="li"><span class="ld" style="background:#10b981"></span>Benign</div>
+      <div class="li"><span class="ld" style="background:#8b5cf6"></span>Reported by CTI providers</div>
+      <div class="li"><span class="ld" style="background:#64748b"></span>Country inferred from TLD</div>
     </div>
-    <p class="geo-hint">Bubble size = IOCs in that country · dashed arcs link countries sharing an
-      ASN. Click a country or a row to list its IOCs, ASN and provider findings. Drag to pan ·
+    <p class="geo-hint">Bubble size = IOCs in that country &middot; dashed arcs link countries sharing an
+      ASN. Click a country or a row to list its IOCs, ASN and provider findings. Drag to pan &middot;
       scroll to zoom.</p>
   </div>
 
   <div id="viewInfo" style="display:none">
-    <div class="threat-controls">
+    <div class="map-tabs">
       <button class="fbtn active" data-filter="all">All</button>
       <button class="fbtn" data-filter="section">Sections</button>
       <button class="fbtn" data-filter="dll">DLLs</button>
@@ -859,47 +874,46 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
       <svg class="graph" id="threatSvg" style="height:640px"></svg>
     </div>
     <div class="legend">
-      <div class="li"><span class="ld" style="background:#4d8dff"></span>Sample</div>
-      <div class="li"><span class="ld" style="background:#818cf8"></span>Analysis</div>
+      <div class="li"><span class="ld" style="background:#38bdf8"></span>Sample</div>
+      <div class="li"><span class="ld" style="background:#6366f1"></span>Analysis</div>
       <div class="li"><span class="ld" style="background:#34d399"></span>Function</div>
-      <div class="li"><span class="ld" style="background:#22d3ee"></span>Section</div>
-      <div class="li"><span class="ld" style="background:#a78bfa"></span>DLL</div>
-      <div class="li"><span class="ld" style="background:#ffd166"></span>Capability</div>
-      <div class="li"><span class="ld" style="background:#2ee6a8"></span>IOC</div>
-      <div class="li"><span class="ld" style="background:#ff9f43"></span>Family</div>
-      <div class="li"><span class="ld" style="background:#ff4d5e"></span>Malicious</div>
+      <div class="li"><span class="ld" style="background:#06b6d4"></span>Section</div>
+      <div class="li"><span class="ld" style="background:#8b5cf6"></span>DLL</div>
+      <div class="li"><span class="ld" style="background:#fbbf24"></span>Capability</div>
+      <div class="li"><span class="ld" style="background:#10b981"></span>IOC</div>
+      <div class="li"><span class="ld" style="background:#f59e0b"></span>Family</div>
+      <div class="li"><span class="ld" style="background:#f43f5e"></span>Malicious</div>
     </div>
-    <p style="margin-top:10px;font-size:11.5px;color:var(--dim)">Click any node to open its info block. Badge shows number of results. Drag to rearrange · scroll to zoom.</p>
+    <p class="geo-hint">Click any node to open its info block. Drag to rearrange &middot; scroll to zoom.</p>
   </div>
 </section>
 
+{# ================= ATT&CK / STIX ================= #}
+{% set am = (payload.cti or {}).get('attack_matrix') or {} %}
 <section id="stix">
-  <div class="pi">Section <span>ATT&amp;CK / STIX</span></div>
-
   {% if not payload.stix.available %}
   <div class="card">
-    <p style="color:var(--dim)">No ATT&amp;CK techniques to show — {{ payload.stix.reason or 'no STIX bundle for this run' }}.</p>
+    <div class="empty">No ATT&amp;CK techniques to show &mdash; {{ payload.stix.reason or 'no STIX bundle for this run' }}.</div>
   </div>
   {% else %}
   <div class="stats-row" id="stixStats"></div>
-
-  {% set am = (payload.cti or {}).get('attack_matrix') or {} %}
   <div class="map-tabs">
     <button class="sxtab on" data-sview="coverage">ATT&amp;CK Coverage</button>
     <button class="sxtab" data-sview="tactics">Procedures &amp; Tooling</button>
     <button class="sxtab" data-sview="graph">STIX Object Graph</button>
-    {% if payload.d3fend and payload.d3fend.available %}
-    <button class="sxtab" data-sview="d3fend">D3FEND Defenses</button>
-    {% endif %}
+  </div>
+
+  <div id="stixCoverage">
+    <div class="card"><div class="sx-matrix" id="stixMatrix"></div></div>
   </div>
 
   <div id="stixTactics" style="display:none">
     {% if am.available %}
     <div class="card">
-      <div class="pi" style="margin-bottom:8px">Tactics <span>procedures observed, with the tooling ATT&amp;CK knows implements them</span></div>
+      <h3>Procedures &amp; Tooling</h3>
       <div class="tk-wrap">
         <div class="tk-filters">
-          <input type="search" id="tkSearch" placeholder="Search technique, tool, malware, group or detection text…">
+          <input type="search" id="tkSearch" placeholder="Search technique, tool, malware, group or detection text&hellip;">
           <span class="tk-chips" id="tkTacticChips"></span>
           <span class="tk-count" id="tkCount"></span>
           <button class="tk-reset" id="tkReset">Reset</button>
@@ -918,55 +932,120 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
     </div>
     {% else %}
     <div class="card">
-      <div class="dt-empty">No ATT&amp;CK procedure records for this run —
+      <div class="empty">No ATT&amp;CK procedure records for this run &mdash;
         {{ am.reason or 'the CTI report carries no tactic view and no ATT&amp;CK-cache fallback was available' }}.</div>
     </div>
     {% endif %}
   </div>
 
-  <div id="stixCoverage">
-    <div class="card"><div class="sx-matrix" id="stixMatrix"></div></div>
-  </div>
-
   <div id="stixGraph" style="display:none">
-    <div class="sx-toolbar">
-      <input id="sxSearch" placeholder="Filter nodes by name or technique ID…">
-      <span id="sxTypes" style="display:flex;gap:6px;flex-wrap:wrap"></span>
-      <span style="flex:1"></span>
-      <button class="fbtn" id="sxFit">Reset view</button>
-      <button class="fbtn" id="sxNav">⬇ Navigator layer (sample)</button>
-      <button class="fbtn" id="sxFullNav">⬇ Full ATT&CK Matrix</button>
-    </div>
-    <div class="sx-graph"><svg id="stixSvg"></svg></div>
-    <div class="legend" id="stixLegend"></div>
-    <p class="sx-note" id="stixNote"></p>
-  </div>
-
-  {% if payload.d3fend and payload.d3fend.available %}
-  <div id="stixD3fend" style="display:none">
     <div class="card">
-      <div class="pi" style="margin-bottom:8px">D3FEND <span>defensive techniques for the tactics capa recovered</span></div>
-      <div class="stats-row" id="d3fStats"></div>
-      <div id="d3fList"></div>
-      <p class="sx-note" id="d3fNote"></p>
+      <div class="sx-toolbar">
+        <input id="sxSearch" placeholder="Filter nodes by name or technique ID&hellip;">
+        <span id="sxTypes" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+        <span style="flex:1"></span>
+        <button class="fbtn" id="sxFit">Reset view</button>
+        <button class="fbtn" id="sxNav">&#8595; Navigator layer (sample)</button>
+        <button class="fbtn" id="sxFullNav">&#8595; Full ATT&amp;CK matrix</button>
+      </div>
+      <div class="sx-graph"><svg id="stixSvg"></svg></div>
+      <div class="legend" id="stixLegend"></div>
+      <p class="sx-note" id="stixNote"></p>
     </div>
   </div>
   {% endif %}
+</section>
+
+{# ================= D3FEND ================= #}
+<section id="d3fend">
+  {% if not payload.d3fend.available %}
+  <div class="card">
+    <div class="empty">No D3FEND countermeasures to show &mdash; {{ payload.d3fend.reason or 'no mapping for the techniques capa matched' }}.</div>
+  </div>
+  {% else %}
+  <div class="stats-row" id="d3fStats"></div>
+  <div class="card"><div id="d3fList"></div><p class="sx-note" id="d3fNote"></p></div>
+  {% endif %}
+</section>
+
+{# ================= MITRE CAR ================= #}
+{% set car = payload.car or {} %}
+{% set cart = car.totals or {} %}
+<section id="car">
+  {% if not car.available %}
+  <div class="card">
+    <div class="empty">No CAR analytics to show &mdash; {{ car.reason or 'the CAR checkout was not found' }}.</div>
+  </div>
+  {% else %}
+  <div class="stats-row" id="carStats">
+    <div class="stat-card"><div class="sl">Techniques</div><div class="sv">{{ cart.techniques or 0 }}</div></div>
+    <div class="stat-card"><div class="sl">Covered</div><div class="sv" style="color:var(--status-clean)">{{ cart.covered or 0 }}</div></div>
+    <div class="stat-card"><div class="sl">Detection gap</div><div class="sv" style="color:{{ 'var(--status-malicious)' if cart.uncovered else 'var(--status-clean)' }}">{{ cart.uncovered or 0 }}</div></div>
+    <div class="stat-card"><div class="sl">Analytics</div><div class="sv">{{ cart.analytics or 0 }}</div></div>
+  </div>
+  {% set carrows = car.techniques or [] %}
+  {% set carmax = (carrows|map(attribute='layer_count')|map('int')|max) if carrows else 0 %}
+  <div class="card" style="margin-bottom:16px">
+    <h3>Analytics per Technique</h3>
+    <div id="carBars">
+      {% for t in carrows %}
+      <div class="car-bar-row">
+        <span class="cbl" title="{{ t.id }} {{ t.name|e }}">{{ t.id }} {{ t.name|truncate(18, true, '') }}</span>
+        <span class="cbar{{ '' if t.analytics or t.layer_count else ' gap' }}"><i style="width:{{ '%.1f'|format((t.layer_count or (t.analytics|length) or 0) * 100 / (carmax or 1)) }}%"></i></span>
+        <span class="cnum">{{ t.layer_count or (t.analytics|length) or 0 }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card">
+    <h3>CAR Analytics <span class="chip" id="carCount">{{ carrows|length }}</span></h3>
+    <input class="search" id="carSearch" placeholder="Filter by technique, analytic id, title or analytic type&hellip;">
+    <div id="carTableWrap">
+      {% for t in carrows %}
+      <div class="car-row" data-key="{{ (t.id ~ ' ' ~ (t.name or '') ~ ' ' ~ (t.analytics|map(attribute='id')|join(' ')) ~ ' ' ~ (t.analytics|map(attribute='title')|join(' ')) ~ ' ' ~ (t.analytics|map(attribute='types')|join(' ')))|lower|e }}">
+        <div class="sx-tac" style="margin-bottom:8px">
+          <h4>{{ t.id }} &middot; {{ t.name|e }}<b>{{ t.layer_count or (t.analytics|length) }}</b></h4>
+          {% if t.sub %}<div class="sx-note" style="margin:-4px 0 6px">{{ t.sub|e }}</div>{% endif %}
+          {% for a in t.analytics %}
+          <div class="car-analytic">
+            <h5><b>{{ a.id|e }}</b> {{ a.title|e }}
+              {% set lv = (a.level or '')|lower %}
+              <span class="lv {{ 'lv-h' if lv.startswith('h') else ('lv-m' if lv.startswith('m') else ('lv-l' if lv.startswith('l') else 'lv-n')) }}">{{ a.level or 'n/a' }}</span>
+              {% for ty in a.types %}<span class="chip">{{ ty|e }}</span>{% endfor %}
+            </h5>
+            {% if a.desc %}<p>{{ a.desc|e }}</p>{% endif %}
+            {% if a.platforms %}
+            <p class="plats">
+              {% for pl in a.platforms %}<span class="chip purple">{{ pl|e }}</span>{% endfor %}
+            </p>
+            {% endif %}
+          </div>
+          {% else %}
+          <div class="d3f-none">no CAR analytic covers this technique &mdash; detection gap</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <p class="note">Source: {{ car.source|e }}{% if car.generated_at %} &middot; built {{ car.generated_at|e }}{% endif %}.
+    Coverage levels are CAR's own per-analytic ratings; the per-technique count is the analytic count in the
+    CAR Navigator coverage layer. A technique with no analytic is a genuine detection gap, not a missing
+    dashboard row.</p>
   {% endif %}
 </section>
 
 <section id="sections">
-  <div class="pi">Section <span>Sections</span></div>
   <div class="card">
     <h3>Binary Sections ({{ (payload.extraction.sections.details or [])|length }})</h3>
     <table>
-      <tr><th>name</th><th>virtual address</th><th>size</th><th>entropy</th><th>chi2</th></tr>
+      <tr><th>Name</th><th>Virtual address</th><th>Size</th><th>Entropy</th><th>chi&sup2;</th></tr>
       {% for s in (payload.extraction.sections.details or []) %}
       <tr>
         <td class="mono">{{ s.name }}</td>
         <td class="mono">0x{{ '%x'|format(s.virtual_address or 0) }}</td>
         <td class="mono">{{ s.size or 0 }}</td>
-        <td><div class="bar {{ 'hot' if (s.entropy or 0) > 7.2 else '' }}"><i style="width:{{ '%.1f'|format((s.entropy or 0) * 10) }}%"></i></div></td>
+        <td><div class="bar{{ ' hot' if (s.entropy or 0) > 7.2 else '' }}"><i style="width:{{ '%.1f'|format((s.entropy or 0) * 10) }}%"></i></div></td>
         <td class="mono">{{ '%.0f'|format(s.chi2 or 0) }}</td>
       </tr>
       {% endfor %}
@@ -974,84 +1053,80 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
   </div>
 </section>
 
+{# ================= Imports ================= #}
+{% set malfns = payload.malapi|map(attribute='function')|list %}
 <section id="imports">
-  <div class="pi">Section <span>Imports</span></div>
   {% if payload.malapi %}
   <div class="card" style="margin-bottom:16px">
     <h3>MalAPI Flagged Imports ({{ payload.malapi|length }})</h3>
-    {% for m in payload.malapi %}<span class="chip red mono">{{ m.function }}</span>{% endfor %}
+    <div>{% for m in payload.malapi %}<span class="chip red mono">{{ m.function }}</span>{% endfor %}</div>
   </div>
   {% endif %}
   <div class="card">
-    <h3>Imports by DLL ({{ payload.imports.dlls|length }} DLLs)</h3>
-    <input class="search" id="impSearch" placeholder="Filter imports…">
+    <h3>Imports by DLL ({{ payload.imports.dlls|length }})</h3>
+    <input class="search" id="impSearch" placeholder="Filter imports&hellip;">
     <div class="tree" id="impTree">
       {% for dll, imps in payload.imports.dlls.items() %}
       <details>
         <summary>{{ dll }} <span class="chip">{{ imps|length }}</span></summary>
         {% for i in imps %}
-        <div class="imp {{ 'flag' if i.name in (payload.malapi|map(attribute='function')|list) else '' }}"
-             data-n="{{ i.name }}">{{ i.name }}{{ ' [delay]' if i.is_delay else '' }}{{ ' [ordinal]' if i.is_ordinal else '' }}</div>
+        <div class="imp{{ ' flag' if i.name in malfns }}" data-n="{{ i.name|e }}">{{ i.name }}{{ ' [delay]' if i.is_delay else '' }}{{ ' [ordinal]' if i.is_ordinal else '' }}</div>
         {% endfor %}
       </details>
+      {% else %}
+      <div class="empty">No imports recovered for this sample.</div>
       {% endfor %}
     </div>
   </div>
 </section>
 
-{# ------------------------------------------------------------------ #}
-{# PE Export Address Table. Absent for most EXEs (a static executable
-   has no exports), so the whole section degrades to a clear notice. #}
-{# ------------------------------------------------------------------ #}
+{# ---- PE Export Address Table. Absent for most EXEs, so it degrades to a
+   clear notice rather than an empty table. ---- #}
 {% set eat = payload.extraction.export_table %}
 <section id="exports">
-  <div class="pi">Section <span>Exports</span></div>
   {% if not eat or not eat.present %}
   <div class="card">
     <h3>No Export Address Table</h3>
     <div class="kv"><span>Status</span><span>not present</span></div>
-    <p class="note">This binary exposes no exports. That is expected for a plain
-    executable &mdash; a populated EAT is typically a sign of a DLL, driver or
-    plugin. The <code>.data</code> directory entry is absent or empty.</p>
+    <p class="note">This binary exposes no exports. That is expected for a plain executable &mdash; a
+      populated EAT is typically a sign of a DLL, driver or plugin. The <code>.data</code> directory entry
+      is absent or empty.</p>
   </div>
   {% else %}
   <div class="stats-row">
-    <div class="stat-card"><div class="sv">{{ eat.entries_total or 0 }}</div><div class="sl">Exports</div></div>
-    <div class="stat-card"><div class="sv">{{ eat.named_count or 0 }}</div><div class="sl">Named</div></div>
-    <div class="stat-card"><div class="sv">{{ eat.forwarded_count or 0 }}</div><div class="sl">Forwarded</div></div>
-    <div class="stat-card"><div class="sv">{{ eat.external_count or 0 }}</div><div class="sl">External</div></div>
-    <div class="stat-card"><div class="sv">{{ eat.ordinal_base or 0 }}</div><div class="sl">Ordinal base</div></div>
+    <div class="stat-card"><div class="sl">Exports</div><div class="sv">{{ eat.entries_total or 0 }}</div></div>
+    <div class="stat-card"><div class="sl">Named</div><div class="sv">{{ eat.named_count or 0 }}</div></div>
+    <div class="stat-card"><div class="sl">Forwarded</div><div class="sv">{{ eat.forwarded_count or 0 }}</div></div>
+    <div class="stat-card"><div class="sl">External</div><div class="sv">{{ eat.external_count or 0 }}</div></div>
+    <div class="stat-card"><div class="sl">Ordinal base</div><div class="sv">{{ eat.ordinal_base or 0 }}</div></div>
   </div>
-
   <div class="card" style="margin-bottom:16px">
     <h3>Directory</h3>
     <div class="kv"><span>Name</span><span class="mono">{{ eat.name or '—' }}</span></div>
     <div class="kv"><span>Timestamp</span><span class="mono">{{ '0x%08x'|format(eat.timestamp or 0) }}</span></div>
     <div class="kv"><span>Version</span><span class="mono">{{ eat.major_version or 0 }}.{{ eat.minor_version or 0 }}</span></div>
-    <div class="kv"><span>Ordinal base</span><span class="mono">{{ eat.ordinal_base or 0 }}</span></div>
     <div class="kv"><span>Address table RVA</span><span class="mono">{{ '0x%08x'|format(eat.address_table_rva or 0) }} &middot; {{ eat.address_table_count or 0 }} entries</span></div>
     <div class="kv"><span>Name table RVA</span><span class="mono">{{ '0x%08x'|format(eat.name_table_rva or 0) }} &middot; {{ eat.name_table_count or 0 }} entries</span></div>
     <div class="kv"><span>Ordinal table RVA</span><span class="mono">{{ '0x%08x'|format(eat.ordinal_table_rva or 0) }}</span></div>
   </div>
-
   <div class="card">
     <h3>Exported Symbols
       {% if eat.entries_truncated %}
-        <span class="chip orange">showing first {{ eat.entries|length }} of {{ eat.entries_total }}</span>
+      <span class="chip orange">showing first {{ eat.entries|length }} of {{ eat.entries_total }}</span>
       {% else %}
-        <span class="chip">{{ eat.entries|length }}</span>
+      <span class="chip">{{ eat.entries|length }}</span>
       {% endif %}
     </h3>
-    <input class="search" id="eatSearch" placeholder="Filter exports…">
+    <input class="search" id="eatSearch" placeholder="Filter exports&hellip;">
     <div class="tree" id="eatTree">
       {% for e in eat.entries %}
-      <div class="imp" data-n="{{ e.name }}">
-        <span class="mono" style="color:var(--dim)">{{ e.ordinal }}</span>
+      <div class="imp" data-n="{{ (e.name or '')|e }}">
+        <span class="mono" style="color:var(--text-dim)">{{ e.ordinal }}</span>
         <span class="mono">{{ e.name or '(ordinal only)' }}</span>
-        <span class="mono" style="color:var(--dim)">RVA {{ '0x%08x'|format(e.rva or 0) }}</span>
+        <span class="mono" style="color:var(--text-dim)">RVA {{ '0x%08x'|format(e.rva or 0) }}</span>
         {% if e.is_forwarded %}
-          <span class="chip orange">fwd</span>
-          <span class="mono">{{ e.forwarder_library or '' }}{{ '.' if e.forwarder_library and e.forwarder_function }}{{ e.forwarder_function or '' }}</span>
+        <span class="chip orange">fwd</span>
+        <span class="mono">{{ e.forwarder_library or '' }}{{ '.' if e.forwarder_library and e.forwarder_function }}{{ e.forwarder_function or '' }}</span>
         {% endif %}
         {% if e.is_extern %}<span class="chip red">external</span>{% endif %}
       </div>
@@ -1062,15 +1137,15 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
 </section>
 
 <section id="capabilities">
-  <div class="pi">Section <span>Capabilities</span></div>
   <div class="stats-row">
-    <div class="stat-card"><div class="sv">{{ payload.capa.capabilities|length }}</div><div class="sl">Capabilities</div></div>
-    <div class="stat-card"><div class="sv">{{ payload.capa.attack_ids|length }}</div><div class="sl">ATT&CK IDs</div></div>
-    <div class="stat-card"><div class="sv">{{ payload.capa.mbc_ids|length }}</div><div class="sl">MBC IDs</div></div>
+    <div class="stat-card"><div class="sl">Capabilities</div><div class="sv">{{ payload.capa.capabilities|length }}</div></div>
+    <div class="stat-card"><div class="sl">ATT&amp;CK IDs</div><div class="sv">{{ payload.capa.attack_ids|length }}</div></div>
+    <div class="stat-card"><div class="sl">MBC IDs</div><div class="sv">{{ payload.capa.mbc_ids|length }}</div></div>
   </div>
+  {% if payload.capa.attack_ids or payload.capa.mbc_ids %}
   <div class="card" style="margin-bottom:16px">
     <h3>ATT&amp;CK &amp; MBC Mappings</h3>
-    <div style="display:flex;flex-wrap:wrap;gap:5px">
+    <div>
       {% for a in payload.capa.attack_ids %}<span class="chip purple">{{ a }}</span>{% endfor %}
       {% set md = payload.capa.mbc_details or {} %}
       {%- for m in payload.capa.mbc_ids -%}
@@ -1080,6 +1155,7 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
       {%- endfor -%}
     </div>
   </div>
+  {% endif %}
   {% set mbc_view = payload.capa.mbc_view or [] %}
   {% if mbc_view %}
   <div class="card" style="margin-bottom:16px">
@@ -1098,10 +1174,10 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
           {%- if e.detection_rules %} <span class="tk-hits">{{ e.detection_rules }} detection rule(s)</span>{% endif %}
         </h5>
         {% if e.attack_ids %}
-        <div class="dt-chips">{% for t in e.attack_ids %}<span class="dt-chip">{{ t|e }}</span>{% endfor %}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">{% for t in e.attack_ids %}<span class="chip purple">{{ t|e }}</span>{% endfor %}</div>
         {% endif %}
         {% if e.description %}
-        <p style="color:var(--dim);font-size:12px;margin:4px 0 0;line-height:1.45">{{ e.description|e|truncate(420) }}</p>
+        <p class="sx-note">{{ e.description|e|truncate(420) }}</p>
         {% endif %}
       </div>
       {% endfor %}
@@ -1109,118 +1185,82 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
     {% endfor %}
   </div>
   {% endif %}
-  </div>
   <div class="card">
     <h3>Capabilities ({{ payload.capa.capabilities|length }})</h3>
+    {% if payload.capa.capabilities %}
     <table>
-      <tr><th>namespace</th><th>capability</th><th>scope</th><th>matches</th></tr>
+      <tr><th>Namespace</th><th>Capability</th><th>Scope</th><th>Matches</th></tr>
       {% for c in payload.capa.capabilities %}
       <tr><td class="mono">{{ c.namespace }}</td><td>{{ c.name }}</td><td class="mono">{{ c.scope }}</td><td class="mono">{{ c.match_count }}</td></tr>
       {% endfor %}
     </table>
-  </div>
-</section>
-
-<section id="iocs">
-  <div class="pi">Section <span>IOCs</span></div>
-  <div class="stats-row">
-    {% for label, items in [('Domains', payload.ioc.domains or []), ('IPs', payload.ioc.ips or []), ('URLs', payload.ioc.urls or []), ('Emails', payload.ioc.emails or []), ('Hashes', payload.ioc.hashes or [])] %}
-    <div class="stat-card"><div class="sv" style="font-size:27px">{{ items|length }}</div><div class="sl">{{ label }}</div></div>
-    {% endfor %}
-  </div>
-  <div class="grid g2">
-    {% for title, items, cls in [
-        ('Domains', payload.ioc.domains or [], 'red'),
-        ('IPs', payload.ioc.ips or [], 'yellow'),
-        ('URLs', payload.ioc.urls or [], ''),
-        ('Emails', payload.ioc.emails or [], 'green'),
-        ('Hashes', payload.ioc.hashes or [], '')] %}
-    <div class="card">
-      <h3>{{ title }} ({{ items|length }})</h3>
-      {% for it in items %}
-        {% set v = it.value if it is mapping else it %}
-        {% set t = (' [' ~ it.type ~ ']') if it is mapping and it.type else '' %}
-        <span class="chip {{ cls }} mono">{{ v }}{{ t }}</span>
-      {% endfor %}
-    </div>
-    {% endfor %}
-    <div class="card">
-      <h3>Family Hints ({{ (payload.ioc.family_hits or [])|length }})</h3>
-      {% for f in (payload.ioc.family_hits or []) %}
-        <span class="chip red">{{ f.keyword }} → {{ f.classification }}</span>
-      {% endfor %}
-    </div>
-    <div class="card">
-      <h3>Encoded Strings ({{ (payload.ioc.encoded_flags or [])|length }} flagged)</h3>
-      {% for f in (payload.ioc.encoded_flags or []) %}
-        <span class="chip red mono" title="{{ f.decoded|e }}">{{ f.recipe }}: {{ f.original[:110]|e }}</span>
-        <span class="chip yellow mono">{{ f.decoded[:200]|e }}</span>
-        {% for ind in f.indicators %}<span class="chip">{{ ind|e }}</span>{% endfor %}
-        {% for u in f.urls %}<span class="chip green mono">{{ u|e }}</span>{% endfor %}
-      {% else %}
-        <span class="chip">none flagged</span>
-      {% endfor %}
-    </div>
+    {% else %}
+    <div class="empty">capa matched no capabilities for this sample.</div>
+    {% endif %}
   </div>
 </section>
 
 <section id="assembly">
-  <div class="pi">Section <span>Assembly</span></div>
   {% if payload.asm_truncated %}
-  <div class="warn">Assembly dataset is {{ payload.asm_bytes }} bytes — too large to embed, so the disassembly view is empty. Everything else is unaffected.</div>
+  <div class="warn">The assembly dataset is {{ payload.asm_bytes }} bytes &mdash; over the embed budget, so no listing is shown. Everything else is unaffected.</div>
   {% elif not payload.asm %}
-  <div class="warn">No enriched assembly available. Re-run the analyzer so the _functions.json artifact is produced.</div>
+  <div class="warn">No enriched assembly available. Re-run the analyzer so the <span class="mono">_functions.json</span> artifact is produced.</div>
+  {% elif payload.asm_pre_cut %}
+  <div class="warn">radare2 discovered {{ payload.asm_total_functions }} functions; the collector pre-cut the
+    dataset to the entry point and main-like functions, so {{ payload.asm_shown_functions }} are listed here.
+    The full set is on disk in the run's <span class="mono">_functions.json</span>.</div>
   {% endif %}
-  <div class="asmbar">
-    <div class="fwrap">
-      <label class="asm-lbl" for="fnSearch">Function</label>
-      <input id="fnSearch" class="fsrch" type="text" placeholder="filter functions… (name or address)">
-      <select id="fnSel" title="Jump to a function"></select>
+  <div class="card">
+    <div class="asmbar">
+      <div class="fwrap">
+        <label class="asm-lbl" for="fnSearch">Function</label>
+        <input id="fnSearch" class="fsrch" type="text" placeholder="filter functions&hellip;">
+        <select id="fnSel" title="Jump to a function"></select>
+      </div>
+      <span class="mono" id="asmInfo" style="color:var(--text-dim);font-size:11px"></span>
+      <button class="copy-btn" id="copyAsm" style="margin-left:auto">Copy listing</button>
     </div>
-    <span class="mono" id="asmInfo" style="color:var(--dim)"></span>
-    <button class="copy-btn" id="copyAsm" style="margin-left:auto" title="Copy the instructions currently listed">Copy listing</button>
-  </div>
-  <div class="asmbar">
-    <input id="asmSearch" type="text" placeholder="search instructions, symbols, bytes…">
-    <input id="asmAddr" type="text" placeholder="go to 0x…" style="width:120px">
-    <span class="asm-cats" id="asmCats">
-      <button class="fbtn active" data-cats="all">All</button>
-      <button class="fbtn" data-cats="ctrl ret">Control flow</button>
-      <button class="fbtn" data-cats="call">Calls</button>
-      <button class="fbtn" data-cats="data">Data</button>
-      <button class="fbtn" data-cats="arith">Arithmetic</button>
-      <button class="fbtn" data-cats="cmp">Compare</button>
-      <button class="fbtn" data-cats="stack">Stack</button>
-      <button class="fbtn" data-cats="simd">SIMD</button>
-      <button class="fbtn" data-cats="nop">NOP</button>
-      <button class="fbtn" data-cats="misc">Other</button>
-    </span>
-    <span class="asm-blknav">
-      <button class="fbtn" id="asmPrevBlk" title="Previous basic block">↑ block</button>
-      <button class="fbtn" id="asmNextBlk" title="Next basic block">↓ block</button>
-    </span>
-    <button class="fbtn" id="asmClear" title="Clear the search box and reset the category filter">Clear</button>
-  </div>
-  <div class="asm-stats" id="asmStats"></div>
-  <div class="asm-legend" id="asmLegend"></div>
-  <div class="asm-mn" id="asmMnemonics"></div>
-  <div class="asm-flex">
-    <div id="asm"></div>
-    <div class="asm-mapwrap" id="asmMap" title="Control-flow mini map — click or drag to jump"><div class="asm-win" id="asmWin"></div></div>
+    <div class="asmbar">
+      <input id="asmSearch" type="text" placeholder="search instructions, symbols, bytes&hellip;">
+      <input id="asmAddr" type="text" placeholder="go to 0x&hellip;" style="width:120px">
+      <span class="asm-cats" id="asmCats">
+        <button class="fbtn active" data-cats="all">All</button>
+        <button class="fbtn" data-cats="ctrl ret">Control flow</button>
+        <button class="fbtn" data-cats="call">Calls</button>
+        <button class="fbtn" data-cats="data">Data</button>
+        <button class="fbtn" data-cats="arith">Arithmetic</button>
+        <button class="fbtn" data-cats="cmp">Compare</button>
+        <button class="fbtn" data-cats="stack">Stack</button>
+        <button class="fbtn" data-cats="simd">SIMD</button>
+        <button class="fbtn" data-cats="nop">NOP</button>
+        <button class="fbtn" data-cats="misc">Other</button>
+      </span>
+      <span class="asm-blknav">
+        <button class="fbtn" id="asmPrevBlk" title="Previous basic block">&uarr; block</button>
+        <button class="fbtn" id="asmNextBlk" title="Next basic block">&darr; block</button>
+      </span>
+      <button class="fbtn" id="asmClear" title="Clear the search box and reset the category filter">Clear</button>
+    </div>
+    <div class="asm-stats" id="asmStats"></div>
+    <div class="asm-legend" id="asmLegend"></div>
+    <div class="asm-mn" id="asmMnemonics"></div>
+    <div class="asm-flex">
+      <div id="asm"></div>
+      <div class="asm-mapwrap" id="asmMap" title="Control-flow mini map &mdash; click or drag to jump"><div class="asm-win" id="asmWin"></div></div>
+    </div>
   </div>
 </section>
 
 <section id="graphs">
-  <div class="pi">Section <span>Call Graph / CFG</span></div>
   <div class="cg-ctl">
-    <label>Layout
+    <label class="asm-lbl" for="cgLayout">Layout
       <select id="cgLayout">
-        <option value="layered">Layered (entry → callees)</option>
+        <option value="layered">Layered (entry &rarr; callees)</option>
         <option value="radial">Radial (rings by depth)</option>
         <option value="force">Force-directed (organic)</option>
       </select>
     </label>
-    <input id="cgSearch" type="text" placeholder="highlight function…" style="width:190px">
+    <input id="cgSearch" type="text" placeholder="highlight function&hellip;">
     <label>min calls <input id="cgMinDeg" type="range" min="0" max="20" value="0"><span class="mono" id="cgMinDegV">0</span></label>
     <label><input id="cgNoLeaf" type="checkbox"> hide leaf callees</label>
     <label><input id="cgNoOrphan" type="checkbox"> hide unreachable</label>
@@ -1242,12 +1282,11 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
     <div style="padding:16px 20px 0"><h3>Section CFG ({{ payload.graphs.section.nodes|length }} nodes)</h3></div>
     <svg class="graph" id="secsvg" style="height:520px"></svg>
   </div>
-  <p style="margin-top:10px;font-size:11.5px;color:var(--dim)">Hover a node to isolate its callers and callees ·
-    scroll to zoom, drag to pan, <b>Fit</b> to return · every control above rebuilds the graph and the counts under it.</p>
+  <p class="note">Hover a node to isolate its callers and callees &middot; scroll to zoom, drag to pan,
+    <b>Fit</b> to return &middot; every control above rebuilds the graph and the counts above it.</p>
 </section>
 
 <section id="charts">
-  <div class="pi">Section <span>Analytics</span></div>
   <div class="stats-row" id="chartStats"></div>
   <div class="chart-row single">
     <div class="chart-box"><h3>Threat Score Gauge</h3><div id="chGauge"></div></div>
@@ -1269,13 +1308,231 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
     <div class="chart-box"><h3>Section Size Distribution</h3><div id="chSize"></div></div>
   </div>
 </section>
+
+{# ================= ML Score (EMBER2024) ================= #}
+{% set ml = payload.ml or {} %}
+<section id="ml">
+  <div class="stats-row" id="mlStats"></div>
+  {% if not ml or not ml.ok %}
+  <div class="card">
+    <h3>Model Verdict</h3>
+    {% if ml and ml.error %}
+    <div class="kv"><span>Status</span><span>{{ ml.error }}{% if ml.detail %} &mdash; {{ ml.detail }}{% endif %}</span></div>
+    {% else %}
+    <div class="empty">ML scoring was skipped for this sample (no scoring service, or ML_SKIP set).
+      The static analysis above is unaffected.</div>
+    {% endif %}
+    {% if ml and ml.verdict_note %}
+    <div class="kv"><span>Note</span><span>{{ ml.verdict_note }}</span></div>
+    {% endif %}
+  </div>
+  {% else %}
+  {% set lvl = (ml.threat_level or '') %}
+  {% set lvl_colors = {'low': 'var(--status-clean)', 'moderate': 'var(--status-suspicious)',
+                       'high': 'var(--status-malicious)', 'critical': 'var(--status-malicious)',
+                       'n/a': 'var(--text-dim)'} %}
+  <div class="grid2">
+    <div class="card">
+      <h3>Model Verdict</h3>
+      <div class="kv"><span>Threat level</span><span class="mono" style="color:{{ lvl_colors.get(lvl, 'var(--text-dim)') }}">{{ lvl or '—' }}</span></div>
+      <div class="kv"><span>Verdict</span><span>{{ ml.verdict or '—' }}</span></div>
+      <div class="kv"><span>P(malicious)</span><span class="mono">{{ '%.6f'|format(ml.malicious_probability or 0) }}</span></div>
+      {% if ml.threshold_margin is defined and ml.threshold_margin is not none %}
+      <div class="kv"><span>vs threshold</span><span class="mono">{{ '%+.4f'|format(ml.threshold_margin) }}</span></div>
+      {% endif %}
+      <div class="kv"><span>Threshold</span><span class="mono">{{ ml.threshold }}</span></div>
+      <div class="kv"><span>PE input</span><span>{{ 'yes' if ml.is_pe else 'no' }}</span></div>
+      <div class="kv"><span>Uncalibrated</span><span>yes &mdash; banded verdict only, not a confidence</span></div>
+      {% if ml.verdict_note %}
+      <div class="kv"><span>Note</span><span>{{ ml.verdict_note }}</span></div>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h3>Model</h3>
+      <div class="kv"><span>File</span><span class="mono">{{ ml.model or '—' }}</span></div>
+      <div class="kv"><span>SHA-256</span><span class="mono">{{ (ml.model_sha256 or '')[:16] }}&hellip;</span></div>
+      <div class="kv"><span>Trees</span><span>{{ ml.trees or 0 }}</span></div>
+      <div class="kv"><span>Features</span><span>{{ ml.features or 0 }}</span></div>
+      <div class="kv"><span>Source</span><span>{{ ml.feature_source or '—' }}</span></div>
+      <div class="kv"><span>Bytes scored</span><span>{{ ml.bytes or 0 }}</span></div>
+    </div>
+  </div>
+  <div class="chart-row">
+    <div class="chart-box">
+      <h3>P(malicious) vs threshold</h3>
+      <div id="mlGauge"></div>
+      <div class="empty">Threshold {{ ml.threshold }} &rarr; verdict {{ ml.verdict or '—' }} &rarr; threat level
+        {{ lvl or '—' }}. The probability is uncalibrated, so the level is a band around the threshold,
+        not a confidence.</div>
+    </div>
+    <div class="chart-box">
+      <h3>SHAP by group (log-odds)</h3>
+      <div id="mlGroups"></div>
+      <div class="empty">Red pushes towards malicious, green towards benign; the bar is the summed SHAP of the group.</div>
+    </div>
+  </div>
+  <div class="chart-row single">
+    <div class="chart-box">
+      <h3>Top Features (SHAP log-odds)</h3>
+      <div id="mlFeatures"></div>
+      <div class="empty">Each feature's own contribution to the log-odds, in feature-index order.</div>
+    </div>
+  </div>
+  {% set expl = ml.explanation or {} %}
+  {% if expl and expl.group_rollup %}
+  <div class="card">
+    <h3>Group Attribution (SHAP log-odds)</h3>
+    <table>
+      <tr><th>group</th><th>shap</th><th>in analyzer</th></tr>
+      {% for g in expl.group_rollup %}
+      <tr><td class="mono">{{ g.group }}</td><td class="mono">{{ '%.4f'|format(g.shap_log_odds or 0) }}</td>
+          <td>{{ 'yes' if g.analyzer_implemented else 'no' }}</td></tr>
+      {% endfor %}
+    </table>
+    <p class="note">Base {{ '%.4f'|format(expl.base_log_odds or 0) }} + &Sigma;SHAP {{ '%.4f'|format(expl.sum_shap or 0) }}
+      = prediction {{ '%.4f'|format(expl.prediction_log_odds or 0) }} (consistency error {{ expl.consistency_error or 0 }}).</p>
+  </div>
+  {% endif %}
+  {% if expl and expl.top_features %}
+  <div class="card">
+    <h3>Top Features (SHAP)</h3>
+    <table>
+      <tr><th>#</th><th>group</th><th>label / evidence</th><th>direction</th><th>shap</th></tr>
+      {% for f in expl.top_features %}
+      <tr><td class="mono">{{ f.feature_index }}</td><td class="mono">{{ f.group }}</td>
+          <td class="mono">{{ f.label or f.evidence or '—' }}</td>
+          <td>{{ f.direction or '—' }}</td>
+          <td class="mono">{{ '%.4f'|format(f.shap_log_odds or 0) }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+
+{# ================= External Tooling ================= #}
+{% set die = payload.die or {} %}
+{% set yara = payload.extraction.yara or {} %}
+{% set cm = payload.extraction.cminer or {} %}
+{% set xxd = payload.extraction.xxd or {} %}
+<section id="tooling">
+  <div class="stats-row" id="toolStats"></div>
+  <div class="grid2">
+    <div class="card">
+      <h3>Detect It Easy</h3>
+      {% if not die.available %}
+      <div class="empty">Detect It Easy was not run for this sample.</div>
+      {% else %}
+      <div class="kv"><span>Packed</span><span style="color:{{ 'var(--status-malicious)' if die.packed else 'var(--status-clean)' }}">{{ 'yes' if die.packed else 'no' }}</span></div>
+      <div class="kv"><span>Version</span><span class="mono">{{ die.die_version or '—' }}</span></div>
+      <div class="kv"><span>Databases</span><span class="mono">{{ die.databases or 0 }}</span></div>
+      <div class="kv"><span>Unknown matches</span><span class="mono">{{ die.unknown_count or 0 }}</span></div>
+      <div class="kv"><span>Scan</span><span class="mono">{{ '%.3f'|format(die.seconds or 0) }}s</span></div>
+      {% for label, items in [('Packers', die.packers), ('Compilers', die.compilers), ('Linkers', die.linkers), ('Other', die.others)] %}
+      {% if items %}
+      <div class="kv"><span>{{ label }}</span><span class="mono">{{ items|join(', ') }}</span></div>
+      {% endif %}
+      {% endfor %}
+      {% endif %}
+    </div>
+    <div class="card">
+      <h3>YARA</h3>
+      {% if not yara or not yara.attempted %}
+      <div class="empty">YARA was not run for this sample.</div>
+      {% elif not yara.available %}
+      <div class="empty">YARA unavailable &mdash; WSL or the scanner could not be started.</div>
+      {% else %}
+      <div class="kv"><span>Status</span>
+        <span style="color:{{ 'var(--status-suspicious)' if yara.rules_matched else 'var(--text-dim)' }}">
+          {{ ('%d match(es)'|format(yara.rules_matched or 0)) if yara.rules_matched else 'no matches' }}
+        </span></div>
+      <div class="kv"><span>Rules loaded</span><span class="mono">{{ yara.rule_files_loaded or 0 }} / {{ yara.rule_files_found or 0 }}</span></div>
+      <div class="kv"><span>Rule files failed</span>
+        <span class="mono" style="color:{{ 'var(--status-malicious)' if yara.rule_files_failed else 'var(--text-dim)' }}">{{ yara.rule_files_failed or 0 }}</span></div>
+      <div class="kv"><span>Workers</span><span class="mono">{{ yara.worker_threads or 0 }}</span></div>
+      <div class="kv"><span>Scan</span><span class="mono">exit {{ yara.exit_code if yara.exit_code is not none else '-' }} &middot; {{ '%.3f'|format(yara.seconds or 0) }}s</span></div>
+      {% if yara.rules_directory %}
+      <div class="kv"><span>Rules dir</span><span class="mono">{{ yara.rules_directory }}</span></div>
+      {% endif %}
+      {% if yara.matches %}
+      <table>
+        <tr><th>rule</th><th>strings</th><th>offsets</th></tr>
+        {% for m in yara.matches %}
+        <tr>
+          <td class="mono" style="color:var(--status-suspicious)">{{ m.identifier }}</td>
+          <td class="mono" style="color:var(--accent-cyan)">
+            {% for s in (m.strings or []) %}{{ s.identifier }}{% if not loop.last %}, {% endif %}{% endfor %}
+          </td>
+          <td class="mono" style="color:var(--text-dim)">
+            {% for s in (m.strings or []) %}{% for o in (s.offsets or []) %}{{ o }}{% if not loop.last %}, {% endif %}{% endfor %}{% if not loop.last %}; {% endif %}{% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No YARA rules matched this sample.</div>
+      {% endif %}
+      {% endif %}
+    </div>
+    <div class="card">
+      <h3>Cminer <span style="font-weight:400;color:var(--text-dim);font-size:11px">code caves</span></h3>
+      {% if not cm or not cm.attempted %}
+      <div class="empty">Cminer was not run for this sample.</div>
+      {% elif not cm.applicable %}
+      <div class="empty">Cminer only analyzes PE files &mdash; skipped.</div>
+      {% elif not cm.available %}
+      <div class="empty">Cminer unavailable &mdash; WSL or the Cminer binary could not be used.</div>
+      {% else %}
+      <div class="kv"><span>Caves</span>
+        <span class="mono" style="color:{{ 'var(--status-suspicious)' if cm.cave_count else 'var(--text-dim)' }}">{{ cm.cave_count or 0 }}</span></div>
+      <div class="kv"><span>Total cave bytes</span><span class="mono">{{ cm.total_cave_bytes or 0 }}</span></div>
+      <div class="kv"><span>Largest cave</span><span class="mono">{{ cm.largest_cave_bytes or 0 }}</span></div>
+      <div class="kv"><span>Min cave size</span><span class="mono">{{ cm.minimum_cave_size or 0 }}</span></div>
+      <div class="kv"><span>Scan</span><span class="mono">exit {{ cm.exit_code if cm.exit_code is not none else '-' }} &middot; {{ '%.3f'|format(cm.seconds or 0) }}s</span></div>
+      {% if cm.caves %}
+      <table>
+        <tr><th>section</th><th>size</th><th>start</th><th>end</th><th>file off</th></tr>
+        {% for c in cm.caves %}
+        <tr>
+          <td class="mono" style="color:var(--accent-cyan)">{{ c.section }}</td>
+          <td class="mono" style="color:{{ 'var(--status-suspicious)' if c.size == cm.largest_cave_bytes else 'var(--text-main)' }}">{{ c.size }}</td>
+          <td class="mono" style="color:var(--text-dim)">0x{{ '%x'|format(c.start_address) }}</td>
+          <td class="mono" style="color:var(--text-dim)">0x{{ '%x'|format(c.end_address) }}</td>
+          <td class="mono" style="color:var(--status-purple)">0x{{ '%x'|format(c.file_offset) }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No code caves at or above the minimum size.</div>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+  {% if xxd and xxd.output %}
+  <div class="card">
+    <h3>xxd <span style="font-weight:400;color:var(--text-dim);font-size:11px">WSL hex dump</span></h3>
+    <div class="hex-toolbar">
+      <span class="mono" style="color:var(--text-dim)">
+        {{ xxd.output_full_bytes or 0 }} bytes total
+        {%- if xxd.truncated %} &middot; showing a bounded preview{% endif %}
+        {%- if xxd.exit_code is not none %} &middot; exit {{ xxd.exit_code }}{% endif %}
+      </span>
+      <button class="copy-btn" id="copyXxd" style="margin-left:auto">Copy Preview</button>
+    </div>
+    {# The dump lives in the element's TEXT, not an attribute: it contains
+       newlines and can contain '<' (byte 0x3c), which would terminate the
+       attribute or start a bogus tag. #}
+    <pre id="xxdBody" class="hexview">{{ xxd.output | e }}</pre>
+  </div>
+  {% endif %}
+</section>
 </main>
 
 <div id="detail">
   <div id="detailHead">
     <span class="dt-badge" id="detailBadge">INFO</span>
     <div class="dt-title"><span id="detailTitle"></span><span class="dt-sub" id="detailSub"></span></div>
-    <button class="dt-x" id="detailClose" title="Close">×</button>
+    <button class="dt-x" id="detailClose" title="Close">&times;</button>
   </div>
   <div id="detailBody"></div>
 </div>
@@ -1287,6 +1544,8 @@ svg.geo{background:radial-gradient(ellipse at 50% 42%,#111d31 0%,var(--bg) 72%)}
 <script>
 "use strict";
 const DATA = JSON.parse(document.getElementById("payload").textContent);
+const HAS_D3 = typeof d3 !== "undefined";
+if (!HAS_D3) console.warn("d3.min.js was not inlined - maps, graphs and charts are skipped.");
 const AMP = String.fromCharCode(38);
 const esc = s => String(s).replace(/[&<>"]/g, c => {
   if (c === AMP) return AMP + "amp;";
@@ -1295,10 +1554,10 @@ const esc = s => String(s).replace(/[&<>"]/g, c => {
   return AMP + "quot;";
 });
 const HEX = n => (typeof n === "number") ? "0x" + n.toString(16) : n;
-const TC = {sample:"#4d8dff",section:"#22d3ee",dll:"#a78bfa",capability:"#ffd166",ioc:"#2ee6a8",family:"#ff9f43",malicious:"#ff4d5e",function:"#34d399",analysis:"#818cf8"};
+const TC = {sample:"#38bdf8",section:"#06b6d4",dll:"#8b5cf6",capability:"#fbbf24",ioc:"#10b981",family:"#f59e0b",malicious:"#f43f5e",function:"#34d399",analysis:"#6366f1"};
 const TS = {sample:26,section:9,dll:11,capability:10,ioc:9,family:11,malicious:13,function:9,analysis:14};
 const TL = {sample:"SAMPLE",section:"SECTION",dll:"DLL",capability:"CAPABILITY",ioc:"IOC",family:"FAMILY",malicious:"MALICIOUS",function:"FUNCTION",analysis:"ANALYSIS"};
-const PAL = ["#4d8dff","#22d3ee","#a78bfa","#ffd166","#2ee6a8","#ff9f43","#ff4d5e","#f472b6","#818cf8","#34d399","#c084fc","#fb923c"];
+const PAL = ["#38bdf8","#06b6d4","#8b5cf6","#fbbf24","#10b981","#f59e0b","#f43f5e","#ec4899","#6366f1","#34d399","#a855f7","#fb923c"];
 
 /* ═══ Navigation ═══ */
 document.querySelectorAll("nav button").forEach(b => {
@@ -1323,30 +1582,36 @@ document.querySelectorAll("nav button").forEach(b => {
     if (b.dataset.t === "ml") {
       try { drawML(); } catch (err) { console.error("ML view failed", err); }
     }
+    if (b.dataset.t === "d3fend") {
+      try { drawD3fend(); } catch (err) { console.error("D3FEND view failed", err); }
+    }
     window.scrollTo({top:0,behavior:"smooth"});
   };
 });
 
 /* ═══ Theme ═══ */
 const themeBtn = document.getElementById("themeBtn");
-let curTheme = localStorage.getItem("dash-theme") || "dark";
+let store = null;
+try { store = window.localStorage; } catch (err) { store = null; }
+let curTheme = (store && store.getItem("dash-theme")) || "dark";
 document.documentElement.setAttribute("data-theme", curTheme);
 themeBtn.textContent = curTheme === "dark" ? "☀" : "🌙";
 themeBtn.onclick = () => {
   curTheme = curTheme === "dark" ? "light" : "dark";
   document.documentElement.setAttribute("data-theme", curTheme);
-  localStorage.setItem("dash-theme", curTheme);
+  try { if (store) store.setItem("dash-theme", curTheme); } catch (err) { /* not persisted */ }
   themeBtn.textContent = curTheme === "dark" ? "☀" : "🌙";
-  drawAllCharts(); drawThreat(); renderGraphs(); drawML();
+  if (HAS_D3) { drawAllCharts(); drawThreat(); renderGraphs(); drawML(); }
 };
 document.getElementById("topBtn").onclick = () => window.scrollTo({top:0,behavior:"smooth"});
 
 /* ═══ Copy ═══ */
 document.addEventListener("click", e => {
-  const btn = e.target.closest("[data-copy]");
+  const btn = e.target.closest("[data-copy], [data-copy-val]");
   if (!btn) return;
   let text = "";
-  if (btn.dataset.copy === "sha256") text = document.getElementById("sha256Val").textContent;
+  if (btn.dataset.copyVal !== undefined) text = btn.dataset.copyVal;
+  else if (btn.dataset.copy === "sha256") text = document.getElementById("sha256Val").textContent;
   if (text) {
     navigator.clipboard.writeText(text).then(() => {
       btn.classList.add("copied"); btn.textContent = "\u2713 Copied";
@@ -1482,7 +1747,7 @@ function showDetail(title, body, meta) {
   const badge = document.getElementById("detailBadge");
   const sub = document.getElementById("detailSub");
   const type = (meta && meta.type) || "info";
-  const color = TC[type] || "#4d8dff";
+  const color = TC[type] || "#38bdf8";
   badge.textContent = TL[type] || type.toUpperCase();
   badge.style.background = color + "1a";
   badge.style.color = color;
@@ -1598,8 +1863,8 @@ function renderXxd() {
    ccTLD) placed at least one IOC in. Country outlines come from the vendored
    world-atlas TopoJSON, so nothing is fetched at view time (file:// safe).
    ═══════════════════════════════════════════════════════════════════════════ */
-const VCOLOR = {malicious:"#ff4d5e",suspicious:"#ff9f43",unknown:"#22d3ee",
-                benign:"#2ee6a8",informational:"#4d8dff"};
+const VCOLOR = {malicious:"#f43f5e",suspicious:"#f59e0b",unknown:"#06b6d4",
+                benign:"#10b981",informational:"#38bdf8"};
 const VRANK = {malicious:3,suspicious:2,unknown:1,benign:0,informational:0};
 const KIND_SHORT = {ip:"ip",domain:"dom",url:"url",email:"mail"};
 function vColor(v) { return VCOLOR[v] || VCOLOR.unknown; }
@@ -1712,6 +1977,7 @@ let threatFilter = "all";
 
 /* View switch: geo map (default) or the info-block graph. */
 function drawThreat() {
+  if (!HAS_D3) return;
   const geoBox = document.getElementById("viewGeo");
   const infoBox = document.getElementById("viewInfo");
   if (geoBox) geoBox.style.display = threatView === "geo" ? "block" : "none";
@@ -1753,12 +2019,12 @@ function geoStatsRow() {
   const byKind = {};
   for (const it of geoState.items) byKind[it.kind] = (byKind[it.kind] || 0) + 1;
   const items = [
-    {i:"\u{1F30D}", v: geoState.rows.length, l:"Countries", c:"#22d3ee"},
-    {i:"\u{1F4CD}", v: geoState.items.length, l:"Placed IOCs", c:"#2ee6a8"},
-    {i:"\u{1F6F0}", v: byKind.ip || 0, l:"IPs", c:"#4d8dff"},
-    {i:"\u{1F517}", v: byKind.domain || 0, l:"Domains", c:"#a78bfa"},
-    {i:"\u26D3", v: geoState.arcs.length, l:"Shared-ASN links", c:"#ff9f43"},
-    {i:"\u2754", v: s.unmapped || 0, l:"No geolocation", c:"#6b7f9e"},
+    {i:"\u{1F30D}", v: geoState.rows.length, l:"Countries", c:"#06b6d4"},
+    {i:"\u{1F4CD}", v: geoState.items.length, l:"Placed IOCs", c:"#10b981"},
+    {i:"\u{1F6F0}", v: byKind.ip || 0, l:"IPs", c:"#38bdf8"},
+    {i:"\u{1F517}", v: byKind.domain || 0, l:"Domains", c:"#8b5cf6"},
+    {i:"\u26D3", v: geoState.arcs.length, l:"Shared-ASN links", c:"#f59e0b"},
+    {i:"\u2754", v: s.unmapped || 0, l:"No geolocation", c:"#64748b"},
   ];
   st.innerHTML = items.map(x =>
     '<div class="stat-card"><div class="si" style="color:' + (x.c || "var(--accent)") + '">' + x.i +
@@ -2015,7 +2281,7 @@ function drawInfoGraphStatic(svg, W, H, gd) {
     .attr("data-id",d=>d.id).attr("data-type",d=>d.type)
     .attr("transform",d=>`translate(${pos.get(d.id).x},${pos.get(d.id).y})`);
   ng.append("rect").attr("class","info-box").attr("x",-82).attr("y",-18).attr("width",164).attr("height",36);
-  ng.append("circle").attr("class","core").attr("cx",-68).attr("cy",0).attr("r",6).attr("fill",d=>TC[d.type]||"#4d8dff");
+  ng.append("circle").attr("class","core").attr("cx",-68).attr("cy",0).attr("r",6).attr("fill",d=>TC[d.type]||"#38bdf8");
   ng.append("text").attr("class","node-label").attr("x",-55).attr("y",-1).text(d=>{const s=String(d.label||d.id);return s.length>22?s.slice(0,21)+"…":s;});
   ng.append("text").attr("class","node-sub").attr("x",-55).attr("y",11).text(d=>String(d.sub||d.type||"").slice(0,25));
   ng.append("title").text(d=>d.label||d.id);
@@ -2508,7 +2774,7 @@ function renderAsmStats() {
     const stack = ASM_CAT_DEF.filter(c => cats[c.key]).map(c =>
       '<i title="' + esc(c.label) + ': ' + cats[c.key] + '" style="width:' +
       (cats[c.key] * 100 / Math.max(1, ins.length)).toFixed(2) +
-      '%;background:var(--c-' + c.key + ',#6b7f9e)"></i>').join("");
+      '%;background:var(--c-' + c.key + ',#64748b)"></i>').join("");
     const shown = ins.length < all.length
       ? "<b>" + ins.length + "</b> of <b>" + all.length + "</b> instructions"
       : "<b>" + ins.length + "</b> instructions";
@@ -2536,7 +2802,7 @@ function renderAsmLegend() {
   if (!el) return;
   el.innerHTML = ASM_CAT_DEF.map(c =>
     '<span title="' + esc(c.hint) + '"><b style="background:var(--c-' + c.key +
-    ',#6b7f9e)"></b>' + esc(c.label) + "</span>").join("");
+    ',#64748b)"></b>' + esc(c.label) + "</span>").join("");
 }
 function asmMapViewport() {
   const map = document.getElementById("asmMap"), win = document.getElementById("asmWin");
@@ -2555,7 +2821,7 @@ function asmMapViewport() {
     bar.title = (ASM_CAT_LABEL[r.cat] || r.cat) + " · " + r.disasm;
     bar.style.top = (i * h / max) + "px";
     bar.style.height = rowH + "px";
-    bar.style.background = "var(--c-" + r.cat + ",#35507f)";
+    bar.style.background = "var(--c-" + r.cat + ",#2a3d5c)";
     /* Fade what the search rejected, so the surviving hits read as a pattern. */
     if (q) bar.style.opacity = rowMatches(r, q, null) ? "1" : ".22";
     map.appendChild(bar);
@@ -2960,6 +3226,7 @@ function renderRankedGraph(svgId, graph, opts) {
 }
 
 function renderGraphs() {
+  if (!HAS_D3) return;
   const o = cgControls();
   const cg = renderRankedGraph("cfgsvg", DATA.graphs.callgraph, Object.assign({maxNodes: 220}, o));
   renderRankedGraph("secsvg", DATA.graphs.section, {layout: "layered", maxNodes: 180, compact: true});
@@ -3030,7 +3297,7 @@ document.getElementById("cgAll")?.addEventListener("click", function () {
   let t = null;
   el.oninput = () => { clearTimeout(t); t = setTimeout(renderGraphs, 140); };
 })();
-window.addEventListener("load", () => { renderGraphs(); });
+window.addEventListener("load", () => { if (HAS_D3) renderGraphs(); });
 
 /* ═══ D3 Charts ═══ */
 function addTip(sel) {
@@ -3063,11 +3330,11 @@ function chartHBar(containerId, labels, values, colorFn) {
 
   g.selectAll("text.v").data(values.map((v,i)=>({v,l:labels[i]}))).join("text")
     .attr("class","v").attr("x", d=>x(d.v)+5).attr("y", d=>y(String(d.l))+y.bandwidth()/2+4)
-    .attr("font-size","10").attr("fill","#8b9cb5").attr("font-family","var(--mono)").text(d=>d.v);
+    .attr("font-size","10").attr("fill","#94a3b8").attr("font-family","var(--mono)").text(d=>d.v);
 
   g.selectAll("text.l").data(values.map((v,i)=>({v,l:labels[i]}))).join("text")
     .attr("class","l").attr("x", padL-6).attr("y", d=>y(String(d.l))+y.bandwidth()/2+4)
-    .attr("text-anchor","end").attr("font-size","10").attr("fill","#6b7f9e")
+    .attr("text-anchor","end").attr("font-size","10").attr("fill","#64748b")
     .attr("font-family","var(--mono)").text(d=>String(d.l||"").slice(0,12));
 
   addTip(bars.append("title").text(d=>d.l+": "+d.v));
@@ -3109,13 +3376,13 @@ function chartVBar(containerId, labels, values, colorFn) {
   /* x labels */
   g.selectAll("text.xl").data(labels).join("text")
     .attr("class","xl").attr("x",d=>x(String(d))+x.bandwidth()/2).attr("y",H-pad.b+14)
-    .attr("text-anchor","middle").attr("font-size","9").attr("fill","#6b7f9e")
+    .attr("text-anchor","middle").attr("font-size","9").attr("fill","#64748b")
     .attr("font-family","var(--mono)").text(d=>String(d).slice(0,8));
 
   /* y axis */
   g.selectAll("text.yl").data(y.ticks(5)).join("text")
     .attr("class","yl").attr("x",pad.l-8).attr("y",d=>y(d)+3)
-    .attr("text-anchor","end").attr("font-size","9").attr("fill","#6b7f9e")
+    .attr("text-anchor","end").attr("font-size","9").attr("fill","#64748b")
     .attr("font-family","var(--mono)").text(d=>d);
 
   /* tooltip */
@@ -3151,10 +3418,10 @@ function chartDonut(containerId, labels, values) {
 
   /* center */
   g.append("text").attr("text-anchor","middle").attr("y",2)
-    .attr("font-size","16").attr("font-weight","700").attr("fill","#e2eaf6")
+    .attr("font-size","16").attr("font-weight","700").attr("fill","#f1f5f9")
     .attr("font-family","var(--mono)").text(total);
   g.append("text").attr("text-anchor","middle").attr("y",18)
-    .attr("font-size","9").attr("fill","#6b7f9e").text("total");
+    .attr("font-size","9").attr("fill","#64748b").text("total");
 
   /* labels */
   const lg = svg.append("g");
@@ -3163,7 +3430,7 @@ function chartDonut(containerId, labels, values) {
     lg.append("circle").attr("cx",10).attr("cy",H/2-labels.length*9+i*18+4)
       .attr("r",4).attr("fill",PAL[i%PAL.length]);
     lg.append("text").attr("x",20).attr("y",H/2-labels.length*9+i*18+8)
-      .attr("font-size","10").attr("fill","#8b9cb5").attr("font-family","var(--mono)")
+      .attr("font-size","10").attr("fill","#94a3b8").attr("font-family","var(--mono)")
       .text(String(l).slice(0,14)+" "+pct+"% ("+values[i]+")");
   });
 
@@ -3213,19 +3480,19 @@ function chartLine(containerId, labels, values, color) {
   /* dots */
   const dots = g.selectAll("circle.d").data(values.map((v,i)=>({v,l:labels[i],i}))).join("circle")
     .attr("class","d").attr("cx",d=>x(String(d.l))).attr("cy",d=>y(d.v)).attr("r",4)
-    .attr("fill",color).attr("stroke","#0a0e16").attr("stroke-width",1.5);
+    .attr("fill",color).attr("stroke","#06090e").attr("stroke-width",1.5);
 
   /* x labels */
   const step = Math.max(1, Math.ceil(labels.length/8));
   g.selectAll("text.xl").data(labels.filter((l,i)=>i%step===0)).join("text")
     .attr("class","xl").attr("x",d=>x(String(d))).attr("y",H-pad.b+14)
-    .attr("text-anchor","middle").attr("font-size","9").attr("fill","#6b7f9e")
+    .attr("text-anchor","middle").attr("font-size","9").attr("fill","#64748b")
     .attr("font-family","var(--mono)").text(d=>String(d).slice(0,6));
 
   /* y axis */
   g.selectAll("text.yl").data(y.ticks(5)).join("text").attr("class","yl")
     .attr("x",pad.l-7).attr("y",d=>y(d)+3).attr("text-anchor","end")
-    .attr("font-size","9").attr("fill","#6b7f9e").attr("font-family","var(--mono)")
+    .attr("font-size","9").attr("fill","#64748b").attr("font-family","var(--mono)")
     .text(d=>d.toFixed(1));
 
   /* threshold line for entropy */
@@ -3233,9 +3500,9 @@ function chartLine(containerId, labels, values, color) {
     const ty = y(7.2);
     if (ty>0 && ty<H) {
       g.append("line").attr("x1",pad.l).attr("x2",W-pad.r).attr("y1",ty).attr("y2",ty)
-        .attr("stroke","#ff4d5e").attr("stroke-dasharray","4,4").attr("opacity",0.5);
+        .attr("stroke","#f43f5e").attr("stroke-dasharray","4,4").attr("opacity",0.5);
       g.append("text").attr("x",W-pad.r).attr("y",ty-4).attr("text-anchor","end")
-        .attr("font-size","9").attr("fill","#ff4d5e").text("threshold 7.2");
+        .attr("font-size","9").attr("fill","#f43f5e").text("threshold 7.2");
     }
   }
 
@@ -3268,9 +3535,9 @@ function chartGauge(containerId, score) {
 
   /* colored segments */
   const segs = [
-    {label:"Clean", color:"#2ee6a8", from:0, to:25},
-    {label:"Suspicious", color:"#ffd166", from:25, to:60},
-    {label:"Malicious", color:"#ff4d5e", from:60, to:100},
+    {label:"Clean", color:"#10b981", from:0, to:25},
+    {label:"Suspicious", color:"#fbbf24", from:25, to:60},
+    {label:"Malicious", color:"#f43f5e", from:60, to:100},
   ];
   segs.forEach(s => {
     const a1 = startA + (s.from/100)*(endA-startA);
@@ -3282,7 +3549,7 @@ function chartGauge(containerId, score) {
   /* score arc */
   const scoreA = startA + (score/100)*(endA-startA);
   const scoreArc = d3.arc().innerRadius(r-18).outerRadius(r).startAngle(startA).endAngle(scoreA);
-  const color = score>=60?"#ff4d5e":score>=25?"#ffd166":"#2ee6a8";
+  const color = score>=60?"#f43f5e":score>=25?"#fbbf24":"#10b981";
   g.append("path").attr("d", scoreArc).attr("fill", color).attr("opacity",0.9)
     .transition().duration(1000).attrTween("opacity", ()=>d3.interpolate(0.5,0.9));
 
@@ -3290,22 +3557,22 @@ function chartGauge(containerId, score) {
   const needleAngle = startA + (score/100)*(endA-startA);
   const nx = cx + Math.cos(needleAngle)*(r-22), ny = cy + Math.sin(needleAngle)*(r-22);
   g.append("line").attr("x1",cx).attr("y1",cy).attr("x2",nx).attr("y2",ny)
-    .attr("stroke","#e2eaf6").attr("stroke-width",2).attr("stroke-linecap","round");
-  g.append("circle").attr("cx",cx).attr("cy",cy).attr("r",5).attr("fill","#e2eaf6");
+    .attr("stroke","#f1f5f9").attr("stroke-width",2).attr("stroke-linecap","round");
+  g.append("circle").attr("cx",cx).attr("cy",cy).attr("r",5).attr("fill","#f1f5f9");
 
   /* score text */
   g.append("text").attr("x",cx).attr("y",cy-30).attr("text-anchor","middle")
     .attr("font-size","28").attr("font-weight","800").attr("fill",color)
     .attr("font-family","var(--mono)").text(score);
   g.append("text").attr("x",cx).attr("y",cy-14).attr("text-anchor","middle")
-    .attr("font-size","9").attr("fill","#6b7f9e").attr("letter-spacing","1.5")
+    .attr("font-size","9").attr("fill","#64748b").attr("letter-spacing","1.5")
     .text("THREAT SCORE");
 
   /* labels */
   g.append("text").attr("x",cx-r).attr("y",cy+14).attr("text-anchor","middle")
-    .attr("font-size","9").attr("fill","#2ee6a8").text("0");
+    .attr("font-size","9").attr("fill","#10b981").text("0");
   g.append("text").attr("x",cx+r).attr("y",cy+14).attr("text-anchor","middle")
-    .attr("font-size","9").attr("fill","#ff4d5e").text("100");
+    .attr("font-size","9").attr("fill","#f43f5e").text("100");
 }
 
 /* ═══ ML section: probability gauge + SHAP contribution bars ═══ */
@@ -3328,35 +3595,35 @@ function chartProbGauge(containerId, prob, threshold) {
     .attr("fill",color).attr("opacity",op);
 
   band(0, 1, "currentColor", 0.06);
-  band(0, thr, "#2ee6a8", 0.3);
-  band(thr, 1, "#ff4d5e", 0.3);
-  band(0, p, p>=thr ? "#ff4d5e" : "#2ee6a8", 0.9);
+  band(0, thr, "#10b981", 0.3);
+  band(thr, 1, "#f43f5e", 0.3);
+  band(0, p, p>=thr ? "#f43f5e" : "#10b981", 0.9);
 
   /* threshold tick */
   const ta = needleAt(thr);
   g.append("line")
     .attr("x1", cx+Math.cos(ta)*(ir-4)).attr("y1", cy+Math.sin(ta)*(ir-4))
     .attr("x2", cx+Math.cos(ta)*(r+5)).attr("y2", cy+Math.sin(ta)*(r+5))
-    .attr("stroke","#ffd166").attr("stroke-width",2).attr("stroke-linecap","round");
+    .attr("stroke","#fbbf24").attr("stroke-width",2).attr("stroke-linecap","round");
 
   /* needle */
   const na = needleAt(p);
   g.append("line").attr("x1",cx).attr("y1",cy)
     .attr("x2", cx+Math.cos(na)*(ir-6)).attr("y2", cy+Math.sin(na)*(ir-6))
-    .attr("stroke","#e2eaf6").attr("stroke-width",2).attr("stroke-linecap","round");
-  g.append("circle").attr("cx",cx).attr("cy",cy).attr("r",5).attr("fill","#e2eaf6");
+    .attr("stroke","#f1f5f9").attr("stroke-width",2).attr("stroke-linecap","round");
+  g.append("circle").attr("cx",cx).attr("cy",cy).attr("r",5).attr("fill","#f1f5f9");
 
-  const color = p>=thr ? "#ff4d5e" : "#2ee6a8";
+  const color = p>=thr ? "#f43f5e" : "#10b981";
   g.append("text").attr("x",cx).attr("y",cy-34).attr("text-anchor","middle")
     .attr("font-size","26").attr("font-weight","800").attr("fill",color)
     .attr("font-family","var(--mono)").text(p.toFixed(4));
   g.append("text").attr("x",cx).attr("y",cy-17).attr("text-anchor","middle")
-    .attr("font-size","9").attr("fill","#6b7f9e").attr("letter-spacing","1.5")
+    .attr("font-size","9").attr("fill","#64748b").attr("letter-spacing","1.5")
     .text("P(MALICIOUS)");
   g.append("text").attr("x",cx-r).attr("y",cy+14).attr("text-anchor","middle")
-    .attr("font-size","9").attr("fill","#2ee6a8").text("0");
+    .attr("font-size","9").attr("fill","#10b981").text("0");
   g.append("text").attr("x",cx+r).attr("y",cy+14).attr("text-anchor","middle")
-    .attr("font-size","9").attr("fill","#ff4d5e").text("1.0");
+    .attr("font-size","9").attr("fill","#f43f5e").text("1.0");
 }
 
 /* Signed SHAP bars: red towards malicious, green towards benign, zero line kept. */
@@ -3383,7 +3650,7 @@ function chartShapBars(containerId, labels, values, tips) {
   const bars = g.selectAll("rect.s").data(data).join("rect").attr("class","s")
     .attr("y",d=>y(d.k)).attr("height",y.bandwidth())
     .attr("x",x(0)).attr("width",0).attr("rx",3)
-    .attr("fill",d=>d.v>=0?"#ff4d5e":"#2ee6a8").attr("opacity",0.85);
+    .attr("fill",d=>d.v>=0?"#f43f5e":"#10b981").attr("opacity",0.85);
   bars.transition().duration(600).delay((d,i)=>i*40)
     .attr("x",d=>Math.min(x(0),x(d.v)))
     .attr("width",d=>Math.max(2,Math.abs(x(d.v)-x(0))));
@@ -3392,12 +3659,12 @@ function chartShapBars(containerId, labels, values, tips) {
     .attr("y",d=>y(d.k)+y.bandwidth()/2+4)
     .attr("x",d=>d.v>=0?x(d.v)+5:x(d.v)-5)
     .attr("text-anchor",d=>d.v>=0?"start":"end")
-    .attr("font-size","10").attr("fill","#8b9cb5").attr("font-family","var(--mono)")
+    .attr("font-size","10").attr("fill","#94a3b8").attr("font-family","var(--mono)")
     .text(d=>d.v.toFixed(3));
 
   g.selectAll("text.l").data(data).join("text").attr("class","l")
     .attr("x",padL-8).attr("y",d=>y(d.k)+y.bandwidth()/2+4)
-    .attr("text-anchor","end").attr("font-size","10").attr("fill","#6b7f9e")
+    .attr("text-anchor","end").attr("font-size","10").attr("fill","#64748b")
     .attr("font-family","var(--mono)").text(d=>d.l.slice(0,34));
 
   bars.on("mousemove", function(ev,d) {
@@ -3409,13 +3676,14 @@ function chartShapBars(containerId, labels, values, tips) {
 }
 
 function drawML() {
+  if (!HAS_D3) return;
   const ml = DATA.ml || {};
   const expl = ml.explanation || {};
   const rollup = expl.group_rollup || [];
   const tops = expl.top_features || [];
   /* Same palette as the Jinja card above: one band, one colour, everywhere. */
-  const LEVEL_COLOR = {low:"#2ee6a8", moderate:"#ffd166", high:"#ff4d5e",
-                       critical:"#ff4d5e", "n/a":"#6b7f9e"};
+  const LEVEL_COLOR = {low:"#10b981", moderate:"#fbbf24", high:"#f43f5e",
+                       critical:"#f43f5e", "n/a":"#64748b"};
   const stats = document.getElementById("mlStats");
   if (stats) {
     const cards = ml.ok ? [
@@ -3456,6 +3724,7 @@ function drawML() {
 }
 
 function drawAllCharts() {
+  if (!HAS_D3) return;
   const ch = DATA.charts || {};
   chartGauge("chGauge", DATA.verdict.score);
   if (ch.mnemonics && ch.mnemonics.labels.length)
@@ -3463,7 +3732,7 @@ function drawAllCharts() {
   if (ch.opcodes && ch.opcodes.labels.length)
     chartHBar("chOpcodes", ch.opcodes.labels, ch.opcodes.values, (v,i)=>PAL[(i+4)%PAL.length]);
   if (ch.section_entropy && ch.section_entropy.values.length)
-    chartLine("chEntropy", ch.section_entropy.labels, ch.section_entropy.values, "#22d3ee");
+    chartLine("chEntropy", ch.section_entropy.labels, ch.section_entropy.values, "#06b6d4");
   if (ch.functions && ch.functions.labels.length)
     chartHBar("chFunctions", ch.functions.labels, ch.functions.values, ()=> "#34d399");
   if (ch.ioc_counts && ch.ioc_counts.labels.length)
@@ -3471,9 +3740,9 @@ function drawAllCharts() {
   if (ch.capability_scope && ch.capability_scope.labels.length)
     chartDonut("chScope", ch.capability_scope.labels, ch.capability_scope.values);
   if (ch.imports_per_dll && ch.imports_per_dll.labels.length)
-    chartHBar("chImports", ch.imports_per_dll.labels, ch.imports_per_dll.values, (v,i)=>i%2===0?"#4d8dff":"#22d3ee");
+    chartHBar("chImports", ch.imports_per_dll.labels, ch.imports_per_dll.values, (v,i)=>i%2===0?"#38bdf8":"#06b6d4");
   if (ch.section_size && ch.section_size.values.length)
-    chartVBar("chSize", ch.section_size.labels, ch.section_size.values, ()=> "#a78bfa");
+    chartVBar("chSize", ch.section_size.labels, ch.section_size.values, ()=> "#8b5cf6");
 
   const cs = document.getElementById("chartStats");
   if (cs) {
@@ -3492,15 +3761,15 @@ function drawAllCharts() {
 }
 
 /* ═══ ATT&CK / STIX section ═══ */
-const SX_COLORS = {"attack-pattern":"#ff9f43","x-mitre-tactic":"#a78bfa","course-of-action":"#2ee6a8",
-  "indicator":"#22d3ee","malware":"#ff4d5e","tool":"#f472b6","vulnerability":"#ffd166",
-  "identity":"#4d8dff","intrusion-set":"#c084fc","report":"#6b7f9e"};
+const SX_COLORS = {"attack-pattern":"#f59e0b","x-mitre-tactic":"#8b5cf6","course-of-action":"#10b981",
+  "indicator":"#06b6d4","malware":"#f43f5e","tool":"#ec4899","vulnerability":"#fbbf24",
+  "identity":"#38bdf8","intrusion-set":"#a855f7","report":"#64748b"};
 const SX_R = {"attack-pattern":9,"x-mitre-tactic":12,"course-of-action":7,"indicator":8,
   "malware":9,"vulnerability":8,"identity":7};
 const SX_NAME = {"attack-pattern":"Technique","x-mitre-tactic":"Tactic","course-of-action":"Mitigation",
   "indicator":"Indicator","malware":"Malware","tool":"Tool","vulnerability":"Vulnerability",
   "identity":"Identity","intrusion-set":"Intrusion Set","report":"Report"};
-const sxColor = t => SX_COLORS[t] || "#6b7f9e";
+const sxColor = t => SX_COLORS[t] || "#64748b";
 const sxR = t => SX_R[t] || 6;
 const sxName = t => SX_NAME[t] || String(t).replace(/-/g," ");
 /* Reuse the shared detail drawer; map a STIX type to one of its colour keys. */
@@ -3721,7 +3990,7 @@ function drawStix() {
    the d3fend cache, so it exists even for a run with no STIX bundle. */
 function drawD3fend() {
   const D = DATA.d3fend;
-  const box = document.getElementById("stixD3fend");
+  const box = document.getElementById("d3fList");
   if (!D || !box || box.dataset.built) return;
   box.dataset.built = "1";
 
@@ -3768,7 +4037,7 @@ function drawD3fend() {
   if (D.source) notes.push("Source: " + D.source + ".");
   if (D.reason) notes.push(D.reason + ".");
   notes.push("Countermeasures are matched from the D3FEND ontology to the techniques capa matched on this sample.");
-  document.getElementById("d3fNote").textContent = notes.join(" ");
+  (document.getElementById("d3fNote") || {}).textContent = notes.join(" ");
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -3937,6 +4206,7 @@ function tkInit() {
 }
 
 function sxDrawGraph() {
+  if (!HAS_D3) return;
   const S = DATA.stix;
   if (sxSvgSel || !S || !S.available) return;
   const el = document.getElementById("stixSvg");
@@ -3949,7 +4219,7 @@ function sxDrawGraph() {
   const defs = svg.append("defs");
   defs.append("marker").attr("id","sxArrow").attr("viewBox","0 -5 10 10").attr("refX",17)
     .attr("refY",0).attr("markerWidth",5).attr("markerHeight",5).attr("orient","auto")
-    .append("path").attr("d","M0,-5L10,0L0,5").attr("fill","#284066");
+    .append("path").attr("d","M0,-5L10,0L0,5").attr("fill","#1c2b45");
 
   sxZoom = d3.zoom().scaleExtent([0.15,4]).on("zoom", ev => g.attr("transform", ev.transform));
   svg.call(sxZoom);
@@ -4052,6 +4322,140 @@ function sxFilter() {
 }
 
 /* init charts when analytics first shown (already handled by nav onclick) */
+
+/* ───────────────────────── added on top of the restored renderers ─────────
+   The sections above are covered by the renderers restored with this redesign.
+   Three pieces have no renderer because they were introduced with it: the CAR
+   filter, the live IOC filter/copy wiring, and the copied-state styling hook. */
+
+/* ---- CAR: filter the analytics list by technique, id, title or analytic type */
+(function () {
+  const q = document.getElementById("carSearch");
+  const wrap = document.getElementById("carTableWrap");
+  if (!q || !wrap) return;
+  const rows = Array.from(wrap.querySelectorAll(".car-row"));
+  const count = document.getElementById("carCount");
+  q.oninput = () => {
+    const s = q.value.trim().toLowerCase();
+    let shown = 0;
+    rows.forEach(r => {
+      const on = !s || (r.dataset.key || "").indexOf(s) !== -1;
+      r.style.display = on ? "" : "none";
+      if (on) shown++;
+    });
+    if (count) count.textContent = s ? shown + " / " + rows.length : String(rows.length);
+  };
+})();
+
+/* ---- IOCs: live filter across kinds, copy what survived it ----
+   Family clues and string indicators render as .fam-row rather than .ioc-row,
+   so both selectors have to be in the set or those rows ignore the filter
+   while the kind chips still claim to cover them. */
+(function () {
+  const box = document.getElementById("iocSearch");
+  if (!box) return;
+  const rows = Array.from(document.querySelectorAll("#iocs .ioc-row, #iocs .fam-row[data-kind]"));
+  const cards = Array.from(document.querySelectorAll("[data-ioc-card]"));
+  const chips = Array.from(document.querySelectorAll(".ioc-kind-chip"));
+  const stats = Array.from(document.querySelectorAll("#iocs .stat-card"));
+  const grand = stats.length ? stats[0].querySelector(".sv") : null;
+  let kind = "all";
+
+  const apply = () => {
+    const q = box.value.trim().toLowerCase();
+    let shown = 0;
+    const liveIn = new Map();
+    rows.forEach(r => {
+      const okKind = kind === "all" || r.dataset.kind === kind;
+      const okText = !q || (r.dataset.key || "").indexOf(q) !== -1;
+      const on = okKind && okText;
+      r.style.display = on ? "" : "none";
+      if (on) {
+        shown++;
+        const card = r.closest("[data-ioc-card]");
+        if (card) liveIn.set(card.dataset.iocCard, (liveIn.get(card.dataset.iocCard) || 0) + 1);
+      }
+    });
+    /* A card whose every row just went invisible leaves only a bare heading,
+       which reads as "the filter did nothing" - so the card goes too. */
+    cards.forEach(c => {
+      const k = c.dataset.iocCard;
+      c.style.display = liveIn.has(k) ? "" : "none";
+    });
+    if (grand) grand.textContent = String(shown);
+    chips.forEach(c => {
+      const k = c.dataset.kind;
+      const on = k === kind;
+      c.classList.toggle("active", on);
+      c.classList.toggle("on", on);
+    });
+  };
+
+  box.oninput = apply;
+  chips.forEach(c => {
+    c.onclick = () => { kind = c.dataset.kind || "all"; apply(); };
+  });
+
+  const reset = document.getElementById("iocReset");
+  if (reset) reset.onclick = () => {
+    box.value = ""; kind = "all"; apply();
+    box.focus();
+  };
+
+  const copyAll = document.getElementById("iocCopyAll");
+  if (copyAll) copyAll.onclick = () => {
+    const vals = rows.filter(r => r.style.display !== "none")
+      .map(r => (r.querySelector(".ioc-val") || r).textContent || "")
+      .map(t => t.trim()).filter(Boolean);
+    if (!vals.length) return;
+    navigator.clipboard.writeText(vals.join("\n")).then(() => {
+      copyAll.textContent = "Copied " + vals.length;
+      setTimeout(() => { copyAll.textContent = "Copy Visible"; }, 1500);
+    });
+  };
+
+  apply();
+})();
+
+/* ---- Tooling: what actually ran for this sample, and what it found.
+   #toolStats was an empty div even before the redesign - nothing ever filled
+   it - so it states the run's tool coverage rather than staying blank. */
+(function () {
+  const el = document.getElementById("toolStats");
+  if (!el) return;
+  const die = DATA.die || {};
+  const yara = (DATA.extraction || {}).yara || {};
+  const cm = (DATA.extraction || {}).cminer || {};
+  const xxd = (DATA.extraction || {}).xxd || {};
+  const r2 = (DATA.radare2 || {}).counts || {};
+  const capa = (DATA.capa || {}).counts || {};
+  const ml = DATA.ml || {};
+
+  const ran = (cond, label, value, colour) =>
+    ({ ok: !!cond, label: label, value: value, colour: colour });
+
+  const cards = [
+    ran(die.available, "Detect It Easy", die.available ? (die.packed ? "packed" : "not packed") : "not run",
+        die.packed ? "var(--status-malicious)" : (die.available ? "var(--status-clean)" : null)),
+    ran(yara.available && yara.attempted, "YARA",
+        yara.available ? ((yara.rules_matched || 0) + " rule match(es)") : "not run",
+        yara.rules_matched ? "var(--status-suspicious)" : (yara.available ? "var(--status-clean)" : null)),
+    ran(cm.available && cm.applicable, "Cminer",
+        cm.available ? ((cm.cave_count || 0) + " cave(s)") : "not run",
+        cm.cave_count ? "var(--status-suspicious)" : (cm.available ? "var(--status-clean)" : null)),
+    ran(xxd.output, "xxd", (xxd.output_full_bytes || 0) + " B", xxd.output ? "var(--status-clean)" : null),
+    ran(Object.keys(r2).length, "radare2", (r2.functions || 0) + " functions", null),
+    ran(Object.keys(capa).length, "capa", (capa.capabilities || 0) + " capabilities", null),
+    ran(ml.ok, "EMBER2024", ml.ok ? (ml.verdict || "scored") : "not run",
+        ml.ok ? (ml.threat_level === "low" ? "var(--status-clean)" : "var(--status-suspicious)") : null),
+  ];
+
+  el.innerHTML = cards.map(c =>
+    '<div class="stat-card"' + (c.ok ? '' : ' style="opacity:.55"') + '>' +
+    '<div class="sl">' + esc(c.label) + '</div>' +
+    '<div class="sv"' + (c.colour ? ' style="color:' + c.colour + ';font-size:16px"' : ' style="font-size:16px"') +
+    '>' + esc(c.value) + '</div></div>').join("");
+})();
 </script>
 </body>
 </html>

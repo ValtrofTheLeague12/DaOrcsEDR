@@ -36,12 +36,14 @@ MALAPI_PORT_DEFAULT = 60000
 CYBERCHEF_PORT = 60001
 ML_PORT_DEFAULT = 60010
 KAFKA_PORT = 9092
+GUACAMOLE_PORT = 61000
 
 KNOWN_PORTS = {
     MALAPI_PORT_DEFAULT: "MalAPI",
     CYBERCHEF_PORT: "CyberChef",
     ML_PORT_DEFAULT: "ML scorer",
     KAFKA_PORT: "Kafka broker",
+    GUACAMOLE_PORT: "Guacamole",
 }
 
 # Display names, keyed by Service.key - netcfg and stop screens use them.
@@ -51,6 +53,7 @@ SERVICE_NAMES = {
     "ml": "ML scorer",
     "cyberchef": "CyberChef",
     "kafka": "Kafka broker",
+    "guacamole": "Guacamole",
 }
 
 
@@ -151,6 +154,8 @@ def port_for(key: str) -> int:
         return CYBERCHEF_PORT
     if key == "kafka":
         return KAFKA_PORT
+    if key == "guacamole":
+        return GUACAMOLE_PORT
     return 0
 
 
@@ -336,6 +341,7 @@ def services(only: Optional[set[str]] = None) -> list[Service]:
                 label=f"{malapi}/malapi/...",
                 detail=_malapi_note),
         Service("cyberchef", "CyberChef", f"127.0.0.1:{CYBERCHEF_PORT}/"),
+        Service("guacamole", "Guacamole", f"127.0.0.1:{GUACAMOLE_PORT}/"),
         Service("ml", "ML scorer", f"{ml}/health"),
         Service("kafka", "Kafka broker", f"tcp://127.0.0.1:{KAFKA_PORT}",
                 kind="tcp"),

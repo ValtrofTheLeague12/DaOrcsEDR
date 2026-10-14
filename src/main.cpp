@@ -8,18 +8,24 @@
 // include/main/report.hpp.
 
 #include "console.hpp"
+#include "crash_handler.hpp"
 #include "curses_ui.hpp"
+#include "debug_dump.hpp"
 #include "local_api.hpp"
 #include "logging.hpp"
+#include "mega_runner.hpp"
 #include "pipeline.hpp"
 #include "pipeline_planner.hpp"
 #include "process_runner.hpp"
+#include "redact.hpp"
 #include "trace.hpp"
 
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
+#include <vector>
 
 void trace_process_start() __attribute__((constructor, no_instrument_function));
 void trace_process_stop()  __attribute__((destructor,  no_instrument_function));
@@ -53,6 +59,14 @@ void print_usage(std::ostream& os) {
         "  --list-phases          list the selectable phases and exit\n"
         "  --list-pipelines       list the available named pipelines and exit\n"
         "      --json             with --list-phases: emit JSON\n"
+        "  --debug                write state dumps (SA_DUMP) to\n"
+        "                           logs/dumps/<run_id>-dumps.log with file:line\n"
+        "                           labels; every registered secret is redacted\n"
+        "  --crash-selftest       deliberately dereference null right after the\n"
+        "                           handlers are installed, to prove\n"
+        "                           logs/crash/<run_id>-<pid>.txt/.dmp are written\n"
+        "  artifact actions      configured in config/artifacts.yaml (bundling\n"
+        "                           and remote upload are disabled by default)\n"
         "  -h, --help             show this help\n"
         "\n"
         "A pipeline selects which analysis phases run and in what order: YAML\n"
@@ -65,6 +79,13 @@ void print_usage(std::ostream& os) {
 
 int main(int argc, char** argv) {
   console::enable_utf8_output();
+
+  // Register every credential this process can see before anything is logged
+  // or dumped: the registry is read by debug_dump::write(), by the LOG_*
+  // choke point in logging.cpp and by the crash report. Seeding reads .env*
+  // and the two credential JSON files, so it never logs the values itself.
+  redact::seed();
+
   logging::init();
   trace_enable();
 
@@ -84,6 +105,8 @@ int main(int argc, char** argv) {
   bool list_phases = false;
   bool list_pipelines = false;
   bool list_json = false;
+  bool debug_dumps = false;
+  bool crash_selftest = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "-h" || arg == "--help") {
@@ -101,6 +124,10 @@ int main(int argc, char** argv) {
       list_pipelines = true;
     } else if (arg == "--json") {
       list_json = true;
+    } else if (arg == "--debug") {
+      debug_dumps = true;
+    } else if (arg == "--crash-selftest") {
+      crash_selftest = true;
     } else if (arg.size() > 1 && arg[0] == '-') {
       std::cerr << "error: unknown option '" << arg << "'\n\n";
       print_usage(std::cerr);
@@ -140,11 +167,30 @@ int main(int argc, char** argv) {
   pipeline::planner::pipeline_config cfg;
   try {
     cfg = pipeline::planner::load(pipeline_spec);
+    cfg.artifacts = pipeline::planner::load_artifact_options();
   } catch (const std::exception& e) {
     std::cerr << "pipeline error: " << e.what() << "\n";
     return 2;
   }
   pipeline::planner::apply_environment(cfg);
+
+  // -------- Debug stack ------------------------------------------------------
+  // Seeded a second time because apply_environment() may have put new
+  // credentials into this process' environment (a pipeline can export them),
+  // and the environment scan is what picks those up. The crash handlers are
+  // installed regardless of --debug: a report with a stack is useful even when
+  // no dumps were requested; the dump file only opens with --debug.
+  redact::seed();
+
+  const std::filesystem::path logs_root("logs");
+  if (debug_dumps) {
+    debug_dump::init(logs_root, logging::current_run_id(), /*mirror_stderr=*/true);
+  }
+  crash::install(logs_root, logging::current_run_id());
+
+  if (crash_selftest) {
+    crash::self_test();  // does not return: the report is the test
+  }
 
   // Lazy service ownership follows the plan: only what the selected phases use
   // is ever launched (the planner inserts no service for the rest).
@@ -154,6 +200,7 @@ int main(int argc, char** argv) {
 
   pipeline::context ctx;
   ctx.path = input_path.empty() ? "a.exe" : input_path;
+  crash::set_state("startup", ctx.path);
 
   // Pre-detection placeholder; rescaled by set_total() once the format is known.
   constexpr int kAllPhases = 26;
@@ -303,7 +350,23 @@ int main(int argc, char** argv) {
   // The planner owns the phase order: prologue (preamble + hashes), then every
   // phase the config selected, in config order. Each run_* still owns its own
   // "[phase n/total]" header and its own applicability gate.
-  pipeline::planner::run_phases(ctx, cfg);
+  //
+  // The try/catch exists for the crash stack: a phase that throws is logged
+  // with its state and then rethrown, so std::terminate writes a report
+  // (stack + active phase) instead of the process dying message-less.
+  try {
+    pipeline::planner::run_phases(ctx, cfg);
+  } catch (const std::exception& e) {
+    LOG_CRITICAL("pipeline: unhandled exception while running phases "
+                 "(state: {}): {}",
+                 crash::state_line(), e.what());
+    throw;
+  } catch (...) {
+    LOG_CRITICAL("pipeline: unhandled unknown exception while running phases "
+                 "(state: {})",
+                 crash::state_line());
+    throw;
+  }
 
   // -------- Human-readable hash ------------------------------------------------
   // main() owns the process, so it reports the read-aloud PGP words next to the
@@ -334,6 +397,48 @@ int main(int argc, char** argv) {
     rc = EXIT_FAILURE;
   } else {
     print_kv_colored("Result", "success", console::green);
+  }
+
+  // The bundle source must include this run's machine-readable manifest.
+  // Write once before sealing, then write again below with the final archive
+  // paths and upload outcome included.
+  const bool artifact_actions_enabled =
+      cfg.artifacts.store_artifact || cfg.artifacts.upload_artifacts;
+  if (artifact_actions_enabled) {
+    const auto run_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - run_started)
+            .count();
+    pipeline::planner::write_run_summary(ctx, cfg, rc, run_ms);
+    mega_runner::options upload_options;
+    upload_options.artifact_name = ctx.stem;
+    upload_options.source_directory =
+        (std::filesystem::absolute("exports") / (ctx.stem + "_analysis")).string();
+    upload_options.output_root = std::filesystem::absolute("exports").string();
+    upload_options.uploader_script = cfg.artifacts.uploader_script;
+    upload_options.remote_root = cfg.artifacts.remote_root;
+    upload_options.timeout_seconds = cfg.artifacts.timeout_seconds;
+    upload_options.upload = cfg.artifacts.upload_artifacts;
+
+    LOG_INFO("artifacts: {} evidence bundle for '{}'",
+             upload_options.upload ? "building and uploading" : "building local",
+             ctx.stem);
+    const mega_runner::result upload = mega_runner::run(upload_options);
+    if (!upload.standard_output.empty()) std::cout << upload.standard_output;
+    if (!upload.standard_error.empty()) std::cerr << upload.standard_error;
+    if (!upload.ok) {
+      ctx.artifact_action_error = upload.error;
+      LOG_ERROR("artifacts: {}", ctx.artifact_action_error);
+      std::cerr << "artifacts: " << ctx.artifact_action_error << "\n";
+      rc = EXIT_FAILURE;
+      print_kv_colored("Result", "FAILED (artifact bundle action)", console::red);
+    } else {
+      ctx.artifact_bundle_created = upload.bundle_created;
+      ctx.artifact_bundle_uploaded = upload.uploaded;
+      ctx.exported_artifacts.insert(ctx.exported_artifacts.end(),
+                                    upload.artifacts.begin(),
+                                    upload.artifacts.end());
+    }
   }
 
   // Machine-readable manifest of the run (phases, artifacts, result) for the

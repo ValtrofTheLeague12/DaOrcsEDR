@@ -1,0 +1,23 @@
+{
+    "VM_NAME": "TestingVM",
+    "VM_IP": "192.168.56.105",
+    "VM_HOST": "qilin",
+    "VM_PASSWORD": "imoom",
+    "VM_PORT": 22,
+    "clamd": {
+        "mode": "unix",
+        "socket": "/var/run/clamav/clamd.ctl",
+        "host": "127.0.0.1",
+        "port": 3310,
+        "timeout": 60,
+        "conf": "/etc/clamav/clamd.conf"
+    },
+    "paths": {
+        "base": "/home/qilin/.config/clamd",
+        "samples": "/home/qilin/.config/clamd/samples",
+        "results": "/home/qilin/.config/clamd/results",
+        "script": "/home/qilin/.config/clamd/clamd-python.py",
+        "test_script": "/home/qilin/.config/clamd/test_clamd_connection.sh"
+    },
+    "python": "python3"
+}

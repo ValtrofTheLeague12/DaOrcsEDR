@@ -68,6 +68,8 @@ std::string PrintMemoryInfo() {
   return buffer;
 }
 
+std::string trace_symbolize(const void*) { return {}; }
+
 #else
 
 #include "trace.hpp"
@@ -356,6 +358,17 @@ TRACE_NO_INSTRUMENT void write_line_locked(const char* fmt, ...) {
 
 } 
 
+
+// Declared in trace.hpp: the crash report uses this to name faulting frames
+// when dbghelp has no line info (MinGW ships no PDB, but the COFF symbol
+// table is still inside the executable).
+std::string trace_symbolize(const void* address) {
+    if (address == nullptr) return {};
+    if (!g_symbols_ready.load(std::memory_order_acquire)) return {};
+    const int idx = symbol_index_for(const_cast<void*>(address));
+    if (idx < 0) return {};
+    return g_symbols[static_cast<std::size_t>(idx)].name;
+}
 
 extern "C" TRACE_NO_INSTRUMENT void trace_enable() {
     AcquireSRWLockExclusive(&trace_lock);

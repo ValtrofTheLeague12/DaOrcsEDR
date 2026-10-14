@@ -1,14 +1,14 @@
 # Complete static analysis - identical phase order to running with no
 # --pipeline flag (keep in sync with planner::parse_default()).
 name: default
-description: Complete static analysis (classic 26-phase order)
+description: Complete static analysis (classic 27-phase order)
 
 stages:
   - name: preparation
     phases: [compression, sections, generic_sections]
 
   - name: features
-    phases: [strings, iat, got, histogram, packer, opcodes, debug, signature]
+    phases: [strings, iat, got, histogram, packer, die, opcodes, debug, signature]
 
   - name: deep-analysis
     phases: [capa, radare2, graphs, xref, guards, extraction, hexdump, cminer, recovery]

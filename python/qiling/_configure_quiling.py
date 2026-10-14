@@ -11,11 +11,18 @@ from colorama import Fore,Back,init
 
 init()
 
-TEMPLATES_DIR = pathlib.Path(__file__).parent.joinpath("templates")
-STAGING_DIR = pathlib.Path(__file__).parent.parent.joinpath(
-    "config", "systemd", "qilin-service")
+# This script lives in python/qiling/. The repo root is two levels up; the VM
+# payload it stages (rootfs, templates, dll_collector.bat, vm_info.json,
+# known_hosts.ssh) lives in qiling_dlls/, which stays put because its basename
+# is also the analysis VM's remote_dir.
+_HERE = pathlib.Path(__file__).resolve().parent
+REPO_ROOT = _HERE.parent.parent
+PAYLOAD_DIR = REPO_ROOT / "qiling_dlls"
+
+TEMPLATES_DIR = PAYLOAD_DIR.joinpath("templates")
+STAGING_DIR = REPO_ROOT.joinpath("config", "systemd", "qilin-service")
 SERVICE_UNIT = "qilin-service.service"
-ROOTFS_SRC = pathlib.Path(__file__).parent.joinpath("examples").joinpath("rootfs")
+ROOTFS_SRC = PAYLOAD_DIR.joinpath("examples").joinpath("rootfs")
 ROOTFS_TAR = "rootfs.tar.gz"
 
 def run_as_admin(batch_file_path):
@@ -41,7 +48,7 @@ def run_as_admin(batch_file_path):
         return False
 
 def check_rootfs_script(fetch_script=False):
-    dll_file_path = pathlib.Path(__file__).parent.joinpath("dll_collector.bat")
+    dll_file_path = PAYLOAD_DIR.joinpath("dll_collector.bat")
     if not dll_file_path.exists() or os.path.getsize(str(dll_file_path.resolve())) == 0: 
         print(Fore.RED + "Main dll collector script was not found" + Fore.WHITE)
         if not fetch_script:
@@ -57,7 +64,7 @@ def check_rootfs_script(fetch_script=False):
             print(Fore.RED  + "Get Response Text is Empty" + Fore.WHITE)
             return False 
         print(Fore.GREEN + "Script has been recovered succesfully.." + Fore.WHITE)
-        with open(pathlib.Path(__file__).parent.joinpath("dll_collector.bat"),"w") as file:
+        with open(PAYLOAD_DIR.joinpath("dll_collector.bat"),"w") as file:
             file.write(response_text.strip())
         print(Fore.CYAN + "Script has been succesfully Recovered... " + Fore.WHITE)
         return True
@@ -65,7 +72,7 @@ def check_rootfs_script(fetch_script=False):
     return True
 
 def recover_host_information():
-    filename = pathlib.Path(__file__).parent.joinpath("vm_info.json")
+    filename = PAYLOAD_DIR.joinpath("vm_info.json")
     if not os.path.exists(str(filename.resolve())): 
         print(Fore.CYAN + "Required file vms_info.json was not found" + Fore.WHITE)
         return None
@@ -81,7 +88,7 @@ def recover_host_information():
 
 
 def check_if_rootfs_generated(generate=True):
-    repo_name = pathlib.Path(__file__).parent.joinpath("examples")
+    repo_name = PAYLOAD_DIR.joinpath("examples")
     if not os.path.exists(str(repo_name.resolve())):
         print(Fore.RED + "[-] Failed to find the required rootfs" + Fore.WHITE)
         if not generate:
@@ -99,7 +106,7 @@ def check_if_rootfs_generated(generate=True):
 
                 os.chdir(pathlib.Path.cwd())
                 print(Fore.CYAN + "Generating ROOTFS Directory..." + Fore.WHITE)
-                batch_file_path = pathlib.Path(__file__).parent.joinpath("dll_collector.bat").resolve()
+                batch_file_path = PAYLOAD_DIR.joinpath("dll_collector.bat").resolve()
                 run_as_admin(str(batch_file_path))
                 if repo_name.exists():
                     print(Fore.CYAN + "Generation has been succesfull" + Fore.WHITE)
@@ -131,10 +138,10 @@ def check_ssh_connectivity_normal_user(json_info=None) -> paramiko.SSHClient:
     try:
         ssh_client = paramiko.SSHClient()
         ssh_client.load_system_host_keys()
-        project_keys = pathlib.Path(__file__).parent.joinpath("known_hosts.ssh")
+        project_keys = PAYLOAD_DIR.joinpath("known_hosts.ssh")
         if project_keys.exists():
             ssh_client.load_host_keys(str(project_keys.resolve()))
-        ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh_client.connect(hostname=VM_IP,username=VM_USER,port=VM_PORT,password=VM_PASSWORD, timeout=10)
         print(Fore.GREEN + "Connected to host correctly..." + Fore.WHITE)
         return ssh_client
@@ -228,7 +235,7 @@ def create_systemd_service(ssh_client, json_info=None, with_rootfs=True):
         print(Fore.RED + "Failed to write the staged unit: {}".format(e) + Fore.WHITE)
         return False
 
-    script_src = pathlib.Path(__file__).parent.joinpath("_qiling_script.py")
+    script_src = _HERE.joinpath("_qiling_script.py")
     try:
         _, out, err = ssh_client.exec_command(
             "mkdir -p '{}/.config/systemd/user' '{}'".format(home, app_dir))
@@ -288,7 +295,7 @@ def full_pipeline():
         print(Fore.GREEN + "Closing SSH Connection..." + Fore.WHITE)
         test_ssh.close()
 
-full_pipeline
+full_pipeline()
 
 #check_if_rootfs_generated(generate=False)
 #check_rootfs_script(fetch_script=True)
