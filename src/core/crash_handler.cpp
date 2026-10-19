@@ -26,6 +26,11 @@
 #include <csignal>
 #include <unistd.h>
 
+// For enable_core_dump(): RLIMIT_CORE, and the soft/hard pair that has to be
+// raised together. Only on the POSIX side - the Windows branch writes a
+// registry key instead and needs neither.
+#include <sys/resource.h>
+
 #if defined(__has_include)
 #if __has_include(<execinfo.h>)
 #include <execinfo.h>
@@ -314,6 +319,10 @@ std::string exception_text(EXCEPTION_POINTERS* ep) {
   return text;
 }
 
+// Set by install() when a full dump was asked for, read by write_minidump().
+// Read on the crashing thread, written before any fault can happen.
+std::atomic<bool> g_full_dump{false};
+
 void write_minidump(const std::filesystem::path& path, EXCEPTION_POINTERS* ep) {
   const HANDLE file =
       CreateFileW(path.wstring().c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
@@ -328,9 +337,17 @@ void write_minidump(const std::filesystem::path& path, EXCEPTION_POINTERS* ep) {
     info.ClientPointers = FALSE;
     info_ptr = &info;
   }
-  const MINIDUMP_TYPE flags = static_cast<MINIDUMP_TYPE>(
+  MINIDUMP_TYPE flags = static_cast<MINIDUMP_TYPE>(
       MiniDumpWithThreadInfo | MiniDumpWithIndirectlyReferencedMemory |
       MiniDumpWithUnloadedModules);
+  // Widened only when crash::options::allow_core_dump asked for it. The default
+  // selection above is a few MB and is enough to see the stack and the objects
+  // near it; FullMemory is the entire address space and is a large file, which
+  // is exactly why it is not the default.
+  if (g_full_dump.load(std::memory_order_relaxed)) {
+    flags = static_cast<MINIDUMP_TYPE>(flags | MiniDumpWithFullMemory |
+                                       MiniDumpWithFullMemoryInfo);
+  }
   MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file, flags, info_ptr,
                     nullptr, nullptr);
   CloseHandle(file);
@@ -521,6 +538,12 @@ void build_report(const char* reason, const char* detail, const void* arch) {
   std::fflush(stderr);
 }
 
+// Published from install() and read from the signal handler, which is on
+// another thread by the time it matters. Relaxed is enough: the only ordering
+// requirement is that a signal arriving after install() returns sees the value
+// install() stored.
+std::atomic<bool> g_continue_after_signal{false};
+
 // Single entry point: guards against recursion and writes the report once.
 void report_once(const char* reason, const char* detail, const void* arch) {
   if (g_handling.exchange(true)) return;
@@ -542,6 +565,45 @@ void on_terminate() {
   std::abort();
 }
 
+void enable_core_dump(bool want) {
+  if (!want) return;
+#if defined(_WIN32)
+  // Windows has no core dump, and WER LocalDumps is not the substitute it looks
+  // like: Microsoft's own documentation states that "applications that do
+  // their own custom crash reporting are not supported by this feature", and
+  // this analyzer writes its own minidump from its unhandled-exception filter.
+  // Writing a LocalDumps key here would have created a setting that silently
+  // does nothing - and worse, a registry write on the user's machine.
+  //
+  // So the flag does the thing that actually works here: it widens the dump
+  // the analyzer already writes. Off, that is a minidump with thread info,
+  // indirect memory and unloaded modules. On, it adds MiniDumpWithFullMemory,
+  // which is the full-address-space dump - much larger, but it shows the heap,
+  // which is usually where a crash has to be understood from.
+  g_full_dump.store(true, std::memory_order_relaxed);
+  std::fprintf(stderr, "[crash] full dumps enabled (logs/crash/*.dmp will carry "
+                       "the whole address space, not just the minidump selection)\n");
+#else
+  struct rlimit limit{};
+  if (getrlimit(RLIMIT_CORE, &limit) != 0) {
+    std::fprintf(stderr, '[crash] core dump requested but RLIMIT_CORE could not '
+                         'be read; no core file will be written\n');
+    return;
+  }
+  if (limit.rlim_cur < limit.rlim_max) {
+    limit.rlim_cur = limit.rlim_max;
+    if (setrlimit(RLIMIT_CORE, &limit) != 0) {
+      std::fprintf(stderr, '[crash] core dump requested but RLIMIT_CORE could not '
+                           'be raised; no core file will be written\n');
+      return;
+    }
+  }
+  std::fprintf(stderr, '[crash] core dumps enabled (RLIMIT_CORE raised to %llu)\n',
+               static_cast<unsigned long long>(limit.rlim_cur));
+#endif
+  std::fflush(stderr);
+}
+
 #if defined(_WIN32)
 
 LONG WINAPI on_unhandled_exception(EXCEPTION_POINTERS* ep) {
@@ -551,6 +613,12 @@ LONG WINAPI on_unhandled_exception(EXCEPTION_POINTERS* ep) {
 }
 
 #else
+
+// Signals that mean "something happened" rather than "the process is broken".
+// Returning from these is safe: the interrupted instruction runs again.
+bool is_continuable(int sig) {
+  return sig == SIGTERM || sig == SIGHUP || sig == SIGUSR1 || sig == SIGUSR2;
+}
 
 void on_signal(int sig) {
   if (g_handling.load(std::memory_order_acquire)) {
@@ -562,6 +630,25 @@ void on_signal(int sig) {
     ::_exit(128 + sig);
   }
   report_once(signal_text(sig), "fatal signal received", nullptr);
+
+  if (g_continue_after_signal.load(std::memory_order_acquire) && is_continuable(sig)) {
+    // Return, and the interrupted work resumes. The report has been written;
+    // the run carries on and the fault is in the record rather than at the
+    // end of it.
+    return;
+  }
+  if (g_continue_after_signal.load(std::memory_order_acquire) && !is_continuable(sig)) {
+    // The operator asked to continue, but this is one of the four that cannot
+    // be continued - returning would re-execute the faulting instruction. Say
+    // so in the record rather than exiting silently against an explicit
+    // request, because the obvious next question is "why did my flag not work".
+    std::fprintf(stderr,
+                 "[crash] catch-and-continue was requested but %s is a fault "
+                 "signal: returning from its handler re-executes the faulting "
+                 "instruction, so the process is terminating. Continuable "
+                 "signals are SIGTERM, SIGHUP, SIGUSR1 and SIGUSR2.\n",
+                 signal_text(sig).c_str());
+  }
   ::_exit(128 + sig);
 }
 
@@ -593,7 +680,8 @@ std::string state_line() {
   return out;
 }
 
-void install(const std::filesystem::path& logs_root, std::string_view run_id) {
+void install(const std::filesystem::path& logs_root, std::string_view run_id,
+             const options& opts) {
   if (g_installed.exchange(true)) return;
 
   g_run_id = std::string(run_id);
@@ -608,16 +696,36 @@ void install(const std::filesystem::path& logs_root, std::string_view run_id) {
 
   std::set_terminate(&on_terminate);
 
+  g_continue_after_signal.store(opts.continue_after_signal,
+                                std::memory_order_relaxed);
+
 #if defined(_WIN32)
   SetUnhandledExceptionFilter(&on_unhandled_exception);
 #else
   struct sigaction action{};
   action.sa_handler = &on_signal;
   sigemptyset(&action.sa_mask);
+  // SA_RESETHAND: after one delivery the disposition goes back to the default,
+  // so a fault that happens inside the handler still kills the process instead
+  // of looping. It does NOT set SA_NODEFER, so the signals below stay blocked
+  // while the handler runs - which is what makes returning safe.
   action.sa_flags = SA_RESETHAND;
   const int signals[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT};
   for (const int sig : signals) sigaction(sig, &action, nullptr);
+
+  if (g_continue_after_signal.load(std::memory_order_acquire)) {
+    // Separate disposition for the continuable set: no SA_RESETHAND, because
+    // these are expected to arrive repeatedly and each one has to be reported.
+    struct sigaction soft{};
+    soft.sa_handler = &on_signal;
+    sigemptyset(&soft.sa_mask);
+    soft.sa_flags = 0;
+    const int continuable[] = {SIGTERM, SIGHUP, SIGUSR1, SIGUSR2};
+    for (const int sig : continuable) sigaction(sig, &soft, nullptr);
+  }
 #endif
+
+  enable_core_dump(opts.allow_core_dump);
 
   if (debug_dump::enabled()) {
     std::fprintf(stderr, "[crash] handlers installed; reports go to '%s'\n",

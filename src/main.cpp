@@ -82,6 +82,18 @@ void print_usage(std::ostream& os) {
         "                           logos/crash.logo banner, the full report and the\n"
         "                           minidump - then exit normally, without faulting.\n"
         "                           For checking the presentation, not the handlers\n"
+        "      --allow-core-dump    keep a dump of the process when it dies. Raises\n"
+        "                           RLIMIT_CORE to its hard limit on POSIX; on Windows\n"
+        "                           widens the minidump in logs/crash/ to carry the\n"
+        "                           whole address space. Off by default: dumps are\n"
+        "                           large files. Same setting from a pipeline:\n"
+        "                           IA_ALLOW_CORE_DUMP=1\n"
+        "      --continue-on-signal report SIGTERM/SIGHUP/SIGUSR1/SIGUSR2 and\n"
+        "                           carry on instead of dying. Fault signals\n"
+        "                           (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT) still\n"
+        "                           terminate: returning from one re-executes the\n"
+        "                           instruction that faulted. Same setting from a\n"
+        "                           pipeline: IA_CONTINUE_ON_SIGNAL=1\n"
         "  artifact actions      configured in config/artifacts.yaml (bundling\n"
         "                           and remote upload are disabled by default).\n"
         "                           IA_ARTIFACT_UPLOAD=0 forces uploading off and\n"
@@ -136,6 +148,8 @@ int main(int argc, char** argv) {
   bool debug_dumps = false;
   bool crash_selftest = false;
   bool crash_demo = false;
+  bool allow_core_dump = false;
+  bool continue_on_signal = false;
   bool no_curses = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -185,6 +199,10 @@ int main(int argc, char** argv) {
       crash_selftest = true;
     } else if (arg == "--crash-demo") {
       crash_demo = true;
+    } else if (arg == "--allow-core-dump") {
+      allow_core_dump = true;
+    } else if (arg == "--continue-on-signal") {
+      continue_on_signal = true;
     } else if (arg == "--no-curses") {
       no_curses = true;
     } else if (arg.size() > 1 && arg[0] == '-') {
@@ -307,7 +325,26 @@ int main(int argc, char** argv) {
   if (debug_dumps) {
     debug_dump::init(logs_root, logging::current_run_id(), /*mirror_stderr=*/true);
   }
-  crash::install(logs_root, logging::current_run_id());
+  {
+    // The env vars are read here, after apply_environment() (line ~234) and
+    // before install() below, which is the only window in which both work: the
+    // pipeline's environment block has to have landed for the console to be
+    // able to set them, and the handlers have to be in place before anything
+    // can fault. That ordering is why these can ride the existing
+    // 'environment:' mechanism rather than needing their own config file.
+    const auto env_flag = [](const char* name, bool flag) {
+      const char* v = std::getenv(name);
+      if (v == nullptr) return flag;
+      const std::string s(v);
+      return s == "1" || s == "true" || s == "yes" || s == "on";
+    };
+    crash::options crash_opts;
+    crash_opts.allow_core_dump =
+        allow_core_dump || env_flag("IA_ALLOW_CORE_DUMP", false);
+    crash_opts.continue_after_signal =
+        continue_on_signal || env_flag("IA_CONTINUE_ON_SIGNAL", false);
+    crash::install(logs_root, logging::current_run_id(), crash_opts);
+  }
   // Ctrl+C stops the run at the next phase boundary and records where it got
   // to. Installed next to the crash handlers and independent of them: a signal
   // that arrives before this point ends the process the way it always did,

@@ -135,6 +135,22 @@ ENV_OPTIONS = [
           "The curses UI only works on a real terminal; turn it off when output "
           "is redirected, piped or captured.",
           "src/main.cpp:219"),
+    _flag("IA_ALLOW_CORE_DUMP", "Keep a crash dump",
+          "On POSIX raises RLIMIT_CORE so a core file is written when the run "
+          "dies - distributions usually ship a soft limit of 0, which is why "
+          "there is no core file today. On Windows there is no core dump, so "
+          "this widens the minidump in logs/crash/ to carry the whole address "
+          "space. Off by default: a full dump is a large file per crash, and "
+          "most crashes are explained by the text report next to it.",
+          "src/main.cpp:343"),
+    _flag("IA_CONTINUE_ON_SIGNAL", "Carry on after a signal",
+          "Report SIGTERM, SIGHUP, SIGUSR1 and SIGUSR2 and keep working instead "
+          "of dying. Fault signals (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT) "
+          "still terminate whatever this is set to - returning from one of those "
+          "re-executes the instruction that faulted, so continuing would fault "
+          "again immediately. Use this when something in the run environment "
+          "sends polite signals and killing the analysis is the wrong answer.",
+          "src/main.cpp:345"),
     _text("TRACE_FILE", "Trace diagnostics file",
            "Writes symbol/offset diagnostics here. Empty means the trace layer "
            "writes nothing.",

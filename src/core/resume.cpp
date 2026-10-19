@@ -46,9 +46,20 @@ std::filesystem::path g_dir;
 
 // The last line the handler prints. Kept out of the handler's own formatting so
 // the two paths cannot drift.
+//
+// Colours are literal escape sequences rather than console::yellow and friends,
+// even though those are inline constexpr and would cost nothing. This runs from
+// a signal handler on POSIX, where the one thing a handler must not do is take
+// a lock or touch the allocator; a named constant that happened to be a
+// std::string_view into a header could grow a static initialiser at some point
+// and the file would still compile. A string literal cannot.
+//
+// Amber for the line that matters, dim grey for the hint that follows it: the
+// first line is the answer to "did you just stop my run?", the second is
+// optional detail you only read if you meant to press it again.
 const char* const k_interrupt_notice =
-    "\n[interrupt] Ctrl+C received - stopping after this phase.\n"
-    "[interrupt] press Ctrl+C again to stop immediately.\n";
+    "\n\x1b[33m[interrupt]\x1b[0m Ctrl+C received - stopping after this phase.\n"
+    "\x1b[90m[interrupt]\x1b[0m press Ctrl+C again to stop immediately.\n";
 
 void write_line(std::FILE* out, const char* text) {
   std::fputs(text, out);
@@ -122,8 +133,8 @@ BOOL WINAPI on_console_event(DWORD type) {
   write_line(stderr, k_interrupt_notice);
   if (n >= 2) {
     write_line(stderr,
-               "[interrupt] second interrupt - exiting now. The checkpoint holds "
-               "every phase that finished.\n");
+               "\x1b[31m[interrupt]\x1b[0m second interrupt - exiting now. The "
+               "checkpoint holds every phase that finished.\n");
     // Hand the event back so the console closes the process the way it would
     // have without us; the checkpoint is already on disk either way.
     return FALSE;

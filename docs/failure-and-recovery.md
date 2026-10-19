@@ -31,7 +31,52 @@ Ctrl+C does not kill the run. The handler only raises a flag:
 [interrupt] press Ctrl+C again to stop immediately.
 ```
 
+Both lines are coloured — amber for the one that answers *"did you just stop my
+run?"*, dim grey for the hint that follows it, and red for the second-interrupt
+notice. The escape sequences are written as string literals in `resume.cpp`
+rather than taken from `console::yellow` and friends, even though those are
+`inline constexpr` and would cost nothing: this runs from a signal handler on
+POSIX, where the one thing a handler must not do is take a lock or reach the
+allocator.
+
+Colour needs `ENABLE_VIRTUAL_TERMINAL_PROCESSING`, which `console::enable_utf8_output()`
+now sets on **stderr** as well as stdout. The interrupt notice and the whole
+crash report go to stderr, and enabling it on stdout alone left every diagnostic
+the project cares most about emitting raw escape codes — which is worse than no
+colour, because `[33m[interrupt]` reads as garbage rather than as an
+admonishment.
+
 The phase loop checks that flag **between phases, never inside one** — a phase can be part way through writing its artifacts, and abandoning it there is how a run leaves a half-written JSON that the next run reads as truth. So the run finishes the phase in flight, prints where it is stopping, writes `run_summary.json` as usual (with `result: "interrupted"` and `exit_code: 130`), and exits **130**, the shell convention for "terminated by SIGINT", so a wrapper script can tell it apart from a failed analysis without parsing the output. A second Ctrl+C stops immediately.
+
+### Two flags for faults
+
+Both are off by default, both are settable from the console's
+[Analysis configuration](admin-console/analysis-config.md) page, and both are
+read in `main.cpp` in the one window where the pipeline's `environment:` block
+has already landed and the handlers are not yet installed.
+
+| Flag | Env var | What it does |
+| --- | --- | --- |
+| `--allow-core-dump` | `IA_ALLOW_CORE_DUMP` | **POSIX:** raises `RLIMIT_CORE`'s soft limit to the hard limit. Distributions commonly ship a soft limit of 0, which is why there is usually no core file. **Windows:** there is no core dump, so this widens the minidump in `logs/crash/` to carry the whole address space. |
+| `--continue-on-signal` | `IA_CONTINUE_ON_SIGNAL` | Report `SIGTERM`, `SIGHUP`, `SIGUSR1` and `SIGUSR2` and carry on instead of dying. |
+
+**Fault signals still terminate, whatever this is set to.** `SIGSEGV`, `SIGBUS`,
+`SIGFPE`, `SIGILL` and `SIGABRT` are not notifications that the process is in
+trouble — they are reports that it already is. Returning from their handler
+re-executes the instruction that faulted, so "continuing" does not resume the
+work; it faults again immediately, now from inside the handler. When one of
+those arrives with the flag on, the report says so in as many words rather than
+terminating silently against an explicit request.
+
+On Windows, `--allow-core-dump` does **not** use WER LocalDumps. Microsoft's
+documentation for that feature states that "applications that do their own
+custom crash reporting are not supported by", and this analyzer writes its own
+minidump from its unhandled-exception filter — so a LocalDumps key would have
+been a setting that silently does nothing, plus a registry write on the
+operator's machine. The flag widens the dump that already works instead. Off,
+the minidump carries thread info, indirect memory and unloaded modules; on, it
+adds `MiniDumpWithFullMemory`, which is the whole address space. On a small
+sample that is the difference between a 0.2 MB and a 256 MB file.
 
 Where it got to is recorded in `logs/resume/<stem>.json`, keyed by sample so two samples cannot overwrite each other's point:
 
