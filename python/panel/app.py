@@ -1474,6 +1474,14 @@ def create_app() -> Flask:
               required: [ids]
               properties:
                 ids: {type: array, items: {type: string}}
+                options:
+                  type: object
+                  description: >
+                    Per-utility switches from the panel. Currently only
+                    `ignore_compile_failures`, for the YARA check: when true,
+                    rule files that do not compile are named in the log and
+                    counted but do not fail the job. Persisted, so it survives
+                    a page reload.
         responses:
           200:
             description: Job handle, or a refusal with the reason
@@ -1493,10 +1501,57 @@ def create_app() -> Flask:
         if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
             return jsonify({"ok": False,
                             "error": "'ids' must be a list of strings"}), 400
-        result = utils.start([i.strip() for i in ids if i.strip()])
+        options = body.get("options", {})
+        if not isinstance(options, dict):
+            return jsonify({"ok": False,
+                            "error": "'options' must be an object"}), 400
+        result = utils.start([i.strip() for i in ids if i.strip()], options)
         return (jsonify(result) if result.get("ok")
                 else (jsonify(result), 409 if "already" in str(result.get("error"))
                        else 400))
+
+    @app.put("/api/utils/yara-check")
+    def utils_yara_options():
+        """Set the YARA Check's Switches
+        ---
+        tags: [utils]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                ignore_compile_failures:
+                  type: boolean
+                  description: >
+                    When true, rule files that do not compile are named in the
+                    log and counted, but the check does not fail. Persisted in
+                    config/yara_check.json.
+        responses:
+          200: description: New state
+          400: description: Unknown option, or a non-boolean value
+        description: >
+          The card's checkbox calls this instead of starting a run: the compile
+          check takes ~60s, and a toggle that forces a minute of compilation
+          each time it is flipped is a toggle nobody flips.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+        try:
+            state = utils.set_yara_options(body)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 503
+        # yara() alongside, so the caller can update the card from one
+        # response instead of polling into a state change.
+        yara_now = utils.yara()
+        return jsonify({"ok": True, **state,
+                        "yara": {"ignore_compile_failures":
+                                 yara_now.get("ignore_compile_failures")}})
 
     @app.post("/api/build")
     def build_start():

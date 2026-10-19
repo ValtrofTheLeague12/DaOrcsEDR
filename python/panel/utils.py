@@ -113,6 +113,60 @@ SBOM_TIMEOUT = 900.0
 MIRROR_TIMEOUT = 1800.0
 YARA_TIMEOUT = 600.0
 
+# The YARA check's own settings, kept beside the other config/ files. Only one
+# setting so far, and it is here rather than in config/analysis.yaml because it
+# belongs to a utility in this panel, not to the analyzer: it changes what a
+# console check reports, and has no effect on any pipeline.
+YARA_CHECK_CONFIG = config.REPO / "config" / "yara_check.json"
+
+
+def _yara_check_settings() -> dict:
+    """The YARA check's persisted settings, defaults if absent or unreadable."""
+    try:
+        data = json.loads(YARA_CHECK_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"ignore_compile_failures": False}
+    if not isinstance(data, dict):
+        return {"ignore_compile_failures": False}
+    return {"ignore_compile_failures": bool(data.get("ignore_compile_failures"))}
+
+
+def _save_yara_check_settings(settings: dict) -> str | None:
+    """Persist them. Returns an error message, or None if it worked."""
+    try:
+        YARA_CHECK_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        YARA_CHECK_CONFIG.write_text(
+            json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return None
+    except OSError as exc:
+        # Not fatal: the run still honours the option, it just will not be
+        # remembered. The caller says so in the job log.
+        return str(exc)
+
+
+def set_yara_options(options: dict) -> dict:
+    """Validate and persist the YARA check's switches. Returns the new state.
+
+    The card's checkbox calls this directly through its own endpoint rather
+    than starting a run: the compile check is ~60s, and a toggle that forces a
+    minute of compilation each time gets switched off and stays off.
+    """
+    if not isinstance(options, dict):
+        raise ValueError("options must be an object")
+    unknown = sorted(k for k in options if k != "ignore_compile_failures")
+    if unknown:
+        raise ValueError("unknown option(s): " + ", ".join(unknown))
+    value = options.get("ignore_compile_failures")
+    if not isinstance(value, bool):
+        raise ValueError("'ignore_compile_failures' must be a boolean")
+    current = _yara_check_settings()
+    current["ignore_compile_failures"] = value
+    err = _save_yara_check_settings(current)
+    if err:
+        raise RuntimeError("could not persist yara check settings: " + err)
+    return current
+
+
 _jobs = build._jobs
 _jobs_lock = build._jobs_lock
 _now = build._now
@@ -231,6 +285,11 @@ def sbom() -> dict:
         "by_origin": summary.get("components_by_origin") or {},
         "by_language": summary.get("components_by_language") or {},
         "unresolved": summary.get("unresolved_versions") or [],
+        # The same list with what each component does. The generator has always
+        # written both; passing only the names made the card fall back to a
+        # comma-joined string of identifiers, which is the thing the detail
+        # list exists to stop being.
+        "unresolved_details": summary.get("unresolved_details") or [],
         "cyclonedx_bytes": SBOM_JSON.stat().st_size if SBOM_JSON.is_file() else 0,
         "cyclonedx_present": SBOM_JSON.is_file(),
         "last_commit": last_commit,
@@ -308,8 +367,12 @@ def malapi() -> dict:
     yaml_age = _mirror_age_days(MALAPI_YAML) if have_yaml else None
 
     # A lock older than a day is not a mirror in progress; it is a mirror that
-    # died. httrack refuses to start while this file exists, so leaving it is
-    # what turns one interrupted run into every later run failing.
+    # died. httrack refuses to start while this file exists - but the scrape
+    # stage clears it itself before mirroring and reports having done so (see
+    # python/malapi_pipeline.py, stage_scrape). So a stale lock is a reason to
+    # press the button, not a reason the button refuses. One younger than a day
+    # might be a live mirror, the stage leaves those alone, and that is the one
+    # that genuinely prevents a run.
     lock = None
     if MALAPI_LOCK.is_file():
         try:
@@ -317,12 +380,17 @@ def malapi() -> dict:
             lock = {
                 "path": _rel(MALAPI_LOCK),
                 "age_days": max(0, int(lock_age_s // 86400)),
+                # Minutes as well, because the blocking case is always under a
+                # day and "0 days old" describes a fresh lock and a
+                # twenty-minute-old one identically.
+                "age_minutes": max(0, int(lock_age_s // 60)),
                 # Under a day could be a genuine run. Older than that cannot be.
                 "stale": lock_age_s > 86400,
             }
         except OSError:
             lock = None
 
+    live_lock = bool(lock and not lock["stale"])
     htr, htr_reason = _httrack_available()
 
     # Generated after the mirror it was built from: the API is fresh if it is at
@@ -340,10 +408,10 @@ def malapi() -> dict:
         reasons.append("python/yaml/malapi/ is missing - the API definitions have not been generated")
     if not have_server:
         reasons.append("python/api/server.py is missing - the analyzer has nothing to query")
-    if lock and lock["stale"]:
+    if live_lock:
         reasons.append(
-            f"a stale httrack lock is present ({lock['age_days']} days old); "
-            f"httrack will refuse to start until it is removed"
+            f"{lock['path']} is {lock['age_minutes']} minutes old and may be a "
+            f"live mirror; httrack will refuse to start while it exists"
         )
     if generated_stale:
         reasons.append(
@@ -369,10 +437,12 @@ def malapi() -> dict:
     return {
         "available": have_mirror and have_yaml and have_server,
         "reason": "; ".join(reasons) or None,
-        "blocked": not htr or bool(lock and lock["stale"]),
+        "blocked": not htr or live_lock,
         "blocked_reason": (
             htr_reason
-            or (f"remove {lock['path']} first - it is a stale httrack lock" if lock and lock["stale"] else None)
+            or (f"{lock['path']} is {lock['age_minutes']} minutes old. It may be a "
+                f"live mirror, so the refresh refuses to touch a lock under a day "
+                f"old - if no mirror is running, delete it and retry." if live_lock else None)
         ),
         "source": "https://malapi.io/ (mirrored with httrack under WSL)",
         "mirror_path": _rel(MALAPI_SITE),
@@ -454,6 +524,7 @@ def yara() -> dict:
                           "upstream, so there is nothing to pull"),
         "compiler": str(YARAC) if YARAC.is_file() else None,
         "yara_version": _yara_version(),
+        "ignore_compile_failures": _yara_check_settings()["ignore_compile_failures"],
         "note": (f"{total:,} rules across {len(collections)} collections"),
     }
 
@@ -600,10 +671,17 @@ def catalogue() -> dict:
             available, reason = SBOM_SCRIPT.is_file(), \
                 f"{SBOM_SCRIPT.name} not found"
         elif entry["id"] == "malapi-update":
-            available = bool(mal.get("can_update"))
-            reason = (mal.get("reason") if not mal.get("available")
-                      else "local changes in malt/ - commit or stash first"
-                      if mal.get("dirty") else None)
+            # Nothing here is the git-pull era's "is malt/ clean" - malt/ is not
+            # what this rewrites, and `can_update` was never a key malapi()
+            # returned, so reading it left this button permanently disabled with
+            # no reason to show. What actually decides is `blocked`: no httrack
+            # in WSL, or a lock young enough to be a live mirror.
+            #
+            # A missing mirror is deliberately NOT a reason to refuse. The
+            # scrape stage creates it from nothing, which is exactly what it is
+            # for, so absent pieces are the strongest reason to press this.
+            available = not mal.get("blocked")
+            reason = mal.get("blocked_reason")
         elif entry["id"] == "yara-check":
             available = YARAC.is_file()
             reason = "yarac not found in the MSYS2 toolchain"
@@ -665,9 +743,20 @@ def _append(job_id: str, line: str) -> None:
             job["log_dropped"] += drop
 
 
-def start(util_ids: list[str]) -> dict:
-    """Run the chosen utilities, in order, as one job."""
+def start(util_ids: list[str], options: dict | None = None) -> dict:
+    """Run the chosen utilities, in order, as one job.
+
+    `options` carries per-utility switches from the panel. They are persisted
+    when they arrive, so a checkbox ticked once stays ticked: a setting that
+    resets on every page load is a setting nobody can rely on, and for a check
+    whose whole complaint is "this is always red", that is the whole feature.
+    """
     global _utils_running
+    options = options if isinstance(options, dict) else {}
+
+    # Normalised up front so what the run does cannot depend on whether the
+    # write to disk happened to work.
+    ignore_failures = bool(options.get("ignore_compile_failures"))
 
     cat = catalogue()
     known = {e["id"]: e for e in cat["entries"]}
@@ -697,13 +786,25 @@ def start(util_ids: list[str]) -> dict:
         _jobs[jid] = job
     globals()["_utils_running"] = jid
 
+    setting_note = None
+    current = _yara_check_settings()
+    if current["ignore_compile_failures"] != ignore_failures:
+        current["ignore_compile_failures"] = ignore_failures
+        setting_note = _save_yara_check_settings(current)
+
     if unknown:
         _append(jid, f"skipped unknown utility id(s): {', '.join(unknown)}")
+    if ignore_failures:
+        _append(jid, "YARA: ignoring files that fail to compile "
+                     "(set in the panel; remembered for next time)")
+    if setting_note:
+        # The run still honours it; only the memory is missing. Say which.
+        _append(jid, f"YARA: could not remember that setting: {setting_note}")
     for entry in chosen:
         for effect in entry.get("effects") or []:
             _append(jid, f"{entry['label']}: touches {effect}")
 
-    threading.Thread(target=_run, args=(jid, chosen), daemon=True,
+    threading.Thread(target=_run, args=(jid, chosen, options), daemon=True,
                      name="util-job").start()
     return {"ok": True, "job_id": jid,
             "running": [e["id"] for e in chosen if e["available"]]}
@@ -720,8 +821,14 @@ def _set_result(job_id: str, util_id: str, **fields) -> None:
                 return
 
 
-def _run_yara_check(job_id: str) -> tuple[bool, str]:
+def _run_yara_check(job_id: str,
+                    ignore_failures: bool = False) -> tuple[bool, str]:
     """Compile every rule file with yarac, one file per invocation.
+
+    `ignore_failures` makes a compile failure not fail the check. It does NOT
+    make it stop being reported: the files are still named, still counted, and
+    still said to be ignored, because the alternative is a button that is green
+    while seven rules do not compile, which is a thing that lies.
 
     Neither `yarac` nor `yara` in 4.5.8 accepts a directory - both report
     "could not open file" on one - and concatenating a collection into a single
@@ -841,9 +948,13 @@ def _run_yara_check(job_id: str) -> tuple[bool, str]:
                 "these through its include callback at scan time")
 
     if missing_module:
-        modules = sorted({m.group(1) for _, m in
-                          ((p, re.search(r'unknown module "([^"]+)"', e))
-                           for p, e in missing_module) if m})
+        # Same single-object rule as the include extraction below: a regex
+        # match is one object. Unpacking it as a pair raises TypeError the
+        # first time the pack has a missing module - which the real pack does,
+        # 94 files deep - killing the job thread with the log left mid-check.
+        modules = sorted({match.group(1)
+                          for match in (re.search(r'unknown module "([^"]+)"', e)
+                                        for _, e in missing_module) if match})
         _append(job_id,
                 f"  {len(missing_module)} file(s) need a YARA module this build "
                 f"does not have: {', '.join(modules)}")
@@ -851,19 +962,50 @@ def _run_yara_check(job_id: str) -> tuple[bool, str]:
                 "    these rules are valid; they are skipped because the module "
                 "is absent, which is a toolchain gap rather than a broken rule")
 
+    ignored_note = ""
     if broken:
+        verb = "IGNORE" if ignore_failures else "FAIL"
         _append(job_id, f"  {len(broken)} file(s) genuinely failed to compile:")
         for path, err in broken[:10]:
-            _append(job_id, f"    FAIL {path}: {err[:150]}")
+            _append(job_id, f"    {verb} {path}: {err[:150]}")
         if len(broken) > 10:
             _append(job_id, f"    ... and {len(broken) - 10} more")
         names = sorted({p.split("\\")[1] if "\\" in p else p.split("/")[0]
                         for p, _ in broken})
-        return False, (f"{len(broken)}/{total_files} file(s) failed to compile"
-                       + (f" (in {', '.join(names)})" if names else ""))
+        where = f" (in {', '.join(names)})" if names else ""
+        detail = f"{len(broken)}/{total_files} file(s) failed to compile{where}"
+
+        if not ignore_failures:
+            return False, detail
+
+        # Every one of these is a rule that does not load. The check is not
+        # being asked whether the pack is clean - it has already said no - but
+        # whether anything NEW is broken, and a pack with a known-bad pack
+        # inside it makes that question unaskable. So: pass, and name them.
+        _append(job_id,
+                "  ignoring these, as configured. They are real: a rule that "
+                "does not compile never matches anything, so whatever it was "
+                "written to catch is not being caught.")
+        # Match objects, not pairs - a regex match is a single object, and
+        # unpacking it like `(foo, m) for m in matches` raises TypeError the
+        # first time the pack actually has a dangling include, killing the job
+        # thread with the log left mid-check.
+        missing = sorted({match.group(1)
+                          for match in (re.search(r"can't open include file: (\S+)", e)
+                                        for _, e in broken) if match})
+        if missing:
+            _append(job_id,
+                    f"    all of them are missing include(s): {', '.join(missing[:6])}"
+                    + (f" +{len(missing) - 6} more" if len(missing) > 6 else ""))
+            _append(job_id,
+                    "    that is an upstream packaging gap in yara-rules/, not "
+                    "something this check can fix")
+        ignored_note = f"; ignoring {len(broken)} known-bad file(s) {where.strip()}"
 
     detail = f"{total_files} rule file(s) compiled cleanly"
     notes = []
+    if ignored_note:
+        notes.append(ignored_note.lstrip("; "))
     if cross_ref:
         notes.append(f"{len(cross_ref)} need sibling rules loaded together")
     if missing_module:
@@ -875,8 +1017,9 @@ def _run_yara_check(job_id: str) -> tuple[bool, str]:
     return True, detail
 
 
-def _run(job_id: str, entries: list[dict]) -> None:
+def _run(job_id: str, entries: list[dict], options: dict | None = None) -> None:
     global _utils_running
+    options = options if isinstance(options, dict) else {}
     passed = failed = 0
     try:
         for entry in entries:
@@ -898,7 +1041,8 @@ def _run(job_id: str, entries: list[dict]) -> None:
             state = "passed"
 
             if entry["utility"] == "yara":
-                ok, detail = _run_yara_check(job_id)
+                ok, detail = _run_yara_check(
+                    job_id, ignore_failures=bool(options.get("ignore_compile_failures")))
                 state = "passed" if ok else "failed"
             else:
                 env = dict(os.environ)
@@ -949,13 +1093,28 @@ def _run(job_id: str, entries: list[dict]) -> None:
                 job["exit_code"] = 0 if failed == 0 else 1
                 job["finished_at"] = round(_now(), 1)
                 job["summary"] = summary
+    except Exception as exc:  # noqa: BLE001 - a dead thread must not zombie the job
+        # The finally below frees the run lock but updates nothing else, so without
+        # this an exception left the job 'running' forever - and worse, it left a
+        # *live-looking* job whose log simply stopped. Seen for real: the YARA
+        # check's include-extraction regex crashed and this card spun until the
+        # page was reloaded.
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if job and job["state"] == "running":
+                job["state"] = "failed"
+                job["exit_code"] = 1
+                job["finished_at"] = round(_now(), 1)
+                job["summary"] = f"crashed: {type(exc).__name__}"
+        _append(job_id, "")
+        _append(job_id, f"    {type(exc).__name__}: {exc}")
+        _append(job_id, "=== run crashed - see the line above")
     finally:
         _append(job_id, "")
         _append(job_id, f"=== {passed} passed, {failed} failed")
         with _jobs_lock:
             if _utils_running == job_id:
                 globals()["_utils_running"] = None
-
 
 def running() -> str | None:
     return _utils_running

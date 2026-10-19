@@ -65,6 +65,11 @@ config/*
 # shipped default is invisible and every checkout silently runs with
 # whatever the operator's shell happens to say.
 !config/analysis.yaml
+# The YARA check's own persisted switches (currently only whether files that
+# fail to compile are ignored). Gets written when the checkbox in the console
+# is toggled, so it must be tracked - a setting that silently resets on a
+# re-clone is the same one nobody can rely on.
+!config/yara_check.json
 !config/systemd/
 config/systemd/*
 !config/systemd/qilin-service/
