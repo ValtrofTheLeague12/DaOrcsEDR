@@ -160,6 +160,13 @@ admin-web/dist
 !tools/panel_mem_probe.py
 !tools/BUILD_PANEL_PLAN.md
 
+# Documentation, split by topic. Without this the whole docs/ tree is
+# invisible, which is the same trap as everything above - and worse here,
+# because a README that links into a directory git is not tracking looks fine
+# locally and 404s for everyone else.
+!docs/
+!docs/**
+
 # `!mega/` unignores the directory but the leading `*` re-ignores what is inside
 # it, so each file still needs its own line - the same rule the whole rest of
 # this file follows.
