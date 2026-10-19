@@ -163,6 +163,12 @@ admin-web/dist
 !tools/dll_closure.py
 !tools/panel_mem_probe.py
 !tools/BUILD_PANEL_PLAN.md
+# tools/yarGen/ holds our own maintenance script for the yarGen-Go checkout,
+# which cannot live in the checkout itself: that is a nested git repository,
+# so a file inside it is tracked by neither repository and every fix to it is
+# one re-clone from being lost.
+!tools/yarGen/
+!tools/yarGen/**
 
 # Documentation, split by topic. Without this the whole docs/ tree is
 # invisible, which is the same trap as everything above - and worse here,

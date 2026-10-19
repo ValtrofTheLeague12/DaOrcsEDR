@@ -87,7 +87,9 @@ MALAPI_LOCK = MALAPI_MIRROR / "hts-in_progress.lock"
 MALT_DIR = config.REPO / "malt"
 YARA_RULES = config.REPO / "yara-rules"
 YARGEN_DIR = config.REPO / "yarGen-Go"
-YARGEN_UPDATE = YARGEN_DIR / "update_and_check.ps1"
+# In tools/, not in the yarGen-Go checkout: that is a nested git repository, so
+# a script kept inside it is tracked by neither repository.
+YARGEN_UPDATE = config.REPO / "tools" / "yarGen" / "update_and_check.ps1"
 
 # yarac is the rule COMPILER, which is what a validity check needs. `yara`
 # would compile and then scan a target, which is a different question and needs
@@ -101,10 +103,14 @@ CHECK_TIMEOUT = 30.0
 # not instant. Bounded regardless, because a job with no ceiling is a job that
 # reports "running" forever.
 SBOM_TIMEOUT = 900.0
-# A pull was seconds. Re-mirroring malapi.io at depth 3 and regenerating
-# 500-odd API routes is minutes, and the mirror is the part that has to be
-# given room or it gets killed halfway and leaves a stale lock behind.
-PULL_TIMEOUT = 1800.0
+# Re-mirroring malapi.io at depth 3 and regenerating 500-odd API routes is
+# minutes, and the mirror is the part that has to be given room or it gets killed
+# halfway and leaves a stale lock behind.
+#
+# Renamed from PULL_TIMEOUT because nothing pulls any more. The name outlived the
+# design that introduced it, which is how this job came to be documented as a
+# git pull on malt/.
+MIRROR_TIMEOUT = 1800.0
 YARA_TIMEOUT = 600.0
 
 _jobs = build._jobs
@@ -559,7 +565,7 @@ _UTIL_SPEC = [
                     "environment and rewrite the CycloneDX SBOM and its summary.",
      "effects": ["rewrites sbom.json", "rewrites sbom_summary.json",
                  "reads every venv in the tree"], "timeout": SBOM_TIMEOUT},
-    {"id": "malapi-update", "label": "Update MalAPI rules", "utility": "malapi",
+    {"id": "malapi-update", "label": "Re-mirror and regenerate", "utility": "malapi",
      "description": "Re-mirror malapi.io with httrack, then regenerate the API "
                     "definitions and the server the analyzer queries, and boot "
                     "the result to prove it answers. This is the rules "
@@ -567,15 +573,17 @@ _UTIL_SPEC = [
      "effects": ["reaches the network", "rewrites python/malapi/",
                  "rewrites python/yaml/malapi/", "rewrites python/api/server.py",
                  "removes a stale httrack lock"],
-     "timeout": PULL_TIMEOUT},
+     "timeout": MIRROR_TIMEOUT},
     {"id": "yara-check", "label": "Compile YARA rules", "utility": "yara",
      "description": "Run yarac over each rule collection so a syntax error is "
                     "reported here rather than at the first scan of a real sample.",
      "effects": ["reads every rule file", "compiles to a temp file"],
      "timeout": YARA_TIMEOUT},
     {"id": "yargen-update", "label": "Update yarGen-Go", "utility": "yargen",
-     "description": "Run the project's own update_and_check.ps1: download the "
-                    "opcode and string databases, then re-check every prerequisite.",
+     "description": "Download yarGen-Go's opcode and string databases, then "
+                    "re-run every prerequisite check. Does not generate rules - "
+                    "there is no sample for that, and -UpdateOnly exists so the "
+                    "button does not have to invent one.",
      "effects": ["reaches the network", "rewrites yarGen-Go/dbs/"],
      "timeout": SBOM_TIMEOUT},
 ]
@@ -637,7 +645,7 @@ def _argv(utility: str) -> list[str]:
         return [_python(), str(MALAPI_PIPELINE), "--with-scrape"]
     if utility == "yargen":
         return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                "-File", str(YARGEN_UPDATE)]
+                "-File", str(YARGEN_UPDATE), "-UpdateOnly"]
     return []
 
 
