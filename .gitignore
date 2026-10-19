@@ -167,6 +167,11 @@ admin-web/dist
 !docs/
 !docs/**
 
+# Every runnable command, with the output each one actually produced. Same
+# whitelist trap as docs/: a COMMANDS.md that exists on disk and not in the
+# repository is the most quietly useless file there is.
+!COMMANDS.md
+
 # `!mega/` unignores the directory but the leading `*` re-ignores what is inside
 # it, so each file still needs its own line - the same rule the whole rest of
 # this file follows.
