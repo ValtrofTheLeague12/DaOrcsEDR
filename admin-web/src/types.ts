@@ -275,6 +275,20 @@ export interface Container {
   status: string // docker's own status string, e.g. "Up 2 hours"
   health: 'healthy' | 'unhealthy' | 'starting' | 'none'
   ports: string[]
+  // Where a person opens this service. Joined from the panel's own service specs
+  // (panel/services.py) on the published host port, so it is the URL that answers
+  // rather than a URL derived from the image name. Null for a container the
+  // panel has no spec for - a one-off `podman run`, say - and null is rendered
+  // as absent rather than guessed at.
+  endpoint: {
+    key: string
+    service: string
+    /** http(s) URL, or tcp://host:port for a broker. */
+    url: string
+    kind: 'http' | 'tcp'
+    /** A page a human can actually open, when the service publishes one. */
+    ui_url: string | null
+  } | null
   compose_file: string
   created: string | null
   running_for: string | null
@@ -1416,9 +1430,11 @@ export interface AnalyzerBuildJob {
   log?: string[]
   /** How many lines were dropped from the head, when the log outgrew its cap. */
   log_truncated?: number
-  /** 'tests' for a test run; absent for a build. The page shows the job log
-   *  for both, and this is what tells them apart. */
-  kind?: 'build' | 'tests'
+  /** 'tests' for a test run, 'utils' for a utility run; absent for a build.
+   *  All three share one job store (python/panel/build.py), so the log is
+   *  fetched from the same endpoint for each - and this is what tells them
+   *  apart in the UI. */
+  kind?: 'build' | 'tests' | 'utils'
   /** Per-test verdicts. Present only on a test run. */
   results?: BuildTestResult[]
   /** Which tests were chosen, echoed back so the log header can name them. */
@@ -1736,4 +1752,20 @@ export interface Stats {
     up: (number | null)[]
     total: number | null
   }
+}
+/** One setting in config/analysis.yaml. */
+export interface AnalysisSetting extends EnvOption {
+  /** False means the key is absent: the pipeline decides, not this file. */
+  present: boolean
+  /** The raw value as written, or null when absent. */
+  value: string | null
+}
+
+export interface AnalysisSettingsSnapshot {
+  /** Repository-relative, e.g. 'config/analysis.yaml'. */
+  path: string
+  exists: boolean
+  settings: AnalysisSetting[]
+  /** Keys in the file the analyzer does not read; it refuses to start on one. */
+  unknown: string[]
 }

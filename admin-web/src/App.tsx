@@ -34,6 +34,7 @@ const Network = lazy(() => import('./panels/Network'))
 const Logs = lazy(() => import('./panels/Logs'))
 const Artifacts = lazy(() => import('./panels/Artifacts'))
 const AnalysisConfig = lazy(() => import('./panels/AnalysisConfig'))
+const AnalysisSettings = lazy(() => import('./panels/AnalysisSettings'))
 const Containers = lazy(() => import('./panels/Containers'))
 const Build = lazy(() => import('./panels/Build'))
 const Utils = lazy(() => import('./panels/Utils'))
@@ -43,7 +44,7 @@ const QilingVM = lazy(() => import('./panels/QilingVM'))
 
 type PanelId =
   | 'overview' | 'docs' | 'stats' | 'system' | 'network' | 'logs' | 'artifacts'
-  | 'analyze' | 'build' | 'model' | 'utils'
+  | 'analyze' | 'build' | 'model' | 'utils' | 'settings'
   | 'containers'
   | 'vm' | 'qiling-vm' | 'cape-vm' | 'clamd' | 'qiling'
 
@@ -82,6 +83,12 @@ const NAV: { group: string; items: NavEntry[] }[] = [
     group: 'Analysis',
     items: [
       { id: 'analyze', label: 'Analysis Configuration', icon: 'analyze' },
+      // Its own entry rather than another tab inside Analysis Configuration,
+      // because it is a different kind of thing: that page edits what ONE
+      // pipeline does, this one edits what EVERY run does. Same settings,
+      // opposite scope, and the precedence between them is the confusing part -
+      // so they should not look like the same control twice.
+      { id: 'settings', label: 'Analysis settings', icon: 'model' },
       { id: 'artifacts', label: 'Artifacts', icon: 'artifacts' },
       { id: 'build', label: 'Build', icon: 'build' },
       { id: 'model', label: 'Model', icon: 'model', slice: 'slice 6' },
@@ -254,6 +261,7 @@ export default function App() {
             {panel === 'logs' && <Logs />}
             {panel === 'artifacts' && <Artifacts />}
             {panel === 'analyze' && <AnalysisConfig />}
+      {panel === 'settings' && <AnalysisSettings />}
             {panel === 'build' && <Build />}
             {panel === 'utils' && <Utils />}
             {panel === 'containers' && <Containers />}

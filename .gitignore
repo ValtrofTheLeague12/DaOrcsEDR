@@ -61,6 +61,10 @@ tests/*
 !config/
 config/*
 !config/artifacts.yaml
+# Global analysis settings - the ones that apply to every run. Unlisted, the
+# shipped default is invisible and every checkout silently runs with
+# whatever the operator's shell happens to say.
+!config/analysis.yaml
 !config/systemd/
 config/systemd/*
 !config/systemd/qilin-service/

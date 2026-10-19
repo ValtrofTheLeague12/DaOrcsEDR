@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
   AnalysisConfig,
+  AnalysisSettingsSnapshot,
   ArtifactExportJob,
   ArtifactsSnapshot,
   AnalyzerBuildJob,
@@ -257,6 +258,16 @@ containerBuild: (project: string) =>
   // the analyzer understands and nothing else - no arbitrary YAML crosses the
   // wire - and each is validated server-side with the rules the analyzer itself
   // enforces, so a bad edit is refused rather than left to fail at startup.
+  // config/analysis.yaml - the settings that apply to every run. A null value
+  // removes the key, which is how a setting goes back to following the
+  // selected pipeline; that is a different outcome from writing false.
+  analysisSettings: () => json<AnalysisSettingsSnapshot>('/api/analysis/settings'),
+  setAnalysisSettings: (patch: Record<string, unknown>) =>
+    json<{ ok: boolean; settings: AnalysisSettingsSnapshot }>('/api/analysis/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
   setArtifactOptions: (options: {
     store_artifact?: boolean
     upload_artifacts?: boolean

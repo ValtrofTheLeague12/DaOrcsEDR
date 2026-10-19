@@ -21,9 +21,9 @@ import sys
 import yaml
 from flask import Flask, jsonify, make_response, request, send_file
 
-from . import (analysis, artifacts, auth, build, build_checks, clamd, config,
-               containers, docs, logs, netmap, qiling, services, stats, system,
-               trace, utils, vms, vmmetrics)
+from . import (analysis, analysis_settings, artifacts, auth, build,
+               build_checks, clamd, config, containers, docs, logs, netmap,
+               qiling, services, stats, system, trace, utils, vms, vmmetrics)
 from .yamlview import jsonable as _jsonable, spans as _yaml_spans
 
 try:
@@ -445,6 +445,78 @@ def create_app() -> Flask:
     def _bad(exc: Exception, status: int = 400):
         detail = str(exc)
         return jsonify(ok=False, error=detail), status
+
+    @app.get("/api/analysis/settings")
+    def get_analysis_settings():
+        """Global Analysis Settings
+        ---
+        tags: [analysis]
+        responses:
+          200:
+            description: Every setting, with whether it is set and to what
+          400:
+            description: The file exists but is not a YAML map
+        description: >
+          config/analysis.yaml, the settings that apply to every run regardless of
+          which pipeline was selected. Reads alongside the per-pipeline
+          `environment:` block; where the two disagree about the same key, this
+          file wins, because it is applied after it. A key absent here is
+          reported with `present: false` and falls back to the pipeline's value
+          and then to the binary's default.
+
+          `unknown` lists any key in the file that is not a setting the analyzer
+          reads. The analyzer refuses to start on one, so it is surfaced here
+          rather than only as an exit code 2.
+        """
+        try:
+            return jsonify(analysis_settings.snapshot(config.REPO))
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+
+    @app.put("/api/analysis/settings")
+    def put_analysis_settings():
+        """Set or Clear Global Analysis Settings
+        ---
+        tags: [analysis]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              additionalProperties:
+                description: >
+                  Setting name to value. A null value removes the key, returning
+                  the setting to the binary default and to whatever the selected
+                  pipeline says.
+              example: {"ML_SKIP": false, "ML_THRESHOLD": 0.6}
+        responses:
+          200:
+            description: The settings as they now stand on disk
+          400:
+            description: An unknown key, a bad value, or an edit that would not parse
+        description: >
+          Rewrites only the keys present in the body, in place, leaving the rest
+          of the file - including every comment - byte-identical. PyYAML's round
+          trip would strip this file's explanation of the precedence rules, which
+          is the one thing a reader needs.
+
+          Values are validated against the same rules the analyzer applies, and
+          the result is re-parsed before it lands, so a request cannot leave
+          behind a config the analyzer would refuse at startup. Takes effect on
+          the analyzer's next run; the file is read once at startup.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        try:
+            result = analysis_settings.write_settings(config.REPO, body)
+        except ValueError as exc:
+            return _bad(exc)
+        except OSError as exc:
+            return _bad(exc, 500)
+        return jsonify(ok=True, settings=result)
 
     @app.post("/api/analysis/artifact-options")
     def set_artifact_options():

@@ -17,6 +17,7 @@
 #include "logging.hpp"
 #include "mega_runner.hpp"
 #include "pipeline.hpp"
+#include "analysis_config.hpp"
 #include "pipeline_planner.hpp"
 #include "process_runner.hpp"
 #include "redact.hpp"
@@ -251,6 +252,27 @@ int main(int argc, char** argv) {
     return 2;
   }
   pipeline::planner::apply_environment(cfg);
+
+  // -------- Global analysis settings --------------------------------------------
+  // Applied AFTER the pipeline's environment block, and that ordering is the
+  // feature: .env / shell < pipeline `environment:` < config/analysis.yaml.
+  // A pipeline can still set a key this file does not mention, but an operator's
+  // standing choice in config/analysis.yaml is not something a pipeline - or a
+  // shell that happens to have ML_SKIP set - can quietly outvote.
+  //
+  // Applied before redact::seed() below so anything exported here is registered
+  // as a credential before it can be logged.
+  pipeline::analysis_settings analysis;
+  try {
+    analysis = pipeline::load_analysis_settings();
+  } catch (const std::exception& e) {
+    // A malformed global config is a start-up error, not a warning. Silently
+    // running with the settings half-applied is how a run quietly stops doing
+    // what the operator asked for.
+    std::cerr << "analysis config error: " << e.what() << "\n";
+    return 2;
+  }
+  pipeline::apply_analysis_settings(analysis);
 
   // -------- Debug stack ------------------------------------------------------
   // Seeded a second time because apply_environment() may have put new
