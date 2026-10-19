@@ -1,9 +1,0 @@
-HTTrack3.49-5 launched on Mon, 21 Sep 2026 03:09:00 at https://lots-project.com/
-(httrack https://lots-project.com/ -O /mnt/c/Users/The4thReich/Desktop/IAProject/python/lots -r3 -c4 -s0 -%v )
-
-Information, Warnings and Errors reported for this mirror:
-note:	the hts-log.txt file, and hts-cache folder, may contain sensitive information,
-	such as username/password authentication for websites mirrored in this project
-	do not share these files/folders if you want these information to remain private
-
-03:09:07	Error: 	Exit requested by shell or user

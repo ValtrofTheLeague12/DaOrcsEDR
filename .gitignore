@@ -183,3 +183,17 @@ admin-web/dist
 # after the negation above; without them a test run makes the tree dirty.
 unit/**/__pycache__/
 unit/**/*.pyc
+
+# Generated artefacts that were tracked before .gitignore existed, removed on
+# 2026-10-19. None are referenced by code; they were the reason a fresh clone
+# carried a stray .pyc and two editor backups.
+*.pyc
+python/clamd/_configure_clamd.pyc
+*.bak
+# WinHTTrack mirror state. Its own readme warns these may carry credentials
+# from the mirrored sites, which is reason enough not to version them. The
+# cache itself is still tracked - only the regenerable old/ and the logs go.
+**/hts-log.txt
+**/hts-cache/doit.log
+**/hts-cache/old.zip
+**/hts-cache/old.lst
