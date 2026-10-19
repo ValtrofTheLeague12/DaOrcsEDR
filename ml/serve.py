@@ -45,9 +45,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
-import lightgbm as lgb
 from flask import Flask, jsonify, request
-from sklearn.feature_extraction import FeatureHasher
 
 sys.path.insert(0, str(Path(__file__).parent))
 import mllog  # noqa: E402
@@ -86,6 +84,12 @@ class Model:
     """Holds the booster so it loads once, not per request."""
 
     def __init__(self, path: Path) -> None:
+        # Imported here, not at module scope: _authorised() is a pure auth
+        # helper that the unit tests import, and it has no business requiring
+        # the ML runtime to be installed. `from __future__ import annotations`
+        # keeps the lgb.Booster annotations below lazy for the same reason.
+        import lightgbm as lgb
+
         self.path = path
         self.booster = lgb.Booster(model_file=str(path))
         self.sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -140,6 +144,11 @@ def named_map(raw_groups: dict | None) -> dict[int, list[str]]:
     out: dict[int, list[str]] = defaultdict(list)
     if not raw_groups:
         return out
+    # Deferred with lightgbm in Model.__init__ - this is the only place that
+    # needs scikit-learn, and keeping it out of module scope is what lets the
+    # auth helpers be imported (and tested) without the ML runtime installed.
+    from sklearn.feature_extraction import FeatureHasher
+
     imports = raw_groups.get("imports") or {}
     if isinstance(imports, dict):
         libs = sorted({d.lower() for d in imports})

@@ -47,9 +47,8 @@ cmake --build build-ucrt --target unit_tests                # C++, no framework
 python\.venv\Scripts\python.exe -m pytest tests -q          # black-box
 ```
 
-`unit/README.md` explains which tier a test belongs in. Three cases in `tests/`
-are currently stale — they assert behaviour that was refactored away — and one
-needs `lightgbm` in the ML venv.
+`unit/README.md` explains which tier a test belongs in. Both suites are
+currently green.
 
 ## Repository layout
 

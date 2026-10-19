@@ -42,4 +42,10 @@ std::string paint(std::string_view color, std::string_view message) {
   return out;
 }
 
+// Also reached by pipeline_planner.cpp, which reports duplicate and
+// auto-inserted phases while loading a config. Swallowed rather than printed:
+// it would interleave with the harness's own per-test "ok" lines and make a
+// passing run look like it had failed.
+void info(std::string_view) {}
+
 }  // namespace console

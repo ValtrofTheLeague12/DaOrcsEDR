@@ -138,9 +138,13 @@ struct pipeline_config {
 // The catalog every reader, error message, and --list-phases renders from.
 const std::vector<phase_info>& catalog();
 
-// Case-insensitive, alias-aware ("ml" -> model, "eat" -> sections, ...).
-// "preamble" and "hashes" resolve to false: they always run and are not
-// selectable. Returns false (and leaves out untouched) for unknown names.
+// Exact, case-insensitive match against the canonical catalog name, with
+// surrounding whitespace trimmed. Aliases ("ml" -> model, "eat" -> sections)
+// are resolved by the loader, not here: a config naming "ml" loads fine, but
+// from_name("ml") returns false. Config readers should call load() rather than
+// validating names through this function.
+// "preamble" and "hashes" also return false: they always run and are not
+// selectable. On failure out is left untouched.
 bool from_name(const std::string& name, phase_id& out);
 std::string to_name(phase_id p);
 

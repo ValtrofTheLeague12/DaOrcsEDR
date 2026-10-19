@@ -526,7 +526,10 @@ def create_app(api: Api) -> Flask:
             return jsonify(error="sample too large", max_bytes=MAX_UPLOAD,
                            received_bytes=request.content_length), 413
 
-        data = request.get_data(cache=False)  # 413 via MAX_CONTENT_LENGTH
+        # Order matters: get_data() drains the input stream, so calling it first
+        # leaves request.files empty and every multipart upload 400s with "no
+        # file part in multipart body". Parse the form first; only fall back to
+        # the raw body when this is not a multipart request.
         multipart = "multipart/form-data" in (request.content_type or "")
         if multipart:
             part = request.files.get("file")
@@ -540,6 +543,8 @@ def create_app(api: Api) -> Flask:
                 wait = request.form["wait"].lower() in ("1", "true", "yes")
             if "pipeline" not in request.args and request.form.get("pipeline"):
                 pipeline = request.form["pipeline"]
+        else:
+            data = request.get_data(cache=False)  # 413 via MAX_CONTENT_LENGTH
         filename = filename or request.headers.get("X-Filename") or "sample.bin"
 
         if not data:

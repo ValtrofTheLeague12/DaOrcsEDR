@@ -5,7 +5,8 @@ Unit tests. Two suites, one per language.
 ```
 unit/
   python/     pytest, 58 tests   - panel config, malapi_pipeline, yara_gen, utils
-  c++/        no framework, 27  - app_paths, resume, default_pipeline
+  c++/        no framework, 65  - app_paths, resume, default_pipeline,
+                                          pipeline_planner
 ```
 
 ## What belongs here, and what does not
@@ -97,19 +98,35 @@ Not hypothetical; these are what the first run reported.
   from satisfying a request for `SA_API_PORT`.
 - **The rule inventory crashed on a rules directory outside the repo.** It is a
   setting (`YARA_RULES_DIR`); an inventory helper is the wrong place to raise.
+- **Every multipart upload to the API server returned 400.** `/analyze` called
+  `request.get_data(cache=False)` before reading `request.files`, which drains
+  the stream — so `request.files` came back empty and the route answered "no
+  file part in multipart body". A raw `application/octet-stream` POST worked,
+  which is why it went unnoticed. The form is now parsed first and the raw body
+  is the fallback. Found by a `tests/` case that had been failing for a while
+  and been written off as stale; see the note in the commit message.
+- **`from_name()` was documented as alias-aware and is not.** The public
+  function does an exact catalog match; the alias table (`ml` → `model`,
+  `eat` → `sections`) lives in the loader's internal `resolve_name()`. A config
+  naming `ml` loads fine, so nothing was broken — but anything validating names
+  through the public API would have rejected a working config. The header now
+  says so.
 
 ## Known gaps
 
 Honest about what is *not* covered, because an empty spot is worse than a slow
 one:
 
-- **`pipeline_planner.cpp` has no unit tests** — the largest untested surface
-  in the project. It pulls in the extractor, radare2 and ML headers, so a test
-  binary for it is a real piece of work rather than a link line. Its behaviour
-  is covered from outside by `test_default_pipeline` and by `tests/`.
+- **`run_phases()` is untested**, and now visibly so. `test_pipeline_planner`
+  covers the planner's decision half; executing the result needs a live sample,
+  so it is covered end-to-end by `tests/`. The planner stubs are the boundary —
+  if a future test wants to drive `run_phases()` in-process, it has to link the
+  real 29 phases instead, because the stubs return no-ops.
 - **No C++ test for `redact`.** Secret redaction is security-critical and
   untested; `redact.cpp` needs `file_hasher.cpp`, which needs the console and
-  logging chain.
+  logging chain. Note that `test_pipeline_planner` *stubs* `redact::scrub`
+  rather than linking it, for exactly that reason — so the planner tests prove
+  nothing about redaction.
 - **The `IA_APPDATA_DIR` override** is untested here, because the resolver
   caches into a function-local static and an in-process test cannot observe a
   change. It needs a subprocess test, which belongs in `tests/`.

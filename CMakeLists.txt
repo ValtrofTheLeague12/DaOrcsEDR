@@ -1020,12 +1020,32 @@ ia_add_unit_test(test_default_pipeline
     "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++/console_stub.cpp")
 add_dependencies(test_default_pipeline static_analyzer)
 
-# Convenience: build all three. The run_* targets run one each.
-add_custom_target(unit_tests
-    DEPENDS test_app_paths test_resume test_default_pipeline
-    COMMENT "built: test_app_paths, test_resume, test_default_pipeline")
+# The planner's pure half - catalog, name resolution, config loading,
+# normalization - is reachable without a live sample, so this links the planner
+# itself rather than shelling out to the binary. That is a different bargain
+# from test_default_pipeline above: linking means these tests exercise the real
+# normalize() and the real alias table, but they cannot catch a catalog that is
+# correct in memory and wrong on the wire. Keep both.
+#
+# pipeline_planner.cpp pulls in pipeline.hpp, exporter.hpp and resume.hpp, so
+# the source list below is what the linker actually asked for, not a guess.
+ia_add_unit_test(test_pipeline_planner
+    "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++/test_pipeline_planner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/main/pipeline_planner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/app_paths.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/banner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++/planner_stubs.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++/console_stub.cpp")
+target_link_libraries(test_pipeline_planner PRIVATE yaml-cpp)
+# pipeline_planner.cpp includes debug_dump_macro.hpp, which pulls cpp-dump.hpp.
+target_include_directories(test_pipeline_planner PRIVATE "${CPP_DUMP_DIR}")
 
-foreach(_t test_app_paths test_resume test_default_pipeline)
+# Convenience: build all four. The run_* targets run one each.
+add_custom_target(unit_tests
+    DEPENDS test_app_paths test_resume test_default_pipeline test_pipeline_planner
+    COMMENT "built: test_app_paths, test_resume, test_default_pipeline, test_pipeline_planner")
+
+foreach(_t test_app_paths test_resume test_default_pipeline test_pipeline_planner)
   add_custom_target(run_${_t}
       COMMAND $<TARGET_FILE:${_t}> WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
       DEPENDS ${_t} USES_TERMINAL
