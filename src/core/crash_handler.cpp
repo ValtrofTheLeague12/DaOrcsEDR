@@ -544,6 +544,11 @@ void build_report(const char* reason, const char* detail, const void* arch) {
 // install() stored.
 std::atomic<bool> g_continue_after_signal{false};
 
+// Bumped by the handler on the path where it returns instead of exiting. This is
+// the only way to observe that continuation actually happened, rather than
+// inferring it from the process still being alive.
+std::atomic<int> g_signal_continuations{0};
+
 // Single entry point: guards against recursion and writes the report once.
 void report_once(const char* reason, const char* detail, const void* arch) {
   if (g_handling.exchange(true)) return;
@@ -635,6 +640,7 @@ void on_signal(int sig) {
     // Return, and the interrupted work resumes. The report has been written;
     // the run carries on and the fault is in the record rather than at the
     // end of it.
+    g_signal_continuations.fetch_add(1, std::memory_order_relaxed);
     return;
   }
   if (g_continue_after_signal.load(std::memory_order_acquire) && !is_continuable(sig)) {
@@ -745,6 +751,50 @@ void install(const std::filesystem::path& logs_root, std::string_view run_id,
   std::fprintf(stderr, "[crash-selftest] SURVIVED - the handler did not run\n");
   std::fflush(stderr);
   std::abort();
+}
+
+bool signal_selftest() {
+#if defined(_WIN32)
+  // Not a gap in the test, a gap in the platform. Windows has no SIGUSR1 and no
+  // SIGTERM the analyzer can catch from the OS; the things that actually stop a
+  // process here are console control events, and CTRL_CLOSE/CTRL_LOGOFF/
+  // CTRL_SHUTDOWN give a process about five seconds before Windows kills it, so
+  // "carry on after the signal" has no meaning there.
+  //
+  // Reporting false rather than true is the point. A selftest that passed on a
+  // build where the feature is absent would be worse than no selftest.
+  std::fprintf(stderr,
+               "[signal-selftest] not applicable on Windows: the continuable-signal\n"
+               "[signal-selftest] handling is POSIX-only. --continue-on-signal has\n"
+               "[signal-selftest] no effect in this build. Verified on a Linux build.\n");
+  std::fflush(stderr);
+  return false;
+#else
+  if (!g_continue_after_signal.load(std::memory_order_relaxed)) {
+    std::fprintf(stderr,
+                 "[signal-selftest] --continue-on-signal (or IA_CONTINUE_ON_SIGNAL=1)\n"
+                 "[signal-selftest] is not set, so the signal would be fatal. Nothing\n"
+                 "[signal-selftest] was raised.\n");
+    std::fflush(stderr);
+    return false;
+  }
+
+  const int before = g_signal_continuations.load(std::memory_order_relaxed);
+  std::fprintf(stderr, "[signal-selftest] raising SIGUSR1; if the handler did not\n"
+                       "[signal-selftest] return, this process would die here.\n");
+  std::fflush(stderr);
+  ::raise(SIGUSR1);
+
+  const int after = g_signal_continuations.load(std::memory_order_relaxed);
+  const bool continued = after > before;
+  std::fprintf(stderr, continued
+      ? "[signal-selftest] PASS - the handler caught SIGUSR1, wrote its report\n"
+        "[signal-selftest] and returned; execution reached this line.\n"
+      : "[signal-selftest] FAIL - execution reached this line but the handler\n"
+        "[signal-selftest] never recorded a continuation.\n");
+  std::fflush(stderr);
+  return continued;
+#endif
 }
 
 void demo() {

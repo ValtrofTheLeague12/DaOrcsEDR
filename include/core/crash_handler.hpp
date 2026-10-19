@@ -83,4 +83,17 @@ std::string state_line();
 // exercises it deliberately.
 void demo();
 
+// Proves options::continue_after_signal actually continues, and says so.
+//
+// Raises one continuable signal and checks whether execution reached the far
+// side of the handler. Returns true if the handler ran and returned, false if
+// it did not - or if this build cannot run the test at all, which is the case on
+// Windows: the continuable-signal handling is POSIX-only, so the test reports
+// "not applicable" rather than passing vacuously.
+//
+// Exists because self_test() covers the other direction. It proves the process
+// dies and a report is written; this proves the opposite, that a polite signal
+// no longer kills it. Neither is checkable by reading the code.
+bool signal_selftest();
+
 }  // namespace crash

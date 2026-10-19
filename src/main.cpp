@@ -94,6 +94,11 @@ void print_usage(std::ostream& os) {
         "                           terminate: returning from one re-executes the\n"
         "                           instruction that faulted. Same setting from a\n"
         "                           pipeline: IA_CONTINUE_ON_SIGNAL=1\n"
+        "      --signal-selftest      prove --continue-on-signal: raise a signal that\n"
+        "                           should be survivable, then check that execution\n"
+        "                           reached the far side of the handler. Requires\n"
+        "                           --continue-on-signal. POSIX only; reports\n"
+        "                           \"not applicable\" on a Windows build.\n"
         "  artifact actions      configured in config/artifacts.yaml (bundling\n"
         "                           and remote upload are disabled by default).\n"
         "                           IA_ARTIFACT_UPLOAD=0 forces uploading off and\n"
@@ -150,6 +155,7 @@ int main(int argc, char** argv) {
   bool crash_demo = false;
   bool allow_core_dump = false;
   bool continue_on_signal = false;
+  bool signal_selftest = false;
   bool no_curses = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -203,6 +209,8 @@ int main(int argc, char** argv) {
       allow_core_dump = true;
     } else if (arg == "--continue-on-signal") {
       continue_on_signal = true;
+    } else if (arg == "--signal-selftest") {
+      signal_selftest = true;
     } else if (arg == "--no-curses") {
       no_curses = true;
     } else if (arg.size() > 1 && arg[0] == '-') {
@@ -364,6 +372,23 @@ int main(int argc, char** argv) {
     crash::set_state("crash-demo", input_path.empty() ? "a.exe" : input_path);
     crash::demo();
     return 0;
+  }
+  if (signal_selftest) {
+    // Same shape as --crash-selftest, opposite direction: that one proves the
+    // process dies and a report lands, this one proves a polite signal no
+    // longer kills it. Also runs after install(), because the handler it raises
+    // a signal at is the one install() put there.
+    return crash::signal_selftest() ? 0 : 1;
+  }
+  if (continue_on_signal) {
+    // Said out loud rather than accepted in silence. The continuable-signal
+    // handling is POSIX-only, so on a Windows build the flag parses, appears in
+    // --help, and is offered by the admin console - and does nothing. An
+    // operator who set it should not have to read the source to find out.
+#if defined(_WIN32)
+    std::cerr << "note: --continue-on-signal has no effect in this build; the "
+                 "continuable-signal handling is POSIX-only.\n";
+#endif
   }
 
   // Lazy service ownership follows the plan: only what the selected phases use
