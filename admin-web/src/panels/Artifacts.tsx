@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Alert, Card, Chip } from '@heroui/react'
+import { Alert } from '@heroui/react/alert'
+import { Card } from '@heroui/react/card'
+import { Chip } from '@heroui/react/chip'
 import { api, usePoll } from '../api'
 import Icon from '../components/Icon'
+import JobLog from '../components/JobLog'
 import Loading from '../components/Loading'
 import Pager, { usePaged } from '../components/Pager'
 import { Sparkline } from '../components/Stat'
@@ -16,6 +19,21 @@ type Tone = 'accent' | 'success' | 'warning' | 'danger'
 function shortStamp(ts: number | null | undefined): string {
   if (!ts) return '—'
   return new Date(ts * 1000).toISOString().replace('T', ' ').slice(0, 16)
+}
+
+/**
+ * Colour for `mega/upload.py` output.
+ *
+ * That script prefixes every step with `[+]`, so its progress lines are told
+ * apart by that prefix rather than by matching words like "uploaded" - a bundle
+ * whose name contains "error" is a bundle name, not a failure. The state chip
+ * carries the verdict; this only makes the steps scannable.
+ */
+function exportLineClass(line: string): string {
+  if (/^\[\+\]/.test(line)) return 'compose-tok-string'
+  if (/^\[!\]|^\[x\]|error|failed|refus/i.test(line)) return 'compose-tok-bool'
+  if (/^\[#/.test(line)) return 'compose-tok-comment'
+  return 'compose-tok-plain'
 }
 
 function VerifyMark({ bundle }: { bundle: LocalBundle }) {
@@ -298,10 +316,20 @@ function LocalList({
                         <span className="min-w-0 truncate font-mono text-[12px]" title={bundle.name}>
                           {bundle.dir}
                         </span>
-                        <div className="flex shrink-0 items-center gap-1.5">
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
                           <VerifyMark bundle={bundle} />
                           <Chip size="sm" variant="soft">{bundle.file_count} files</Chip>
                           <Chip size="sm" variant="soft">{bytes(bundle.bytes)}</Chip>
+                          {bundle.present && (
+                            <a
+                              className="artifact-action"
+                              href={api.artifactArchiveUrl(bundle.name)}
+                              title={`Open or download ${bundle.archive ?? bundle.name}`}
+                            >
+                              Open artifact
+                              <span aria-hidden="true">↗</span>
+                            </a>
+                          )}
                         </div>
                       </div>
                       <div className="artifact-bundle-details">
@@ -336,19 +364,78 @@ function RemoteList({
   bundles,
   truncated,
   notExamined,
+  remoteRoot,
+  onRecovered,
   historyPath,
   historyWritten,
   historyAt,
+  uploadEnabled,
+  onExportStarted,
+  encryptEnabled,
+  recipient,
 }: {
   bundles: UnifiedBundle[]
   truncated: string | null
   notExamined: number
+  remoteRoot: string
+  onRecovered: () => void
   historyPath: string
   historyWritten: boolean
   historyAt: number | null
+  /** Whether config/artifacts.yaml permits pushing evidence to MEGA at all.
+   *  Read once here rather than per bundle so a disabled account shows one
+   *  explanation instead of a button per row that all fail the same way. */
+  uploadEnabled: boolean
+  /** Whether exports are sealed to a public key first. */
+  encryptEnabled: boolean
+  /** Which key, when encryptEnabled. */
+  recipient: string
+  /** Hand the job to the page, which owns the log modal: a running upload must
+   *  not be tied to a list the operator can page away from. */
+  onExportStarted: (job: { jobId: string; name: string }) => void
 }) {
   const paged = usePaged(bundles)
   const missing = bundles.filter((bundle) => !bundle.present).length
+  const [recovering, setRecovering] = useState<string | null>(null)
+  const [recoverError, setRecoverError] = useState<{ name: string; message: string } | null>(null)
+  const [exporting, setExporting] = useState<string | null>(null)
+  const [exportError, setExportError] = useState<{ name: string; message: string } | null>(null)
+
+  const recover = async (name: string) => {
+    setRecovering(name)
+    setRecoverError(null)
+    try {
+      await api.recoverArtifact(name, remoteRoot)
+      onRecovered()
+    } catch (error) {
+      setRecoverError({
+        name,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setRecovering(null)
+    }
+  }
+
+  // The mirror of recover: push what is on disk up to MEGA. It is a job, not a
+  // request, because sealing a large bundle and pushing it over a consumer link
+  // takes minutes - and the log is the part worth watching.
+  const exportBundle = async (name: string) => {
+    setExporting(name)
+    setExportError(null)
+    try {
+      const res = await api.exportArtifact(name, remoteRoot)
+      onExportStarted({ jobId: res.job_id, name })
+    } catch (error) {
+      setExportError({
+        name,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setExporting(null)
+    }
+  }
+
   return (
     <Card className="w-full">
       <Card.Header className="flex flex-wrap items-center justify-between gap-3">
@@ -362,6 +449,18 @@ function RemoteList({
         </div>
       </Card.Header>
       <Card.Content className="flex flex-col gap-2">
+        {!uploadEnabled && (
+          <Alert status="warning">
+            <Alert.Title>Export is disabled</Alert.Title>
+            <Alert.Description>
+              <code className="font-mono">upload_artifacts</code> is false in{' '}
+              <code className="font-mono">config/artifacts.yaml</code>, so evidence cannot be
+              pushed to MEGA from here - the same option that stops the analyzer doing it on a
+              run. Recover still works: pulling evidence down does not send it anywhere. Turn it
+              back on under <strong>Analysis → Analysis Configuration → Upload &amp; artifacts</strong>.
+            </Alert.Description>
+          </Alert>
+        )}
         {bundles.length === 0 ? (
           <p className="artifact-list-empty">No bundles on MEGA yet. Local archives are still listed in the Local tab.</p>
         ) : (
@@ -377,12 +476,61 @@ function RemoteList({
                         <span className="min-w-0 truncate font-mono text-[12px]" title={bundle.name}>
                           {bundle.dir}
                         </span>
-                        <div className="flex shrink-0 items-center gap-1.5">
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
                           <Chip size="sm" variant="soft" color={bundle.present ? 'success' : 'warning'}>
                             {bundle.present ? `${bundle.where} · present` : 'missing remotely'}
                           </Chip>
                           <Chip size="sm" variant="soft">{bundle.file_count} files</Chip>
                           <Chip size="sm" variant="soft">{bytes(bundle.bytes)}</Chip>
+                          {bundle.present && bundle.where !== 'remote' && (
+                            <a
+                              className="artifact-action"
+                              href={api.artifactArchiveUrl(bundle.name)}
+                              title={`Open or download ${bundle.archive ?? bundle.name}`}
+                            >
+                              Open artifact
+                              <span aria-hidden="true">↗</span>
+                            </a>
+                          )}
+                          {bundle.present &&
+                            (bundle.where === 'remote' || bundle.where === 'both') && (
+                            <button
+                              type="button"
+                              className="artifact-action"
+                              title={bundle.where === 'both'
+                                ? 'This bundle is already available locally; open that copy instead.'
+                                : 'Recover this bundle from MEGA'}
+                              onClick={() => void recover(bundle.name)}
+                              disabled={recovering !== null || bundle.where === 'both'}
+                            >
+                              {bundle.where === 'both'
+                                ? 'Already local'
+                                : recovering === bundle.name ? 'Recovering…' : 'Recover from MEGA'}
+                              {bundle.where !== 'both' && <span aria-hidden="true">↓</span>}
+                            </button>
+                          )}
+                          {/* Export only where it means something: a bundle that is
+                              on disk and not on MEGA. Offering it for one that is
+                              already there would re-upload the same bytes under the
+                              same name. */}
+                          {bundle.present && bundle.where === 'local' && (
+                            <button
+                              type="button"
+                              className="artifact-action"
+                              title={uploadEnabled
+                                ? (encryptEnabled
+                                  ? `Seal this bundle to the '${recipient}' public key and upload it to MEGA ${remoteRoot}`
+                                  : `Upload this bundle to MEGA ${remoteRoot} UNSEALED`)
+                                : 'Uploading is disabled by upload_artifacts in config/artifacts.yaml'}
+                              onClick={() => void exportBundle(bundle.name)}
+                              disabled={exporting !== null || !uploadEnabled}
+                            >
+                              {exporting === bundle.name
+                                ? 'Exporting…'
+                                : encryptEnabled ? 'Export to MEGA' : 'Export unencrypted'}
+                              <span aria-hidden="true">↑</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                       <div className="artifact-bundle-details">
@@ -391,6 +539,18 @@ function RemoteList({
                         <span>Last seen</span>
                         <span className="font-mono">{ago(bundle.last_seen ?? bundle.modified)}</span>
                       </div>
+                      {recoverError?.name === bundle.name && (
+                        <Alert status="danger" className="mt-2">
+                          <Alert.Title>Recovery failed</Alert.Title>
+                          <Alert.Description>{recoverError.message}</Alert.Description>
+                        </Alert>
+                      )}
+                      {exportError?.name === bundle.name && (
+                        <Alert status="danger" className="mt-2">
+                          <Alert.Title>Export failed</Alert.Title>
+                          <Alert.Description>{exportError.message}</Alert.Description>
+                        </Alert>
+                      )}
                     </div>
                   </div>
                 )
@@ -427,6 +587,19 @@ export default function Artifacts() {
     () => api.artifacts('/', forceRefresh.current),
     POLL_MS,
   )
+  // Whether this lab permits pushing evidence off the host at all. Read from the
+  // same config the analyzer reads, so the button and the option cannot disagree
+  // - and so the page can explain a disabled button instead of leaving the
+  // operator to discover it by clicking.
+  const { data: analysis } = usePoll(api.analysisConfig, 120_000)
+  const uploadEnabled = analysis?.mega_upload ?? true
+  // What an export will actually do, decided server-side from the same config
+  // the analyzer reads. Shown on the button because "this leaves the host" and
+  // "this leaves the host readable by anyone holding the key" are different
+  // claims, and the operator should be able to see which one they are making.
+  const encryptEnabled = analysis?.mega_encrypt ?? false
+  const recipient = analysis?.encryption_recipient ?? 'user'
+  const [exportJob, setExportJob] = useState<{ jobId: string; name: string } | null>(null)
 
   useEffect(() => {
     if (data) forceRefresh.current = false
@@ -564,9 +737,15 @@ export default function Artifacts() {
                   bundles={remoteBundles}
                   truncated={data.remote?.truncated ?? null}
                   notExamined={data.remote?.not_examined ?? 0}
+                  remoteRoot={data.remote?.remote_root ?? '/'}
+                  onRecovered={refreshNow}
                   historyPath={data.history?.path ?? ''}
                   historyWritten={data.history?.written ?? false}
                   historyAt={data.history?.updated_at ?? null}
+                  uploadEnabled={uploadEnabled}
+                  encryptEnabled={encryptEnabled}
+                  recipient={recipient}
+                  onExportStarted={setExportJob}
                 />
               )}
             </div>
@@ -592,6 +771,21 @@ export default function Artifacts() {
             </Card>
           )}
         </div>
+      )}
+
+      {/* Started inside RemoteList, owned here: the job outlives the list it was
+          started from - paging or a tab switch must not orphan a running
+          upload - and closing the log must not cancel it. */}
+      {exportJob && (
+        <JobLog
+          jobId={exportJob.jobId}
+          title={`Exporting ${exportJob.name}`}
+          subtitle="mega/upload.py"
+          fetchJob={(id) => api.artifactExportJob(id)}
+          onClose={() => setExportJob(null)}
+          onFinished={(job) => { if (job.state !== 'error') refreshNow() }}
+          lineClass={exportLineClass}
+        />
       )}
     </div>
   )

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button } from '@heroui/react'
+import { Alert } from '@heroui/react/alert'
+import { Button } from '@heroui/react/button'
 import { usePoll, api } from '../api'
 import { ServiceCard } from '../components/ServiceCard'
 import Loading from '../components/Loading'

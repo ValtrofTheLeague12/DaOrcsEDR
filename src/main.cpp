@@ -8,6 +8,8 @@
 // include/main/report.hpp.
 
 #include "console.hpp"
+#include "app_paths.hpp"
+#include "build_info.hpp"
 #include "crash_handler.hpp"
 #include "curses_ui.hpp"
 #include "debug_dump.hpp"
@@ -18,6 +20,7 @@
 #include "pipeline_planner.hpp"
 #include "process_runner.hpp"
 #include "redact.hpp"
+#include "resume.hpp"
 #include "trace.hpp"
 
 #include <chrono>
@@ -56,17 +59,40 @@ void print_usage(std::ostream& os) {
         "                           a .yaml/.yml/.json file path,\n"
         "                           inline JSON like '[\"strings\",\"model\"]',\n"
         "                           or 'default'\n"
+        "      --resume           continue an interrupted run of this sample:\n"
+        "                           phases recorded in logs/resume/<stem>.json are\n"
+        "                           skipped and the rest run normally. Ctrl+C stops\n"
+        "                           at the next phase boundary and leaves that file\n"
+        "                           behind\n"
+        "      --from <phase>     start at <phase>, skipping everything before it in\n"
+        "                           the plan. Same cost as --resume: a skipped phase\n"
+        "                           leaves nothing in memory for the phases after it,\n"
+        "                           and the affected phases are named on startup\n"
         "  --list-phases          list the selectable phases and exit\n"
         "  --list-pipelines       list the available named pipelines and exit\n"
         "      --json             with --list-phases: emit JSON\n"
+        "  --no-curses            use normal terminal output and print the red logo banner\n"
         "  --debug                write state dumps (SA_DUMP) to\n"
         "                           logs/dumps/<run_id>-dumps.log with file:line\n"
         "                           labels; every registered secret is redacted\n"
         "  --crash-selftest       deliberately dereference null right after the\n"
         "                           handlers are installed, to prove\n"
         "                           logs/crash/<run_id>-<pid>.txt/.dmp are written\n"
+        "      --crash-demo         show what a crash LOOKS like - the centred red\n"
+        "                           logos/crash.logo banner, the full report and the\n"
+        "                           minidump - then exit normally, without faulting.\n"
+        "                           For checking the presentation, not the handlers\n"
         "  artifact actions      configured in config/artifacts.yaml (bundling\n"
-        "                           and remote upload are disabled by default)\n"
+        "                           and remote upload are disabled by default).\n"
+        "                           IA_ARTIFACT_UPLOAD=0 forces uploading off and\n"
+        "                           is how CI, and the admin console's test runner,\n"
+        "                           run the analyzer without touching a remote\n"
+        "                           account. It can only ever disable uploading,\n"
+        "                           never enable it\n"
+        "  -V, --version         print the version, the commit this binary was\n"
+        "                           built from, the branch, whether the tree was\n"
+        "                           dirty at build time, and where generated files\n"
+        "                           will go, then exit\n"
         "  -h, --help             show this help\n"
         "\n"
         "A pipeline selects which analysis phases run and in what order: YAML\n"
@@ -102,15 +128,36 @@ int main(int argc, char** argv) {
   // the input: `static_analyzer sample.exe --pipeline pipelines/quick.yaml`.
   std::string pipeline_spec;
   std::string input_path;
+  bool resume_flag = false;
+  std::string from_phase;
   bool list_phases = false;
   bool list_pipelines = false;
   bool list_json = false;
   bool debug_dumps = false;
   bool crash_selftest = false;
+  bool crash_demo = false;
+  bool no_curses = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "-h" || arg == "--help") {
       print_usage(std::cout);
+      return 0;
+    } else if (arg == "-V" || arg == "--version") {
+      // Answered before anything else loads - no trace, no logging, no config -
+      // so `static_analyzer --version` works on a build that cannot start, which
+      // is exactly when somebody needs to know what it is.
+      std::cout << build_info::describe(build_info::build_dir()) << "\n";
+      if (!build_info::commit().empty()) {
+        std::cout << "commit    : " << build_info::commit() << "\n";
+        std::cout << "branch    : " << build_info::branch()
+                  << (build_info::dirty() ? "  (uncommitted changes at build time)"
+                                          : "")
+                  << "\n";
+      } else {
+        std::cout << "commit    : unknown (not built from a git checkout)\n";
+      }
+      std::cout << "build dir : " << build_info::build_dir() << "\n";
+      std::cout << "runtime   : " << app_paths::data_root().string() << "\n";
       return 0;
     } else if (arg == "-p" || arg == "--pipeline") {
       if (i + 1 >= argc) {
@@ -118,6 +165,14 @@ int main(int argc, char** argv) {
         return 2;
       }
       pipeline_spec = argv[++i];
+    } else if (arg == "--resume") {
+      resume_flag = true;
+    } else if (arg == "--from") {
+      if (i + 1 >= argc) {
+        std::cerr << "error: " << arg << " needs a value\n";
+        return 2;
+      }
+      from_phase = argv[++i];
     } else if (arg == "--list-phases") {
       list_phases = true;
     } else if (arg == "--list-pipelines") {
@@ -128,6 +183,10 @@ int main(int argc, char** argv) {
       debug_dumps = true;
     } else if (arg == "--crash-selftest") {
       crash_selftest = true;
+    } else if (arg == "--crash-demo") {
+      crash_demo = true;
+    } else if (arg == "--no-curses") {
+      no_curses = true;
     } else if (arg.size() > 1 && arg[0] == '-') {
       std::cerr << "error: unknown option '" << arg << "'\n\n";
       print_usage(std::cerr);
@@ -182,14 +241,92 @@ int main(int argc, char** argv) {
   // no dumps were requested; the dump file only opens with --debug.
   redact::seed();
 
-  const std::filesystem::path logs_root("logs");
+  const std::filesystem::path logs_root = app_paths::logs_root();
+
+  // -------- Resume -------------------------------------------------------------
+  // Resolved before anything starts, so a bad --from is a start-up error rather
+  // than a surprise halfway through a run.
+  if (from_phase.empty() && resume_flag) {
+    // The checkpoint is keyed by the sample's stem, and the stem is not known
+    // until the prologue hashes the file. Resolving it before that means
+    // deriving it the same way: the basename without extension. Any mismatch
+    // (a suffix, a collision) is caught by the input check in the point file.
+    const std::filesystem::path sample(input_path.empty() ? "a.exe" : input_path);
+    const std::string stem = sample.stem().string();
+    const auto point_path = resume::path_for(stem, logs_root);
+    const resume::point saved = resume::load(point_path);
+    if (!saved.valid) {
+      std::cerr << "error: no resume point at " << point_path.string()
+                << "\n       run the sample once first, or use --from <phase>\n";
+      return 2;
+    }
+    if (saved.input != input_path && !saved.input.empty()) {
+      // Not fatal: the operator may legitimately have moved or renamed the
+      // file. Said out loud, because "resume" continuing against a different
+      // sample would produce a report attributed to the wrong one.
+      std::cerr << "warning: checkpoint was written for '" << saved.input
+                << "', continuing with '" << input_path << "'\n";
+    }
+    for (const std::string& name : saved.completed) {
+      pipeline::planner::phase_id id{};
+      if (!pipeline::planner::from_name(name, id)) continue;
+      cfg.resumed.push_back(id);
+    }
+    cfg.resume_source = "--resume " + point_path.string();
+    if (saved.pipeline != cfg.name) {
+      cfg.resume_source += " (checkpoint pipeline '" + saved.pipeline + "')";
+    }
+  }
+
+  if (!from_phase.empty()) {
+    pipeline::planner::phase_id start{};
+    if (!pipeline::planner::from_name(from_phase, start)) {
+      std::cerr << "error: unknown phase '" << from_phase
+                << "'; run --list-phases for the catalog\n";
+      return 2;
+    }
+    // Everything before the named phase in the PLAN, not in the catalog: the
+    // plan is what this run would otherwise have executed. A phase that is not
+    // in this plan is an error rather than a silent full skip - "resume from
+    // cti" on a pipeline with no cti phase means the operator expected
+    // something this run was never going to do.
+    const auto at = std::find(cfg.phases.begin(), cfg.phases.end(), start);
+    if (at == cfg.phases.end()) {
+      std::cerr << "error: phase '" << from_phase << "' is not in the '"
+                << cfg.name << "' plan (" << cfg.phases.size() << " phases)\n";
+      return 2;
+    }
+    cfg.resumed.assign(cfg.phases.begin(), at);
+    cfg.resume_source = "--from " + from_phase;
+  }
+
+  if (cfg.resumed.size() == cfg.phases.size() && !cfg.phases.empty()) {
+    std::cerr << "warning: every phase in this plan is already marked complete; "
+                 "there is nothing left to run\n";
+  }
   if (debug_dumps) {
     debug_dump::init(logs_root, logging::current_run_id(), /*mirror_stderr=*/true);
   }
   crash::install(logs_root, logging::current_run_id());
+  // Ctrl+C stops the run at the next phase boundary and records where it got
+  // to. Installed next to the crash handlers and independent of them: a signal
+  // that arrives before this point ends the process the way it always did,
+  // which is correct - there is no run to resume yet. The planner calls
+  // resume::begin() once the prologue has produced the stem the checkpoint is
+  // keyed by.
+  resume::install();
+  resume::set_logs_root(logs_root);
 
   if (crash_selftest) {
     crash::self_test();  // does not return: the report is the test
+  }
+  if (crash_demo) {
+    // Renders the crash presentation and returns, so the banner can be looked
+    // at without faulting. Runs after install() so it exercises the same state
+    // a real crash would have.
+    crash::set_state("crash-demo", input_path.empty() ? "a.exe" : input_path);
+    crash::demo();
+    return 0;
   }
 
   // Lazy service ownership follows the plan: only what the selected phases use
@@ -205,16 +342,17 @@ int main(int argc, char** argv) {
   // Pre-detection placeholder; rescaled by set_total() once the format is known.
   constexpr int kAllPhases = 26;
   curses_ui::session curses_session;
-  const bool curses_started = curses_session.begin(
+  const bool curses_started = !no_curses && curses_session.begin(
       ctx.path, static_cast<std::size_t>(kAllPhases));
   if (!curses_started) {
-    // The same logo the progress screen would have drawn, so both paths open a
-    // run the same way. print_logo_banner() is a no-op when stdout is not a
-    // terminal, which is the case that also disables the browser.
+    // The same red logo appears in ordinary terminal mode as in the progress
+    // screen. print_logo_banner() is a no-op for redirected output.
     curses_ui::print_logo_banner();
-    const char* mode = std::getenv("STATIC_ANALYZER_CURSES");
-    std::cerr << "[curses] UI not active (STATIC_ANALYZER_CURSES="
-              << (mode ? mode : "<unset>") << ").\n";
+    if (!no_curses) {
+      const char* mode = std::getenv("STATIC_ANALYZER_CURSES");
+      std::cerr << "[curses] UI not active (STATIC_ANALYZER_CURSES="
+                << (mode ? mode : "<unset>") << ").\n";
+    }
   }
   ctx.curses = &curses_session;
 
@@ -380,7 +518,17 @@ int main(int argc, char** argv) {
   // capa / radare2 are only run-failing when the pipeline selected them: a
   // ["strings"] run must not exit non-zero because capa never ran.
   int rc = EXIT_SUCCESS;
-  if (ctx.failed) {
+  if (ctx.interrupted) {
+    // 130 is the shell convention for "terminated by SIGINT" (128 + 2), so a
+    // wrapper script can tell this apart from a failed analysis without
+    // parsing the output.
+    print_kv_colored("Result", "interrupted", console::yellow);
+    const auto point = resume::path_for(ctx.stem, logs_root);
+    std::cerr << "\nstopped by the operator. Completed phases are recorded in:\n  "
+              << point.string() << "\ncontinue with:\n  static_analyzer "
+              << ctx.path << " --resume\n\n";
+    rc = 130;
+  } else if (ctx.failed) {
     print_kv_colored("Result", "FAILED", console::red);
     rc = EXIT_FAILURE;
   } else if (pipeline::planner::has(cfg, pipeline::planner::phase_id::capa) &&
@@ -419,10 +567,20 @@ int main(int argc, char** argv) {
     upload_options.remote_root = cfg.artifacts.remote_root;
     upload_options.timeout_seconds = cfg.artifacts.timeout_seconds;
     upload_options.upload = cfg.artifacts.upload_artifacts;
+    upload_options.encrypt = cfg.artifacts.encrypt_artifacts;
+    upload_options.encryption_recipient = cfg.artifacts.encryption_recipient;
+    upload_options.admin_public_key = cfg.artifacts.admin_public_key;
 
     LOG_INFO("artifacts: {} evidence bundle for '{}'",
              upload_options.upload ? "building and uploading" : "building local",
              ctx.stem);
+    if (upload_options.encrypt) {
+      // Stated before it happens. After the fact the operator learns it from a
+      // manifest on someone else's server.
+      LOG_INFO("artifacts: the bundle will be SEALED to the '{}' public key "
+               "before upload (X25519 + AES-256-GCM, in-process)",
+               upload_options.encryption_recipient);
+    }
     const mega_runner::result upload = mega_runner::run(upload_options);
     if (!upload.standard_output.empty()) std::cout << upload.standard_output;
     if (!upload.standard_error.empty()) std::cerr << upload.standard_error;
@@ -435,6 +593,7 @@ int main(int argc, char** argv) {
     } else {
       ctx.artifact_bundle_created = upload.bundle_created;
       ctx.artifact_bundle_uploaded = upload.uploaded;
+      ctx.artifact_bundle_encrypted = upload.encrypted;
       ctx.exported_artifacts.insert(ctx.exported_artifacts.end(),
                                     upload.artifacts.begin(),
                                     upload.artifacts.end());
@@ -449,6 +608,14 @@ int main(int argc, char** argv) {
             std::chrono::steady_clock::now() - run_started)
             .count();
     pipeline::planner::write_run_summary(ctx, cfg, rc, run_ms);
+  }
+
+  // A finished run has nothing to resume. Leaving the point file behind would
+  // invite a second run that skips everything, so it goes - but only when the
+  // run actually got to the end: an interrupted or failed run keeps its
+  // checkpoint, which is the entire point of having one.
+  if (!ctx.interrupted && rc == EXIT_SUCCESS) {
+    resume::clear();
   }
 
   ctx.curses = nullptr;

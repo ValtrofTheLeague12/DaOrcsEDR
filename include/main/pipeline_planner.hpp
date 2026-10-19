@@ -69,6 +69,12 @@ enum class phase_id : std::uint8_t {
   recovery,
   cti,
   model,
+  // Opt-in by design. `yara` scans with rules you already have; `yara_gen`
+  // writes new ones. It is slow - tens of seconds to minutes, scoring the
+  // sample's strings against a large database - and it needs yarGen-Go, which
+  // nothing else here depends on. So it must never be auto-inserted by a
+  // prerequisite and must never appear in a default pipeline.
+  yara_gen,
   report_export,  // YAML name is "export" (a keyword in C++)
   dashboard,
   sanity,
@@ -98,6 +104,13 @@ struct artifact_options {
   bool upload_artifacts = false;
   std::string remote_root = "/";
   int timeout_seconds = 900;
+  // Seal the bundle to a public key before upload. Off by default so an
+  // existing deployment keeps producing byte-identical bundles until the
+  // operator opts in; when it is on, a failed seal aborts the upload rather
+  // than falling back to plaintext.
+  bool encrypt_artifacts = false;
+  std::string encryption_recipient = "user";   // "user" | "admin"
+  std::string admin_public_key;                // empty = the default location
   std::string source;
   std::string uploader_script;
 };
@@ -114,6 +127,12 @@ struct pipeline_config {
   std::vector<std::pair<std::string, std::string>> environment;
   artifact_options artifacts;
   bool full = false;  // contains the complete default phase set
+  // Phases an earlier run of this sample already finished, which this run
+  // skips. Populated by --resume / --from; empty in an ordinary run.
+  std::vector<phase_id> resumed;
+  // Where the skip came from, for the banner and run_summary.json. Empty when
+  // nothing was skipped.
+  std::string resume_source;
 };
 
 // The catalog every reader, error message, and --list-phases renders from.

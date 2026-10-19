@@ -60,6 +60,37 @@
   --console-shadow: 0 12px 32px -26px color-mix(in oklab, var(--foreground) 30%, transparent);
 }
 
+/* --- the `default` shade scale ---------------------------------------------
+
+   HeroUI 3 dropped HeroUI 2's `--color-default-{50..900}` grey ramp. It ships
+   a single `--default` plus semantic `--muted` / `--border` / `--surface-*`
+   tokens instead. Every `text-default-400`, `bg-default-100` and
+   `border-default-200` already written across the panels therefore resolved to
+   NOTHING: Tailwind found no matching theme key, emitted no utility, and the
+   class was silently dropped from the build.
+
+   The symptom was not a crash, it was a flat, unreadable UI - dimmed timestamps
+   and secondary labels rendering at full foreground contrast, hover tints that
+   never appeared, and card hairlines with no stroke.
+
+   Re-declaring the ramp here, mapped onto the semantic tokens, fixes every
+   existing usage at once. `inline` keeps them resolving live, so the whole scale
+   still flips with the theme instead of freezing at build-time colour values.
+   ------------------------------------------------------------------------- */
+
+@theme inline {
+  --color-default-50: var(--surface);
+  --color-default-100: var(--surface-secondary);
+  --color-default-200: var(--border);
+  --color-default-300: color-mix(in oklab, var(--muted) 70%, transparent);
+  --color-default-400: var(--muted);
+  --color-default-500: var(--muted);
+  --color-default-600: color-mix(in oklab, var(--foreground) 78%, var(--surface));
+  --color-default-700: var(--foreground);
+  --color-default-800: var(--foreground);
+  --color-default-900: var(--foreground);
+}
+
 html,
 body,
 #root {
@@ -164,7 +195,7 @@ button.stat-tile:focus-visible {
   border-radius: 0.55rem;
   border: 0;
   background: transparent;
-  color: var(--default-500);
+  color: var(--muted);
   font-size: 0.78rem;
   font-weight: 520;
   letter-spacing: -0.006em;
@@ -207,14 +238,14 @@ button.stat-tile:focus-visible {
  * once antialiased on a dark surface. Rather than bump every size class
  * individually, the scale is inflated once here so every Tailwind text-sm,
  * text-xs and text-[11px] in the codebase grows together and stays in
- * proportion. Anything using an explicit rem value (the custom .page-title and
- * .section-label below, the tables) is absolute and unaffected.
+ * proportion. Spacing tokens scale by the same small step, preserving the
+ * existing rhythm while giving ordinary labels a bit more room.
  *
  * Chosen deliberately small: a large jump would reflow every card and break the
  * meters and table columns, which are laid out to these sizes.
  */
 html {
-  font-size: 100%;
+  font-size: 106.25%;
 }
 
 /* Page title - the single h1/h2 at the top of each panel.
@@ -302,7 +333,7 @@ html {
   font-weight: 650;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--default-500);
+  color: var(--muted);
   line-height: 1.3;
 }
 
@@ -314,7 +345,7 @@ html {
   font-weight: 650;
   letter-spacing: 0.085em;
   text-transform: uppercase;
-  color: var(--default-600);
+  color: var(--muted);
   line-height: 1.3;
 }
 
@@ -328,7 +359,7 @@ html {
   border-radius: 0.5rem;
   border: 1px solid var(--console-border);
   background: var(--console-muted-surface);
-  color: var(--default-600);
+  color: var(--muted);
   font-size: 0.75rem;
   cursor: pointer;
   transition: border-color 160ms var(--ease), background-color 160ms var(--ease),
@@ -355,7 +386,7 @@ html {
 }
 
 .field::placeholder {
-  color: var(--default-400);
+  color: var(--muted);
 }
 
 .field:focus {
@@ -442,7 +473,7 @@ select.field {
   width: 9px;
   height: 9px;
   border-radius: 999px;
-  background: var(--node, var(--default-400));
+  background: var(--node, var(--muted));
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--surface) 80%, transparent);
   transition: box-shadow 220ms var(--ease);
 }
@@ -451,7 +482,7 @@ select.field {
    presence that has not been confirmed on the current read. */
 .timeline-node[data-hollow="true"] {
   background: color-mix(in oklab, var(--surface) 70%, transparent);
-  border: 1.5px solid var(--node, var(--default-400));
+  border: 1.5px solid var(--node, var(--muted));
 }
 
 .timeline-card {
@@ -671,7 +702,7 @@ select.field {
 }
 
 .artifact-ranking-position {
-  color: var(--default-400);
+  color: var(--muted);
   font-family: var(--mono);
   font-size: 0.68rem;
   font-variant-numeric: tabular-nums;
@@ -706,7 +737,7 @@ select.field {
   border-radius: 0.8rem;
   background: color-mix(in oklab, var(--surface) 88%, transparent);
   text-align: center;
-  color: var(--default-500);
+  color: var(--muted);
 }
 
 .artifact-bundle-section {
@@ -732,7 +763,7 @@ select.field {
   border: 1px solid transparent;
   border-radius: 0.6rem;
   background: transparent;
-  color: var(--default-500);
+  color: var(--muted);
   font-size: 0.75rem;
   font-weight: 550;
   cursor: pointer;
@@ -756,7 +787,7 @@ select.field {
   padding: 0.05rem 0.3rem;
   border-radius: 999px;
   background: color-mix(in oklab, var(--foreground) 7%, transparent);
-  color: var(--default-500);
+  color: var(--muted);
   font-family: var(--mono);
   font-size: 0.65rem;
   text-align: center;
@@ -775,21 +806,65 @@ select.field {
   margin-top: 0.65rem;
   padding-top: 0.6rem;
   border-top: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
-  color: var(--default-500);
+  color: var(--muted);
   font-size: 0.7rem;
 }
 
 .artifact-bundle-details > :nth-child(even) {
   overflow-wrap: anywhere;
   text-align: right;
-  color: var(--default-400);
+  color: var(--muted);
+}
+
+.artifact-bundle-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.65rem;
+}
+
+.artifact-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 28%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface));
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease),
+    border-color 160ms var(--ease),
+    box-shadow 160ms var(--ease),
+    opacity 160ms var(--ease);
+}
+
+.artifact-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, var(--surface));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 9%, transparent);
+}
+
+.artifact-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.artifact-action:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 
 .artifact-cache-note {
   overflow: hidden;
   padding-top: 0.6rem;
   border-top: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
-  color: var(--default-400);
+  color: var(--muted);
   font-size: 0.65rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -845,6 +920,963 @@ select.field {
 /* --- application layout -------------------------------------------------- */
 
 /* --- network and VM fleet ----------------------------------------------- */
+
+.containers-page {
+  display: flex;
+  width: 100%;
+  max-width: 96rem;
+  flex-direction: column;
+  gap: 1rem;
+  margin-inline: auto;
+}
+
+.containers-page-header,
+.containers-page-actions,
+.containers-runtime-strip,
+.containers-project-header {
+  display: flex;
+  align-items: center;
+}
+
+.containers-page-header {
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.containers-page-description {
+  margin-top: 0.4rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.containers-page-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.containers-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.containers-runtime-strip {
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.7rem;
+  background: var(--console-muted-surface);
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.containers-runtime-indicator {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 12%, transparent);
+}
+
+.containers-runtime-label {
+  color: var(--foreground);
+  font-weight: 620;
+}
+
+.containers-runtime-version {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+}
+
+.containers-runtime-divider {
+  width: 1px;
+  height: 1rem;
+  background: var(--console-border);
+}
+
+.compose-files-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.85rem;
+  background:
+    linear-gradient(120deg, color-mix(in oklab, var(--accent) 4%, transparent), transparent 58%),
+    color-mix(in oklab, var(--surface) 89%, transparent);
+}
+
+.compose-files-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.compose-files-heading h3 {
+  margin-top: 0.2rem;
+  color: var(--foreground);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-weight: 650;
+  letter-spacing: -0.012em;
+}
+
+.compose-files-heading p:last-child {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.compose-files-count {
+  flex: 0 0 auto;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--console-border);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+}
+
+.compose-files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  gap: 0.65rem;
+}
+
+.compose-file-card {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.75rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.7rem;
+  background: color-mix(in oklab, var(--surface) 95%, transparent);
+  transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
+}
+
+.compose-file-card:hover {
+  border-color: color-mix(in oklab, var(--accent) 25%, var(--console-border));
+  box-shadow: var(--console-shadow);
+}
+
+.compose-file-info {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.compose-file-icon {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in oklab, var(--accent) 22%, transparent);
+  border-radius: 0.6rem;
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  color: var(--accent);
+}
+
+.compose-file-info h4 {
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-transform: capitalize;
+}
+
+.compose-file-path {
+  overflow: hidden;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compose-file-status {
+  display: flex;
+  grid-column: 1;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.compose-file-status > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compose-status-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.compose-status-dot.is-running {
+  background: var(--success);
+}
+
+.compose-status-dot.is-idle {
+  background: var(--warning);
+}
+
+.compose-status-dot.is-unavailable {
+  background: var(--danger);
+}
+
+/* Build and View share one visual treatment deliberately: they sit side by side
+   in the same grid cell, and a mismatched button reads as a broken card rather
+   than as two actions. Listed under one selector so they cannot drift apart. */
+.compose-build-button,
+.compose-view-button {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 26%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--accent) 7%, var(--surface));
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-weight: 620;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 150ms var(--ease), background-color 150ms var(--ease), opacity 150ms var(--ease);
+}
+
+.compose-build-button:hover:not(:disabled),
+.compose-view-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 13%, var(--surface));
+}
+
+.compose-build-button:focus-visible,
+.compose-view-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.compose-build-button:disabled,
+.compose-view-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.compose-file-actions {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* --- compose viewer ------------------------------------------------------- */
+
+/* Syntax colours are mixed from the theme tokens rather than hard-coded, so the
+   YAML block stays legible when the console flips to light. Syntax highlighting
+   is not a set of UI states, so it needs its own scale. */
+.compose-viewer-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  /* A scrim has to DARKEN what is behind it. Mixing var(--foreground) here - as
+     this did - is backwards: --foreground is a light colour in the dark theme,
+     so 55% of it washed the page out to near-white instead of dimming it. Black
+     is the one colour that dims correctly in both themes. */
+  background: color-mix(in oklab, #000 62%, transparent);
+  backdrop-filter: blur(4px);
+  animation: compose-fade 180ms var(--ease);
+}
+
+.compose-viewer-panel {
+  display: flex;
+  /* fit-content, not a flat width: a 24-line compose file is ~40 characters
+     wide, and pinning the dialog to 94rem left a screen of empty void beside
+     it. The caps keep a long line or a wide services grid from running off the
+     edge, and min-width stops a very short file collapsing to a sliver.
+     calc() rather than vw because vw excludes the scrollbar, and 96vw plus the
+     backdrop's own padding overflowed horizontally. */
+  width: fit-content;
+  min-width: min(34rem, calc(100vw - 3rem));
+  max-width: min(94rem, calc(100vw - 3rem));
+  max-height: calc(100vh - 3rem);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--foreground) 14%, transparent);
+  border-radius: 1rem;
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, #000 20%, transparent),
+    0 40px 90px -30px color-mix(in oklab, #000 80%, transparent);
+  animation: compose-pop 220ms var(--ease);
+}
+
+/* The body and pane stay in normal flow.
+ *
+ * An earlier version made the pane `position: absolute; inset: 0` inside a
+ * relative body, to dodge a percentage-height edge case. That traded a subtle
+ * bug for an obvious one: taking the pane out of flow left the body with no
+ * content to size against, so `flex: 1` resolved to zero and the pane rendered
+ * as nothing at all - the dialog showed its header and footer and appeared to
+ * have no content. Plain flex with `min-height: 0` is the pattern that both
+ * grows with the content and scrolls once the panel hits max-height. */
+.compose-viewer-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.compose-viewer-pane {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  /* A stock Windows scrollbar is a bright grey slab against this panel, and a
+     pane whose last line is clipped by it reads as truncated content rather
+     than as more content. Thin, themed, and always visible when it matters. */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 22%, transparent) transparent;
+  overscroll-behavior: contain;
+}
+
+.compose-viewer-pane::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.compose-viewer-pane::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.compose-viewer-pane::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: color-mix(in oklab, var(--foreground) 22%, transparent);
+}
+
+.compose-viewer-pane::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--foreground) 38%, transparent);
+}
+
+.compose-viewer-pane::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@keyframes compose-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes compose-pop {
+  from { opacity: 0; transform: translateY(0.75rem) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+.compose-viewer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--accent) 6%, var(--surface)),
+    var(--surface)
+  );
+}
+
+.compose-viewer-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 1.25rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+}
+
+.compose-viewer-tab {
+  position: relative;
+  margin-bottom: -1px;
+  padding: 0.6rem 0.7rem;
+  /* Overlays the container rule rather than stacking a second line 1px above
+     it, which is what made the selected tab look doubled. */
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 620;
+  cursor: pointer;
+  transition: color 150ms var(--ease), border-color 150ms var(--ease);
+}
+
+.compose-viewer-tab:hover {
+  color: var(--foreground);
+}
+
+.compose-viewer-tab[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.compose-viewer-tab-count {
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 9%, transparent);
+  font-family: var(--mono);
+  font-size: 0.6rem;
+}
+
+/* The code surface. `pre` on the container, not on the content: wrapping YAML
+   destroys the indentation that is the only structure it has. */
+.compose-viewer-code {
+  padding: 0.85rem 0;
+  background: color-mix(in oklab, var(--foreground) 3%, var(--surface));
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  line-height: 1.65;
+  tab-size: 2;
+}
+
+.compose-viewer-line {
+  display: flex;
+  min-width: max-content;
+  padding-right: 1rem;
+}
+
+.compose-viewer-line:hover {
+  background: color-mix(in oklab, var(--accent) 7%, transparent);
+}
+
+.compose-viewer-gutter {
+  flex: 0 0 auto;
+  width: 3rem;
+  padding-right: 0.75rem;
+  border-right: 1px solid var(--console-border);
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+
+.compose-viewer-text {
+  padding-left: 0.85rem;
+  white-space: pre;
+}
+
+/* Token colours, resolved from the theme so both schemes read correctly. */
+.compose-tok-key { color: var(--accent); font-weight: 600; }
+.compose-tok-string { color: color-mix(in oklab, var(--success) 78%, var(--foreground)); }
+.compose-tok-number { color: color-mix(in oklab, var(--warning) 80%, var(--foreground)); }
+.compose-tok-bool { color: color-mix(in oklab, var(--danger) 55%, var(--accent)); font-weight: 600; }
+.compose-tok-null { color: var(--muted); font-style: italic; }
+.compose-tok-comment { color: var(--muted); font-style: italic; }
+.compose-tok-op { color: color-mix(in oklab, var(--foreground) 50%, transparent); }
+.compose-tok-anchor { color: color-mix(in oklab, var(--danger) 70%, var(--foreground)); }
+
+.compose-viewer-empty {
+  padding: 3rem 1rem;
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.75rem;
+}
+
+/* --- build log ------------------------------------------------------------ */
+
+.compose-build-log {
+  padding: 0.85rem 0;
+  background: color-mix(in oklab, var(--foreground) 3%, var(--surface));
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.6;
+}
+
+.compose-build-log-line {
+  padding: 0 1rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.compose-tok-plain {
+  color: var(--muted);
+}
+
+.compose-tok-warning {
+  color: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+}
+
+.compose-viewer-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.45rem;
+  border-radius: 0.4rem;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+}
+
+.compose-viewer-follow:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+
+.compose-viewer-follow:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.compose-viewer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  border-radius: 0.5rem;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+}
+
+.compose-viewer-close:hover {
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+
+.compose-viewer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 1.25rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  background: var(--console-muted-surface);
+}
+
+.compose-viewer-scroll {
+  padding: 0.9rem;
+}
+
+.compose-viewer-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.6rem;
+  background: color-mix(in oklab, var(--foreground) 3%, var(--surface));
+}
+
+.compose-viewer-search:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+}
+
+.compose-viewer-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+}
+
+.compose-viewer-search input::placeholder {
+  color: var(--muted);
+}
+
+.compose-viewer-search button {
+  display: inline-flex;
+  padding: 0.15rem;
+  border-radius: 0.35rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.compose-viewer-search button:hover {
+  color: var(--foreground);
+}
+
+/* Column count is set from the service count via --cols, set inline by the
+   component. auto-fill / auto-fit cannot do this job in a fit-content panel:
+   they count columns against the *available* width, and a shrink-to-fit parent
+   has none, so the grid collapses to a single narrow column no matter how many
+   cards it holds. Deriving the count from the data is deterministic, and the
+   panel then hugs whatever width those columns actually need. */
+.compose-service-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(var(--cols, 1), minmax(19rem, 1fr));
+}
+
+.compose-service-card {
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--foreground) 11%, transparent);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
+}
+
+.compose-service-card:hover {
+  border-color: color-mix(in oklab, var(--accent) 30%, var(--console-border));
+  box-shadow: var(--console-shadow);
+}
+
+.compose-service-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 11%, transparent);
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+}
+
+.compose-service-card-icon {
+  display: inline-flex;
+  width: 1.7rem;
+  height: 1.7rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in oklab, var(--accent) 22%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--accent) 9%, transparent);
+  color: var(--accent);
+}
+
+.compose-service-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.7rem 0.75rem;
+}
+
+.compose-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.compose-field-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.compose-field-value {
+  min-width: 0;
+  padding-left: 0.95rem;
+}
+
+.compose-field-value code {
+  display: block;
+  overflow-x: auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.compose-chip {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.35rem;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compose-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  max-height: 11rem;
+  overflow: auto;
+  border-left: 2px solid color-mix(in oklab, var(--accent) 22%, transparent);
+  padding-left: 0.5rem;
+}
+
+.compose-kv-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 40%) minmax(0, 1fr);
+  gap: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.63rem;
+  line-height: 1.5;
+}
+
+.compose-kv-row dt {
+  overflow: hidden;
+  color: var(--accent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compose-kv-row dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compose-files-empty {
+  padding: 0.85rem;
+  border: 1px dashed var(--console-border);
+  border-radius: 0.65rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+.containers-project {
+  min-width: 0;
+}
+
+.containers-project-header {
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--console-border);
+}
+
+.containers-project-header h3 {
+  color: var(--foreground);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-weight: 650;
+  letter-spacing: -0.012em;
+  text-transform: capitalize;
+}
+
+.containers-project-header p {
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.containers-compose-path {
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.containers-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 0.75rem;
+}
+
+.container-service-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-radius: 0.8rem;
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease), transform 160ms var(--ease);
+}
+
+.container-service-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--accent) 20%, var(--console-border));
+  box-shadow: var(--console-shadow);
+}
+
+.container-service-header {
+  padding-bottom: 0.6rem;
+}
+
+.container-service-content {
+  min-width: 0;
+}
+
+.container-image-line {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.container-image-line > span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.container-image-line code {
+  min-width: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.63rem;
+}
+
+.container-service-status {
+  min-height: 1.1rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.container-metrics,
+.container-trends {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.2rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--console-border);
+}
+
+.container-trends {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.container-ports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding-top: 0.25rem;
+}
+
+.container-ports > span {
+  padding: 0.2rem 0.4rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 18%, transparent);
+  border-radius: 0.4rem;
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.container-service-actions {
+  gap: 0.5rem;
+  border-top: 1px solid var(--console-border);
+  background: color-mix(in oklab, var(--foreground) 1.5%, transparent);
+}
+
+.container-action {
+  min-width: 4.5rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 150ms var(--ease), color 150ms var(--ease), background-color 150ms var(--ease);
+}
+
+.container-action.start:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--success) 45%, transparent);
+  background: color-mix(in oklab, var(--success) 8%, transparent);
+  color: var(--success);
+}
+
+.container-action.stop:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--danger) 45%, transparent);
+  background: color-mix(in oklab, var(--danger) 8%, transparent);
+  color: var(--danger);
+}
+
+.container-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.container-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.storage-volume-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+  gap: 0.75rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.storage-volume-card {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.storage-volume-header {
+  min-width: 0;
+}
+
+.storage-volume-header > :first-child {
+  min-width: 0;
+}
+
+.storage-volume-content {
+  min-width: 0;
+}
+
+.storage-volume-content .font-mono {
+  overflow-wrap: anywhere;
+}
+
+.storage-volume-content > :first-child > div:last-child {
+  white-space: normal;
+}
+
+.storage-volume-free {
+  min-width: 0;
+  align-items: flex-start;
+}
+
+.storage-volume-free > :last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
 
 .network-page {
   display: flex;
@@ -988,6 +2020,644 @@ select.field {
     color-mix(in oklab, var(--surface) 90%, transparent);
 }
 
+.docker-inventory {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.docker-inventory-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.docker-inventory-header h2 {
+  margin-top: 0.2rem;
+  color: var(--foreground);
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.docker-inventory-header > div:first-child > p:last-child {
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.docker-inventory-total {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.7rem;
+  background: var(--console-muted-surface);
+}
+
+.docker-inventory-total > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.docker-inventory-total strong {
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.docker-inventory-total > div > span {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.docker-network-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.docker-network-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, #38bdf8 17%, var(--console-border));
+  border-radius: 0.9rem;
+  background:
+    linear-gradient(145deg, color-mix(in oklab, #38bdf8 5%, transparent), transparent 52%),
+    color-mix(in oklab, var(--surface) 96%, transparent);
+  box-shadow: 0 5px 20px -16px color-mix(in oklab, var(--foreground) 28%, transparent);
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease), transform 160ms var(--ease);
+}
+
+.docker-network-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, #38bdf8 38%, var(--console-border));
+  box-shadow: var(--console-shadow);
+}
+
+.docker-network-header {
+  padding-bottom: 0.8rem;
+}
+
+.docker-network-icon {
+  display: inline-flex;
+  width: 2.35rem;
+  height: 2.35rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in oklab, #38bdf8 28%, transparent);
+  border-radius: 0.7rem;
+  background: color-mix(in oklab, #38bdf8 10%, transparent);
+  color: #38bdf8;
+}
+
+.docker-network-driver {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.65rem;
+  text-transform: capitalize;
+}
+
+.docker-network-count {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid color-mix(in oklab, #38bdf8 20%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, #38bdf8 7%, transparent);
+  color: var(--muted);
+  font-size: 0.58rem;
+  line-height: 1.25;
+}
+
+.docker-network-count strong {
+  color: #38bdf8;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.docker-network-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.docker-subnet {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
+}
+
+.docker-subnet > span,
+.docker-container-list-heading {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.docker-subnet code,
+.docker-container-row > code {
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.69rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.docker-container-list {
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-radius: 0.65rem;
+}
+
+.docker-container-list-heading,
+.docker-container-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(7rem, 0.7fr);
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.7rem;
+}
+
+.docker-container-list-heading {
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+}
+
+.docker-container-list-heading > :last-child,
+.docker-container-row > code {
+  text-align: right;
+}
+
+.docker-container-row {
+  min-width: 0;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
+  background: color-mix(in oklab, var(--surface) 70%, transparent);
+}
+
+.docker-container-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--foreground);
+  font-size: 0.69rem;
+}
+
+.docker-container-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 0 3px color-mix(in oklab, #38bdf8 12%, transparent);
+}
+
+.docker-container-row > code.is-unassigned {
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 0.65rem;
+}
+
+.docker-empty-title {
+  color: var(--foreground);
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 620;
+}
+
+.docker-empty-detail {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.topology-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 100%;
+  padding: 0.25rem;
+}
+
+.topology-map-intro,
+.topology-host-badge,
+.topology-interface-header,
+.topology-network-heading,
+.topology-member,
+.interface-inventory-heading {
+  display: flex;
+  align-items: center;
+}
+
+.topology-map-intro {
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.topology-host-badge {
+  flex: 0 0 auto;
+  gap: 0.55rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+  border-radius: 0.7rem;
+  background: color-mix(in oklab, var(--accent) 9%, var(--surface));
+  color: var(--foreground);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.topology-intro-line {
+  width: clamp(1.5rem, 8vw, 5rem);
+  height: 1px;
+  flex: 0 1 auto;
+  background: linear-gradient(90deg, var(--accent), color-mix(in oklab, var(--accent) 10%, transparent));
+}
+
+.topology-map-caption,
+.topology-section-heading > span,
+.topology-node-meta {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.topology-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.topology-section-heading h3 {
+  color: var(--foreground);
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.topology-diagram-section {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0.85rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.8rem;
+  background:
+    radial-gradient(ellipse at 50% 0, color-mix(in oklab, var(--accent) 5%, transparent), transparent 70%),
+    color-mix(in oklab, var(--surface) 91%, transparent);
+}
+
+.topology-diagram-caption {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.topology-diagram-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.topology-diagram {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  max-height: 640px;
+  margin-top: 0.5rem;
+  background-image: radial-gradient(color-mix(in oklab, var(--foreground) 7%, transparent) 0.7px, transparent 0.7px);
+  background-size: 18px 18px;
+}
+
+.topology-diagram-edge {
+  fill: none;
+  stroke-width: 1.6;
+  /* Solid rather than dashed. The dashes were doing nothing but making the one
+     thing this diagram exists to show harder to follow across the gap between
+     columns. */
+  stroke-dasharray: none;
+  stroke-linecap: round;
+  transition: opacity 140ms var(--ease);
+}
+
+/* The visible fat path above is 1.6px, which is a hopeless hover target. This
+   is the same curve with no paint, sized to a finger. */
+.topology-diagram-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  cursor: pointer;
+}
+
+.topology-edge-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin-top: 0.6rem;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.topology-edge-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.topology-diagram-node {
+  fill: var(--surface);
+  fill-opacity: 0.96;
+  stroke-width: 1.2;
+  transition: opacity 140ms var(--ease);
+  filter: drop-shadow(0 3px 5px color-mix(in oklab, var(--foreground) 8%, transparent));
+}
+
+.topology-diagram-kind {
+  font-family: var(--font-sans);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.topology-diagram-label {
+  fill: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.topology-diagram-meta {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+
+.topology-interface-grid,
+.topology-network-grid,
+.interface-inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.topology-interface-card,
+.interface-inventory-card {
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.8rem;
+  background:
+    linear-gradient(145deg, color-mix(in oklab, var(--accent) 4%, transparent), transparent 55%),
+    color-mix(in oklab, var(--surface) 95%, transparent);
+}
+
+.topology-interface-header,
+.interface-inventory-heading {
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.topology-interface-name,
+.interface-inventory-heading h3 {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 0.8rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-icon {
+  display: inline-flex;
+  width: 1.8rem;
+  height: 1.8rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 0.55rem;
+  font-family: var(--mono);
+  font-size: 0.57rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.topology-node-icon.is-host {
+  border-color: color-mix(in oklab, var(--accent) 32%, transparent);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.topology-node-icon.is-adapter {
+  border-color: color-mix(in oklab, #a78bfa 35%, transparent);
+  background: color-mix(in oklab, #a78bfa 12%, transparent);
+  color: #c4b5fd;
+}
+
+.topology-node-icon.is-network {
+  border-color: color-mix(in oklab, var(--success) 32%, transparent);
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+  color: var(--success);
+}
+
+.topology-node-icon.is-vm {
+  border-color: color-mix(in oklab, var(--warning) 32%, transparent);
+  background: color-mix(in oklab, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.topology-node-icon.is-container {
+  border-color: color-mix(in oklab, #38bdf8 32%, transparent);
+  background: color-mix(in oklab, #38bdf8 12%, transparent);
+  color: #38bdf8;
+}
+
+.topology-interface-header > .topology-status,
+.topology-network-heading > .topology-status,
+.topology-member > .topology-status {
+  margin-left: auto;
+}
+
+.topology-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.63rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.topology-status::before,
+.topology-legend i {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: var(--muted);
+  content: "";
+}
+
+.topology-status.is-up::before,
+.topology-legend i.is-up {
+  background: var(--success);
+}
+
+.topology-status.is-running::before,
+.topology-legend i.is-running {
+  background: var(--warning);
+}
+
+.topology-status.is-down::before,
+.topology-legend i.is-down {
+  background: var(--danger);
+}
+
+.topology-addresses,
+.interface-inventory-addresses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+}
+
+.topology-address,
+.interface-inventory-address {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+}
+
+.topology-address code,
+.interface-inventory-address code,
+.topology-node-meta code {
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.topology-address-kind {
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
+.topology-connectors {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0.75rem 0 0 0.85rem;
+  padding-left: 0.8rem;
+  border-left: 1px solid color-mix(in oklab, var(--accent) 28%, transparent);
+}
+
+.topology-network {
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--success) 18%, var(--console-border));
+  border-radius: 0.65rem;
+  background: color-mix(in oklab, var(--success) 3%, var(--surface));
+}
+
+.topology-network-heading,
+.topology-member {
+  min-width: 0;
+  gap: 0.55rem;
+}
+
+.topology-network-heading .topology-node-icon,
+.topology-member .topology-node-icon {
+  width: 1.55rem;
+  height: 1.55rem;
+}
+
+.topology-node-name {
+  color: var(--foreground);
+  font-size: 0.7rem;
+  font-weight: 620;
+}
+
+.topology-node-meta {
+  overflow-wrap: anywhere;
+  margin-top: 0.1rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+}
+
+.topology-members {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0.55rem 0 0 0.75rem;
+  padding: 0.55rem 0 0 0.75rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
+  border-left: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+}
+
+.topology-empty-connection {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.topology-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.85rem;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.topology-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.topology-legend i {
+  display: inline-block;
+}
+
+.interface-inventory-card {
+  background: color-mix(in oklab, var(--surface) 95%, transparent);
+}
+
+.interface-inventory-heading p {
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.interface-inventory-addresses {
+  flex-direction: column;
+}
+
+.interface-inventory-address {
+  justify-content: space-between;
+}
+
 /* VirtualBox detail cards use a slightly more deliberate surface than the
    general inventory cards, so build health and guest reachability stand out. */
 .vbox-status {
@@ -1068,7 +2738,7 @@ select.field {
 .fleet-vm-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
+  gap: 0.6rem;
 }
 
 .fleet-vm-card {
@@ -1080,18 +2750,41 @@ select.field {
     transform 160ms var(--ease);
 }
 
+/* A machine that failed carries that fact on its frame, so it is findable in a
+   grid of eight without reading every card. */
+.fleet-vm-card.is-crashed {
+  border-color: color-mix(in oklab, var(--danger) 45%, var(--console-border));
+}
+
 .fleet-vm-card:hover {
   transform: translateY(-1px);
   border-color: color-mix(in oklab, var(--accent) 24%, var(--console-border));
   box-shadow: var(--console-shadow);
 }
 
+/* Header and body are their own classes rather than utility soup, because the
+   density of this card is tuned in one place and a fleet grid is dense: two
+   columns, a search box, a pager, and the operator reading state chips. */
+.fleet-vm-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.4rem 0.6rem;
+}
+
+.fleet-vm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
 .fleet-vm-indicator {
-  width: 0.55rem;
-  height: 0.55rem;
+  width: 0.45rem;
+  height: 0.45rem;
   flex: 0 0 auto;
   border-radius: 999px;
-  background: var(--default-400);
+  background: var(--muted);
 }
 
 .fleet-vm-indicator.is-running {
@@ -1099,27 +2792,81 @@ select.field {
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 15%, transparent);
 }
 
+.fleet-vm-indicator.is-crashed {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--danger) 18%, transparent);
+}
+
+/* The launch-mode combo, sized to sit between the two action buttons without
+   giving the card a third row. */
+.fleet-vm-mode {
+  min-height: 1.9rem;
+  padding: 0.2rem 1.35rem 0.2rem 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 16%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--surface) 96%, transparent);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 160ms var(--ease), border-color 160ms var(--ease);
+}
+
+.fleet-vm-mode:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  color: var(--accent);
+}
+
+.fleet-vm-mode:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.fleet-vm-mode:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Four columns, and deliberately uneven.
+ *
+ * Sized from the widest value each cell has to hold rather than split evenly: an
+ * IPv6 address is 22 characters of monospace and a core count is two, so equal
+ * tracks either ellipsis every address or waste the card on "5c". The fractions
+ * are the per-cell content widths plus that cell's own padding, so a full
+ * IPv6 fits at the card width this grid produces.
+ */
 .fleet-vm-facts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: 1.25fr 1.6fr 0.35fr 0.45fr;
+  gap: 0.35rem;
+}
+
+/* Below this the two-column card gets too narrow to hold an IPv6 address on one
+   line, and a truncated address is worse than an extra row: the operator needs
+   to read it in full to paste it into a target. Two rows of two costs ~14px and
+   clips nothing. */
+@media (max-width: 1180px) {
+  .fleet-vm-facts {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .fleet-vm-facts > div {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.65rem 0.75rem;
+  gap: 0.1rem;
+  padding: 0.35rem 0.5rem;
   border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
-  border-radius: 0.55rem;
+  border-radius: 0.45rem;
   background: color-mix(in oklab, var(--surface) 96%, transparent);
 }
 
 .fleet-vm-facts span,
 .fleet-vm-services > .eyebrow {
-  color: var(--default-400);
-  font-size: 0.62rem;
+  color: var(--muted);
+  font-size: 0.58rem;
   text-transform: uppercase;
   letter-spacing: 0.07em;
 }
@@ -1128,54 +2875,532 @@ select.field {
   overflow: hidden;
   color: var(--foreground);
   font-family: var(--mono);
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* An address the project is CONFIGURED to use, rather than one the guest
+   reported. Same monospace so it stays copyable and scannable, but dimmed and
+   dashed - it should read as an expectation at a glance, without anyone having
+   to hover to find out whether they are looking at a live reading. */
+.fleet-vm-facts strong.is-configured {
+  color: var(--muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.fleet-vm-configured {
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 0.52rem;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .fleet-vm-services {
   display: flex;
-  min-height: 2rem;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.3rem;
 }
 
-.fleet-vm-log-label {
+/* --- build page ----------------------------------------------------------- */
+
+.build-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.build-page-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 0.3rem 0.6rem;
-  color: var(--default-500);
-  font-size: 0.68rem;
-  font-weight: 600;
+  gap: 0.6rem 1rem;
 }
 
-.fleet-vm-log {
-  width: 100%;
-  min-height: 5.25rem;
-  resize: vertical;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+.build-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.build-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 32%, transparent);
   border-radius: 0.55rem;
-  outline: none;
-  background: color-mix(in oklab, var(--surface) 96%, transparent);
+  background: color-mix(in oklab, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 160ms var(--ease), border-color 160ms var(--ease),
+    opacity 160ms var(--ease);
+}
+
+.build-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 16%, var(--surface));
+}
+
+.build-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.build-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.build-btn.is-secondary {
+  border-color: color-mix(in oklab, var(--foreground) 16%, transparent);
+  background: transparent;
+  color: var(--muted);
+}
+
+.build-btn.is-secondary:hover:not(:disabled) { color: var(--foreground); }
+
+.build-link {
+  color: var(--muted);
+  font-size: 0.62rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.build-link:hover { color: var(--accent); }
+
+.build-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.6rem;
+}
+
+/* The executables card is short next to two long checklists, so it spans both
+   columns rather than stretching one narrow column to fill a tall row. */
+.build-artifacts-card {
+  grid-column: 1 / -1;
+}
+
+.build-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.build-empty {
+  padding: 1rem 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+/* --- dependency checklist -------------------------------------------------- */
+
+.build-deps {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* Dense and even: this is a checklist of 15-25 rows and it should be
+     scannable without the reader scrolling a page of card padding. */
+  font-size: 0.68rem;
+}
+
+.build-dep {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.22rem 0.4rem;
+  border-radius: 0.3rem;
+}
+
+.build-dep:nth-child(odd) {
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
+}
+
+/* Group headings in the stack list. Written as a list item so it sits in the
+   same flow and alignment as the rows it labels, with the zebra suspended -
+   `:nth-child(odd)` counts the heading too, which would otherwise band the
+   first row of every second group differently. */
+.build-dep-group {
+  padding: 0.5rem 0.4rem 0.15rem;
+  color: var(--muted);
+  font-size: 0.56rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.build-dep-group + .build-dep {
+  background: none;
+}
+
+.build-dep-mark {
+  display: inline-flex;
+  width: 1rem;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.build-dep.is-found .build-dep-mark { color: var(--success); }
+.build-dep.is-missing { background: color-mix(in oklab, var(--danger) 10%, transparent); }
+.build-dep.is-missing .build-dep-mark { color: var(--danger); }
+.build-dep.is-optional .build-dep-mark { color: var(--muted); }
+
+.build-dep-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
   color: var(--foreground);
   font-family: var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Optional entries dim: an absent optional header is not a broken build, and
+   colouring it red would train the reader to ignore red. */
+.build-dep.is-optional .build-dep-name { color: var(--muted); }
+
+.build-dep-kind {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.56rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.build-dep-flag {
+  flex: 0 0 auto;
+  padding: 0 0.25rem;
+  border-radius: 0.2rem;
+  background: color-mix(in oklab, var(--muted) 18%, transparent);
+  color: var(--muted);
+  font-size: 0.54rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* --- built executables ---------------------------------------------------- */
+
+.build-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
   font-size: 0.68rem;
-  font-weight: 400;
-  line-height: 1.45;
+}
+
+.build-artifacts li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 0.3rem;
+}
+
+.build-artifacts li:nth-child(odd) {
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
+}
+
+.build-artifacts li.is-primary {
+  background: color-mix(in oklab, var(--success) 10%, transparent);
+}
+
+.build-artifact-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-artifact-meta {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+/* --- the log -------------------------------------------------------------- */
+
+.build-log-meta {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+}
+
+.build-log-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+}
+
+/* Tall, and scrollable, because a compile is thousands of lines and the point of
+   this panel is watching it.
+
+   Sized in viewport units rather than rems on purpose: the log is the page. At a
+   fixed 34rem it occupied a little under a third of a tall window and left most
+   of the screen empty, which is the opposite of watching a build. vh tracks the
+   window, so it grows on a big monitor and stays usable on a laptop.
+
+   The min-height stops the box collapsing to nothing before the first line
+   arrives, which would make the layout jump the moment a build starts. */
+.build-log {
+  min-height: min(58vh, 46rem);
+  max-height: 78vh;
+  overflow: auto;
+  padding: 0.35rem 0.25rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, #000 25%, var(--surface));
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.build-log-line {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 0.15rem;
+  border-left: 2px solid transparent;
+}
+
+.build-log-line:hover { background: color-mix(in oklab, var(--foreground) 4%, transparent); }
+
+/* Same rail convention as the other log views: scanning a column of colours is
+   slow, scanning a column of margins is not. */
+.build-log-line.is-notable { border-left-color: color-mix(in oklab, var(--foreground) 45%, transparent); }
+.build-log-line.is-notable:has(.text-danger) { border-left-color: var(--danger); }
+.build-log-line.is-notable:has(.text-warning) { border-left-color: var(--warning); }
+.build-log-line.is-notable:has(.text-success) { border-left-color: var(--success); }
+
+.build-log-line.is-truncated {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.build-log-num {
+  width: 3.2rem;
+  flex: 0 0 auto;
+  color: color-mix(in oklab, var(--muted) 60%, transparent);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+.build-log-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  /* Wrapped, not scrolled horizontally: a gcc error line is long and the file
+     and column are the part being read, so clipping them to force a sideways
+     scroll would hide the answer. */
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
-.fleet-vm-log:focus-visible {
-  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 10%, transparent);
+@media (max-width: 1100px) {
+  .build-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* --- guest metrics trend diagram ------------------------------------------- */
+
+.vm-metrics-diagram {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--foreground) 2%, transparent);
+}
+
+.vm-metrics-diagram-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.vm-metrics-legend {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.58rem;
+  font-weight: 600;
+}
+
+.vm-metrics-legend span { display: inline-flex; align-items: center; gap: 0.2rem; }
+
+/* A dash rather than a word, so the legend reads against the lines it labels
+   instead of competing with them. */
+.vm-metrics-legend span::before {
+  content: '';
+  width: 0.55rem;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.vm-metrics-legend .is-cpu { color: var(--accent); }
+.vm-metrics-legend .is-mem { color: var(--success); }
+.vm-metrics-legend .is-disk { color: var(--warning); }
+
+/* Gridlines at 0 / 50 / 100 so "flat near zero" is a claim about the axis and
+   not about the line happening to sit at the bottom of an auto-scaled box. */
+.vm-metrics-plot {
+  position: relative;
+  padding-right: 2.1rem;
+}
+
+.vm-metrics-svg {
+  display: block;
+  width: 100%;
+  /* The dotted grid sits behind the data so a line crossing a gridline is not
+     interrupted by it. */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--foreground) 9%, transparent) 0 1px,
+    transparent 1px 33.33%
+  );
+  border-radius: 0.3rem;
+}
+
+.vm-metrics-axis {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 2px 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.52rem;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.vm-metrics-plot-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 60px;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-style: italic;
+}
+
+/* --- guest report (from VBoxManage guestproperty) -------------------------- */
+
+.fleet-vm-guest {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.45rem;
+  background: color-mix(in oklab, var(--surface) 96%, transparent);
+}
+
+.fleet-vm-guest-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.fleet-vm-additions {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.58rem;
+}
+
+.fleet-vm-guest-facts {
+  display: grid;
+  grid-template-columns: 1.3fr 0.8fr 0.9fr;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.fleet-vm-guest-facts > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.fleet-vm-guest-facts dt {
+  color: var(--muted);
+  font-size: 0.56rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.fleet-vm-guest-facts dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-vm-nics {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0.25rem 0 0;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
+  list-style: none;
+}
+
+.fleet-vm-nics li {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.fleet-vm-nic-name {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.56rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.fleet-vm-nics code {
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-vm-nic-v6 { color: var(--muted); }
 
 @media (max-width: 1100px) {
   .network-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .containers-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1192,8 +3417,34 @@ select.field {
     justify-content: space-between;
   }
 
+  .containers-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .containers-page-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .containers-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .fleet-vm-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .topology-interface-grid,
+  .topology-network-grid,
+  .interface-inventory-grid,
+  .docker-network-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .docker-inventory-header {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
@@ -1354,4 +3605,731 @@ textarea:focus-visible {
 * {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
+}
+
+/* ==========================================================================
+   Fleet metrics, log viewer, trace panel
+
+   Added with the guest-metrics and log-rework work. Kept in one block at the
+   end rather than scattered: these three surfaces share a visual grammar
+   (a label, a value, a track, a muted hint) and reading them together is how
+   that grammar stays consistent.
+   ========================================================================== */
+
+/* --- generic meter -------------------------------------------------------- */
+
+.vm-metric-track {
+  position: relative;
+  height: 0.3rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 9%, transparent);
+}
+
+.vm-metric-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--meter, var(--accent));
+  transition: width 400ms var(--ease);
+}
+
+.vm-metric-track.is-accent { --meter: var(--accent); }
+.vm-metric-track.is-success { --meter: var(--success); }
+.vm-metric-track.is-warning { --meter: var(--warning); }
+.vm-metric-track.is-danger { --meter: var(--danger); }
+
+/* --- fleet card metrics --------------------------------------------------- */
+
+.vm-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--surface) 96%, transparent);
+}
+
+.vm-metrics.is-empty,
+.vm-metrics.is-down {
+  padding: 0.5rem 0.7rem;
+  border-style: dashed;
+}
+
+.vm-metrics.is-down {
+  border-color: color-mix(in oklab, var(--danger) 32%, transparent);
+  background: color-mix(in oklab, var(--danger) 5%, transparent);
+}
+
+.vm-metrics-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.vm-metrics-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.3rem 0.6rem;
+}
+
+.vm-metrics-stamp {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+}
+
+.vm-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.vm-metric {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.vm-metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.vm-metric-label {
+  color: var(--muted);
+  font-size: 0.6rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.vm-metric-value {
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vm-metric-hint {
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vm-metrics-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+
+.vm-metric-stat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.vm-metric-stat-value {
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vm-metrics-addrs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.vm-metrics-addrs code {
+  padding: 0.1rem 0.35rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: 0.3rem;
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
+.vm-metrics-proc-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-top: 0.3rem;
+}
+
+.vm-metrics-proc {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+}
+
+.vm-metrics-proc-pid { color: var(--muted); font-variant-numeric: tabular-nums; }
+.vm-metrics-proc-name { overflow: hidden; color: var(--foreground); text-overflow: ellipsis; white-space: nowrap; }
+.vm-metrics-proc-mem { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.vm-metrics-footnote {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.58rem;
+  line-height: 1.4;
+}
+
+/* --- fleet toolbar -------------------------------------------------------- */
+
+.fleet-vm-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.fleet-vm-search,
+.log-search {
+  min-width: 0;
+  flex: 1 1 14rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 14%, transparent);
+  border-radius: 0.4rem;
+  outline: none;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.72rem;
+}
+
+.fleet-vm-search:focus-visible,
+.log-search:focus-visible {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 10%, transparent);
+}
+
+.fleet-vm-segment,
+.log-severity {
+  display: inline-flex;
+  overflow: hidden;
+  padding: 2px;
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  border-radius: 0.4rem;
+}
+
+.fleet-vm-segment button,
+.log-severity button {
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.28rem;
+  color: var(--muted);
+  font-size: 0.66rem;
+  text-transform: capitalize;
+  transition: color 120ms var(--ease), background 120ms var(--ease);
+}
+
+.fleet-vm-segment button:hover,
+.log-severity button:hover { color: var(--foreground); }
+
+.fleet-vm-segment button.is-on,
+.log-severity button.is-on {
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.fleet-vm-pagesize {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.fleet-vm-pagesize select,
+.log-controls select {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 14%, transparent);
+  border-radius: 0.35rem;
+  outline: none;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.66rem;
+}
+
+/* --- fleet actions + run log --------------------------------------------- */
+
+.fleet-vm-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 0.35rem;
+}
+
+.fleet-vm-log-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.fleet-vm-log-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.3rem 0.6rem;
+  color: var(--foreground);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+/* Severity chips, the jump link and the size stepper. */
+.fleet-vm-log-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+}
+
+/* Margin-left:auto pins the stepper to the right edge of the row. The chips
+   beside it are data about the log; the stepper is a control ON it, and putting
+   a control in the middle of a row of readouts reads as one more readout. It
+   also survives the wrap: when the row is too narrow the stepper drops to its
+   own line rather than being pushed under a chip. */
+.fleet-vm-log-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin-left: auto;
+  padding: 1px;
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  border-radius: 0.4rem;
+}
+
+.fleet-vm-log-size button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 0.28rem;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 120ms var(--ease), background 120ms var(--ease);
+}
+
+.fleet-vm-log-size button:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.fleet-vm-log-size button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.fleet-vm-log-size button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Tabular so the number does not shuffle sideways as it grows through 6 / 12 /
+   24 / 48 / 96, which would make the stepper look like it is twitching. */
+.fleet-vm-log-count {
+  min-width: 1.9rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* No max-height and no overflow.
+ *
+ * This box used to be its own scroll region: max-height 11rem with overflow
+ * auto, inside every card, on a fleet grid. The result was a page full of
+ * nested scrollbars - one per machine, plus one per page - none of which were
+ * scrolled by anybody, because the log is already collapsed to its last six
+ * lines and expands only when the operator asks for it. Worse, a nested
+ * scroller that has not been scrolled silently hides whatever is below it, so
+ * the last lines of a run log were routinely the ones you could not see.
+ *
+ * The card is now sized so the collapsed log fits without one, and an expanded
+ * log is simply a taller card.
+ */
+.fleet-vm-log {
+  padding: 0.3rem 0.35rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+}
+
+/* Inside a fleet card the viewer is one element among several, so it is drawn
+   at the density of an inline readout rather than at the density of the Logs
+   panel, which has the whole viewport to itself and can afford 11px.
+   Scoped rather than global so the two viewers can be tuned apart. */
+.fleet-vm-log .log-view-row {
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.fleet-vm-log .log-view-gutter { width: 2.2rem; }
+.fleet-vm-log .log-view-time { width: 5.5rem; font-size: 9.5px; }
+.fleet-vm-log .log-view-source { width: 7rem; font-size: 9.5px; }
+
+/* A VirtualBox line has no severity word, so the badge column is empty for
+   every row. `width: auto` lets an empty column collapse to nothing while a
+   real badge still takes exactly the room it needs. */
+.fleet-vm-log .log-view-level { width: auto; }
+
+/* The log's own controls, compact. A search box and a three-way segment at
+   full panel size turn every card into a small toolbar. */
+.fleet-vm-log-label .log-search {
+  flex: 1 1 10rem;
+  padding: 0.22rem 0.45rem;
+  font-size: 0.64rem;
+}
+
+.fleet-vm-log-label .log-severity button,
+.fleet-vm-log-label .log-toggle {
+  padding: 0.18rem 0.45rem;
+  font-size: 0.6rem;
+}
+
+.fleet-vm-log-head {
+  font-size: 0.62rem;
+}
+
+.fleet-vm-log-toggle {
+  align-self: flex-start;
+  color: var(--muted);
+  font-size: 0.62rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.fleet-vm-log-toggle:hover { color: var(--accent); }
+
+/* Inside .fleet-vm-log-controls the button is a peer of the chips, not a
+   full-width footer link, so it must not stretch to the column's width. */
+.fleet-vm-log-controls .fleet-vm-log-toggle {
+  align-self: auto;
+  white-space: nowrap;
+}
+
+/* --- log viewer ----------------------------------------------------------- */
+
+.log-viewer {
+  max-height: 62vh;
+  overflow: auto;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
+}
+
+.log-viewer-note {
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.log-viewer-note:not(:only-child) { border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent); }
+
+.log-view-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.05rem 0.5rem;
+  border-left: 2px solid transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.log-view-row:hover { background: color-mix(in oklab, var(--foreground) 4%, transparent); }
+
+/* Errors and warnings get a rail down the left edge. Scanning a column of
+   colours is slow; scanning a column of margins is not. */
+.log-view-row.is-notable { border-left-color: color-mix(in oklab, var(--rail, var(--muted)) 70%, transparent); }
+
+.log-view-row.is-danger { --rail: var(--danger); }
+.log-view-row.is-warning { --rail: var(--warning); }
+.log-view-row.is-accent { --rail: color-mix(in oklab, var(--accent) 45%, transparent); }
+.log-view-row.is-success { --rail: color-mix(in oklab, var(--success) 45%, transparent); }
+
+.log-view-row.is-faded { color: var(--muted); font-style: italic; }
+
+.log-view-gutter {
+  width: 3rem;
+  flex: 0 0 auto;
+  color: color-mix(in oklab, var(--muted) 65%, transparent);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+/* Wide enough for the longest stamp this column ever has to hold, which is
+   VirtualBox's elapsed clock ("00:01:29.919425", 15 mono characters). It was
+   5.5rem, which fit a 12-character wall clock and wrapped this one onto a
+   second line - and a time column that wraps cannot be scanned down. */
+.log-view-time {
+  width: 6.75rem;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.log-view-level { width: 4rem; flex: 0 0 auto; }
+
+.log-view-badge {
+  display: inline-block;
+  padding: 0 0.3rem;
+  border-radius: 0.25rem;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.log-view-badge.is-danger { background: color-mix(in oklab, var(--danger) 18%, transparent); color: var(--danger); }
+.log-view-badge.is-warning { background: color-mix(in oklab, var(--warning) 20%, transparent); color: var(--warning); }
+.log-view-badge.is-accent { background: color-mix(in oklab, var(--accent) 16%, transparent); color: var(--accent); }
+.log-view-badge.is-success { background: color-mix(in oklab, var(--success) 18%, transparent); color: var(--success); }
+.log-view-badge.is-muted { background: color-mix(in oklab, var(--muted) 18%, transparent); color: var(--muted); }
+
+.log-view-source {
+  width: 9rem;
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-view-body { min-width: 0; flex: 1 1 auto; }
+.log-view-body.is-wrap { overflow-wrap: anywhere; white-space: pre-wrap; }
+.log-view-body.is-nowrap { overflow-x: auto; white-space: pre; }
+
+.log-view-hit {
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--warning) 45%, transparent);
+  color: inherit;
+}
+
+.log-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.log-toggle {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 14%, transparent);
+  border-radius: 0.35rem;
+  color: var(--muted);
+  font-size: 0.66rem;
+  transition: color 120ms var(--ease), border-color 120ms var(--ease);
+}
+
+.log-toggle:hover { border-color: var(--accent); color: var(--accent); }
+
+.log-file-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.3rem 0.5rem;
+  border-left: 2px solid transparent;
+  border-radius: 0.3rem;
+  text-align: left;
+  transition: background 120ms var(--ease);
+}
+
+.log-file-row:hover { background: color-mix(in oklab, var(--foreground) 4%, transparent); }
+
+.log-file-row.is-active {
+  border-left-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+}
+
+.log-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.15rem 0.5rem;
+  margin-bottom: 0.15rem;
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* --- trace panel ---------------------------------------------------------- */
+
+.trace-metrics { display: flex; flex-direction: column; gap: 0.75rem; }
+
+.trace-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.5rem;
+}
+
+.trace-metric {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 9%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--surface) 96%, transparent);
+}
+
+.trace-metric-label {
+  color: var(--muted);
+  font-size: 0.58rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.trace-metric-value {
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.trace-metric-hint {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.58rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.trace-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.trace-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.6rem;
+}
+
+.trace-row {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.2rem 0.35rem;
+  border-radius: 0.25rem;
+  font-family: var(--mono);
+  font-size: 0.64rem;
+}
+
+.trace-row-depth { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.trace-row-sym {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-row-ms { flex: 0 0 auto; color: var(--accent); font-variant-numeric: tabular-nums; }
+
+/* The bar sits behind the text rather than beside it: a symbol name is long
+   and variable, and a fixed-width gutter for it wastes half the row. */
+.trace-row-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+
+.trace-row-sym,
+.trace-row-ms,
+.trace-row-depth { position: relative; z-index: 1; }
+
+.trace-viewer {
+  max-height: 58vh;
+  overflow: auto;
+  padding: 0.35rem 0.25rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.trace-record {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.02rem 0.4rem;
+  white-space: pre;
+}
+
+.trace-record:hover { background: color-mix(in oklab, var(--foreground) 4%, transparent); }
+
+.trace-record-ms {
+  flex: 0 0 auto;
+  width: 5.5rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.trace-record-depth { flex: 0 0 auto; width: 2rem; color: color-mix(in oklab, var(--muted) 70%, transparent); }
+
+/* ENTER and LEAVE point opposite ways so the direction of a call reads without
+   colour - the same convention as the network map's arrows. */
+.trace-record-kind { flex: 0 0 auto; width: 0.8rem; font-weight: 700; }
+.trace-record.is-enter .trace-record-kind { color: var(--accent); }
+.trace-record.is-leave .trace-record-kind { color: var(--success); }
+
+.trace-record-sym { min-width: 0; flex: 1 1 auto; overflow: hidden; color: var(--foreground); text-overflow: ellipsis; }
+.trace-record-dur { flex: 0 0 auto; color: var(--warning); font-variant-numeric: tabular-nums; }
+
+/* Anything that is not a record - including the binary the extractor writes
+   into the same file - is shown plainly rather than dressed up as a call. */
+.trace-record.is-raw {
+  color: var(--muted);
+  opacity: 0.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .vm-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vm-metrics-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .log-view-source { display: none; }
+  .log-view-time { width: 4.5rem; }
 }

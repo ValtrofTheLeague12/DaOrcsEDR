@@ -68,7 +68,7 @@ export default function Pager({
   // Hidden rather than disabled when everything fits on one page: a lone
   // "1 / 1" is noise, and a disabled pair of arrows invites the reader to
   // wonder what they would do when the answer is nothing.
-  if (total <= PAGE_SIZE) return null
+  if (pages <= 1) return null
 
   return (
     <div className="flex items-center justify-between gap-3 border-t border-default-100 pt-2">

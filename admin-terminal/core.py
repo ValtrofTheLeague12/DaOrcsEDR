@@ -25,7 +25,31 @@ from typing import Callable, Optional
 # ---------------------------------------------------------------------------
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ADMIN = os.path.dirname(os.path.abspath(__file__))
-ADMIN_LOGS = os.path.join(ADMIN, "logs")
+
+
+def appdata_root() -> str:
+    """The one directory every generated file belongs under.
+
+    Mirrors include/core/app_paths.hpp and python/panel/config.py. The terminal,
+    the analyzer and the web panel all read each other's output, so three
+    separate implementations of "where does the app put its logs" is how the
+    source tree fills up with logs that no tool then reads.
+    """
+    override = os.environ.get("IA_APPDATA_DIR")
+    if override:
+        return override
+    if os.name == "nt":
+        base = os.environ.get("APPDATA")
+        if base:
+            return os.path.join(base, "IAProject")
+        return os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "IAProject")
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if xdg:
+        return os.path.join(xdg, "IAProject")
+    return os.path.join(os.path.expanduser("~"), ".local", "share", "IAProject")
+
+
+ADMIN_LOGS = os.path.join(appdata_root(), "logs")
 
 PY_VENV = os.path.join(REPO, "python", ".venv", "Scripts", "python.exe")
 ML_VENV = os.path.join(REPO, "ml", "_t", "venv", "Scripts", "python.exe")

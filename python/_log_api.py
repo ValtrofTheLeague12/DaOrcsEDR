@@ -7,7 +7,13 @@ from pathlib import Path
 
 from loguru import logger
 
-LOG_DIR     = Path("logs")
+# The API server's log goes under the AppData root with the analyzer's, so the
+# panel can tail both from one place and a run leaves nothing behind in whatever
+# directory the server happened to be started from.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from panel.config import logs_dir  # noqa: E402
+
+LOG_DIR     = logs_dir()
 LOG_FILE    = LOG_DIR / "logs.jsonl"
 ROTATION    = "200 MB"
 RETENTION   = 10

@@ -30,19 +30,28 @@
   #include <unistd.h>
 #endif
 
+// Shared with the crash handler, which prints logos/crash.logo in red from
+// inside a fault handler. One definition of where logos live means the startup
+// banner and the crash banner cannot end up disagreeing.
+#include "banner.hpp"
+
 namespace curses_ui {
 
 namespace {
 
-bool terminal_available() {
-  const char* mode = std::getenv("STATIC_ANALYZER_CURSES");
-  if (mode != nullptr && std::string(mode) == "1") return true;
-  if (mode != nullptr && std::string(mode) == "0") return false;
+bool stdout_is_terminal() {
 #ifdef _WIN32
   return _isatty(_fileno(stdout)) != 0;
 #else
   return isatty(fileno(stdout)) != 0;
 #endif
+}
+
+bool terminal_available() {
+  const char* mode = std::getenv("STATIC_ANALYZER_CURSES");
+  if (mode != nullptr && std::string(mode) == "1") return true;
+  if (mode != nullptr && std::string(mode) == "0") return false;
+  return stdout_is_terminal();
 }
 
 std::string strip_ansi(std::string text) {
@@ -152,17 +161,15 @@ constexpr int kPairLogo = 12;
 // rows-11 and no more, otherwise the spinner lands on the footer line.
 constexpr int kProgressBlockRows = 11;
 
-// Splash logo for the live progress screen and the plain-terminal banner, drawn
-// in red. STATIC_ANALYZER_LOGO overrides the path, a missing or empty file just
-// means no logo is drawn.
+// Splash logo for the live progress screen and the plain-terminal banner.
+// STATIC_ANALYZER_LOGO overrides the path; otherwise daorcs.logo is preferred
+// and pdcursor.logo is the fallback. Both render in red.
+//
+// Resolution is delegated to banner::resolve() so this and the CRASH logo - which
+// is printed from inside a fault handler - cannot end up looking in different
+// directories and disagreeing about which one is right.
 std::filesystem::path logo_path() {
-  const char* override_path = std::getenv("STATIC_ANALYZER_LOGO");
-  if (override_path != nullptr && *override_path != '\0') return override_path;
-#ifdef STATIC_ANALYZER_SOURCE_DIR
-  return std::filesystem::path(STATIC_ANALYZER_SOURCE_DIR) / "logos" / "pdcursor.logo";
-#else
-  return std::filesystem::current_path() / "logos" / "pdcursor.logo";
-#endif
+  return banner::resolve("STATIC_ANALYZER_LOGO", "daorcs.logo", {"pdcursor.logo"});
 }
 
 struct window_size_t {
@@ -434,7 +441,7 @@ logo_t load_logo() {
 void print_logo_banner() {
   // A redirected run is not looking at a terminal, and 76 lines of art in a
   // captured report is noise rather than a banner.
-  if (!terminal_available()) return;
+  if (!stdout_is_terminal()) return;
 
   const logo_t logo = load_logo();
   if (logo.lines.empty()) return;

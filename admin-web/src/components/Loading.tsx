@@ -1,5 +1,4 @@
-import { Spinner } from '@heroui/react'
-
+import { Spinner } from '@heroui/react/spinner'
 // First-load indicator, shared so every panel says the same thing while it is
 // still waiting on a probe.
 //

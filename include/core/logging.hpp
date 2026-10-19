@@ -13,6 +13,8 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
+#include "app_paths.hpp"
+
 namespace logging {
 
 enum class level { trace, debug, info, warn, error, critical };
@@ -29,7 +31,12 @@ enum class status { success, failure, warning, debug, info };
     ::logging::operation_t _logging_operation_guard_(name, ctx, __FILE__, __LINE__)
 
 struct config_t {
-    std::filesystem::path directory{"logs"};
+    // Defaults to the AppData logs directory rather than a bare "logs" in the
+    // working directory: run logs are machine state, and writing them into the
+    // source tree kept every checkout dirty and put a copy of every run into
+    // every backup of the repo. Callers that pass their own directory still
+    // win - this is the default, not a policy.
+    std::filesystem::path directory{app_paths::logs_root()};
     std::string basename{"static_analyzer"};
     std::size_t max_bytes = 200u * 1024u * 1024u;
     std::size_t max_files = 5;

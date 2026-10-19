@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Flask REST API around the static analyzer.
+r"""Flask REST API around the static analyzer.
 
 Runs the analyzer as a service: clients upload a sample, pick a pipeline and
 get back a task they can poll (or block on).
 
-    python\\.venv\\Scripts\\python.exe server.py                 # 127.0.0.1:60020
-    python\\.venv\\Scripts\\python.exe server.py --port 7000 --rate-limit 20
+    python\.venv\Scripts\python.exe server.py
+    python\.venv\Scripts\python.exe server.py --port 7000 --rate-limit 20
+
+The bind address is resolved process environment first, then the repository
+`.env` (SA_API_HOST, SA_API_PORT), then 127.0.0.1:60020 - in that order, so an
+explicit export always wins and the default only applies when neither says
+anything. On this checkout `.env` sets 60025, which is what it binds.
 
 Endpoints (JSON in, JSON out):
 
@@ -13,11 +18,7 @@ Endpoints (JSON in, JSON out):
     GET    /health                          liveness + queue stats
     GET    /phases                          analyzer --list-phases --json
     GET    /pipelines                       named pipeline configs
-    GET    /capabilities                    granular capability endpoints
-    POST   /capabilities/<name>             run ONE capability, JSON inline
-             (aliases: /hashes /strings /ioc /iat /malapi /sections /got
-              /capa /disasm /graphs /extraction /model /cti)
-    POST   /analyze?pipeline=<spec>         full pipeline -> 202 + task id
+    POST   /analyze?pipeline=<spec>         upload a sample -> 202 + task id
              &filename=<name>               (or multipart/form-data with a file)
              &wait=true                     block until finished -> 200/502
     GET    /tasks                           list tasks
@@ -61,10 +62,10 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
-from queue import PriorityQueue, Empty
 
 try:
     from flask import Flask, Response, jsonify, request, send_file
@@ -75,50 +76,9 @@ except ImportError:  # pragma: no cover - friendly bootstrap
              "    python\\.venv\\Scripts\\python.exe server.py\n"
              "or: pip install flask")
 
-try:
-    from loguru import logger
-except ImportError:
-    logger = None
-
 REPO = Path(__file__).resolve().parent
 MAX_UPLOAD = 10 * 1024 * 1024  # 10 MB, per spec
-MAX_INLINE = 5 * 1024 * 1024   # max bytes of artifact JSON returned inline
 UCRT64_BIN = r"C:\msys64\ucrt64\bin"
-
-# Granular capabilities: endpoint -> (phases to run, artifact path filter).
-# Each runs ONLY its own phase(s) (export/summary are auto-inserted by the
-# planner) and returns the produced artifact JSON inline - no task queue.
-CAPABILITIES: dict[str, tuple[list[str], tuple[str, ...]]] = {
-    "hashes":    (["export"], ("hash/", "fileinfo/")),
-    "strings":   (["strings"], ("strings/",)),
-    "ioc":       (["strings"], ("ioc/",)),
-    "iat":       (["iat"], ("iat/",)),
-    "malapi":    (["iat"], ("malapi/",)),
-    "sections":  (["sections"], ("eat/",)),
-    "got":       (["got"], ("got/",)),
-    "capa":      (["capa"], ("capa/",)),
-    "disasm":    (["radare2"], ("radare2/",)),
-    "graphs":    (["graphs"], ("graphs.json",)),
-    "extraction": (["extraction"], ("extraction/",)),
-    "model":     (["model"], ("ml/",)),
-    "cti":       (["cti"], ("cti/",)),
-}
-
-CAPABILITY_DOCS = {
-    "hashes": "SHA-256/MD5/SHA1 + file info",
-    "strings": "extracted strings + CyberChef decode pass",
-    "ioc": "IOC mining: IPs, domains, URLs",
-    "iat": "PE import address table",
-    "malapi": "MalAPI classification of imported functions",
-    "sections": "PE section table + export address table",
-    "got": "ELF/Mach-O GOT/PLT entries",
-    "capa": "capa capability detection (network, persistence, anti-analysis)",
-    "disasm": "radare2 disassembly and function analysis",
-    "graphs": "Graphviz call graphs from radare2",
-    "extraction": "full LIEF extraction: sections, exports, imports, YARA",
-    "model": "EMBER2024 LightGBM score (needs ML service on :60010)",
-    "cti": "CTI enrichment of IOCs (needs network)",
-}
 
 log = logging.getLogger("analyzer.api")
 
@@ -164,28 +124,14 @@ QUEUED, RUNNING, DONE, FAILED, CANCELLED, ERROR = (
 )
 TERMINAL = {DONE, FAILED, CANCELLED, ERROR}
 
-# Priority levels for the queue (lower = higher priority)
-PRIORITY_HIGH = 0
-PRIORITY_NORMAL = 1
-PRIORITY_LOW = 2
-
 
 class Task:
-    def __init__(
-        self,
-        task_id: str,
-        pipeline: str,
-        filename: str,
-        stored: str,
-        priority: int = PRIORITY_NORMAL,
-    ) -> None:
+    def __init__(self, task_id: str, pipeline: str, filename: str, stored: str) -> None:
         self.id = task_id
         self.pipeline = pipeline
         self.filename = filename          # original name as uploaded
         self.stored = stored              # on-disk name (task-id prefixed, unique)
         self.state = QUEUED
-        self.priority = priority
-        self.queue_position: int = 0      # position in queue (1-based)
         self.error: Optional[str] = None
         self.exit_code: Optional[int] = None
         self.submitted = utcnow()
@@ -214,8 +160,6 @@ class Task:
             "state": self.state,
             "pipeline": self.pipeline,
             "filename": self.filename,
-            "priority": self.priority,
-            "queue_position": self.queue_position if self.state == QUEUED else None,
             "submitted": self.submitted,
             "started": self.started,
             "finished": self.finished,
@@ -231,101 +175,29 @@ class Task:
             out["manifest"] = self.manifest
         return out
 
-    def __lt__(self, other: "Task") -> bool:
-        # For PriorityQueue: lower priority value = higher priority
-        if self.priority != other.priority:
-            return self.priority < other.priority
-        return self.submitted < other.submitted
 
+class TaskRegistry:
+    """All shared mutable state, behind one lock (tasks are few, holds are short)."""
 
-class TaskQueue:
-    """Thread-safe priority queue for tasks with position tracking."""
-
-    def __init__(self, max_queued: int, max_workers: int) -> None:
+    def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._queue: PriorityQueue = PriorityQueue()
-        self._tasks: dict[str, Task] = {}  # All tasks by ID
-        self._max_queued = max_queued
-        self._max_workers = max_workers
-        self._running_count = 0
+        self._tasks: dict[str, Task] = {}
 
-    def can_accept(self) -> bool:
-        with self._lock:
-            queued = self._queue.qsize()
-            return (queued + self._running_count) < (self._max_queued + self._max_workers)
-
-    def enqueue(self, task: Task) -> int:
-        """Add task to queue, return queue position (1-based)."""
+    def add(self, task: Task) -> None:
         with self._lock:
             self._tasks[task.id] = task
-            self._queue.put(task)
-            self._update_positions()
-            return task.queue_position
 
-    def dequeue(self) -> Optional[Task]:
-        """Get next task from queue."""
-        with self._lock:
-            try:
-                task = self._queue.get_nowait()
-                self._running_count += 1
-                task.state = RUNNING
-                task.started = utcnow()
-                task.queue_position = 0
-                self._update_positions()
-                return task
-            except Empty:
-                return None
-
-    def mark_done(self, task_id: str) -> None:
-        """Mark task as done (called when task finishes)."""
-        with self._lock:
-            self._running_count = max(0, self._running_count - 1)
-            if task_id in self._tasks:
-                task = self._tasks[task_id]
-                task.queue_position = 0
-
-    def get_task(self, task_id: str) -> Optional[Task]:
+    def get(self, task_id: str) -> Optional[Task]:
         with self._lock:
             return self._tasks.get(task_id)
 
-    def get(self, task_id: str) -> Optional[Task]:
-        return self.get_task(task_id)
-
-    def remove_task(self, task_id: str) -> Optional[Task]:
-        with self._lock:
-            task = self._tasks.pop(task_id, None)
-            if task and task.state == QUEUED:
-                # Rebuild queue without this task
-                self._rebuild_queue()
-            return task
-
     def remove(self, task_id: str) -> Optional[Task]:
-        return self.remove_task(task_id)
-
-    def _rebuild_queue(self) -> None:
-        """Rebuild priority queue from remaining queued tasks."""
-        queued_tasks = [t for t in self._tasks.values() if t.state == QUEUED]
-        self._queue = PriorityQueue()
-        for t in sorted(queued_tasks):
-            self._queue.put(t)
-        self._update_positions()
-
-    def _update_positions(self) -> None:
-        """Update queue positions for all queued tasks."""
-        # Get all queued tasks sorted by priority and submission time
-        queued = sorted([t for t in self._tasks.values() if t.state == QUEUED])
-        for pos, task in enumerate(queued, 1):
-            task.queue_position = pos
-
-    def list_tasks(self, reverse: bool = True) -> list[Task]:
         with self._lock:
-            tasks = list(self._tasks.values())
-            tasks.sort(key=lambda t: t.submitted, reverse=reverse)
-            return tasks
+            return self._tasks.pop(task_id, None)
 
-    def list(self, reverse: bool = True) -> list[Task]:
-        """Alias for list_tasks for backward compatibility."""
-        return self.list_tasks(reverse)
+    def list(self) -> list[Task]:
+        with self._lock:
+            return sorted(self._tasks.values(), key=lambda t: t.submitted, reverse=True)
 
     def counts(self) -> dict[str, int]:
         with self._lock:
@@ -335,55 +207,9 @@ class TaskQueue:
                     c[t.state] = c.get(t.state, 0) + 1
             return c
 
-    def running_tasks(self) -> list[Task]:
+    def running(self) -> list[Task]:
         with self._lock:
             return [t for t in self._tasks.values() if t.state == RUNNING]
-
-    def queued_tasks(self) -> list[Task]:
-        with self._lock:
-            return sorted([t for t in self._tasks.values() if t.state == QUEUED])
-
-    def cancel_queued(self) -> None:
-        with self._lock:
-            for task in self._tasks.values():
-                if task.state == QUEUED:
-                    task.state = CANCELLED
-                    task.finished = utcnow()
-                    task.queue_position = 0
-            self._queue = PriorityQueue()
-
-    def queue_status(self) -> dict:
-        """Get detailed queue status."""
-        with self._lock:
-            queued = [t for t in self._tasks.values() if t.state == QUEUED]
-            running = [t for t in self._tasks.values() if t.state == RUNNING]
-            return {
-                "queued": len(queued),
-                "running": len(running),
-                "max_queued": self._max_queued,
-                "max_workers": self._max_workers,
-                "can_accept": (len(queued) + len(running)) < (self._max_queued + self._max_workers),
-                "queue": [
-                    {
-                        "id": t.id,
-                        "filename": t.filename,
-                        "pipeline": t.pipeline,
-                        "priority": t.priority,
-                        "position": t.queue_position,
-                        "submitted": t.submitted,
-                    }
-                    for t in sorted(queued)
-                ],
-                "running_tasks": [
-                    {
-                        "id": t.id,
-                        "filename": t.filename,
-                        "pipeline": t.pipeline,
-                        "started": t.started,
-                    }
-                    for t in running
-                ],
-            }
 
 
 # ---------------------------------------------------------------------------
@@ -393,20 +219,12 @@ class Api:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.analyzer = Path(args.analyzer).resolve()
-        self.registry = TaskQueue(args.max_queued, args.max_workers)
+        self.registry = TaskRegistry()
         self.limiter = RateLimiter()
+        self.pool = ThreadPoolExecutor(
+            max_workers=args.max_workers, thread_name_prefix="analyze"
+        )
         self.shutdown_event = threading.Event()
-        self._workers_stop = threading.Event()
-        self._workers = [
-            threading.Thread(
-                target=self._worker_loop,
-                name=f"analyze-{index + 1}",
-                daemon=True,
-            )
-            for index in range(args.max_workers)
-        ]
-        for worker in self._workers:
-            worker.start()
         self.phases: Optional[list] = None  # cached at startup
         self.pipelines: list[dict] = []
         self.started_at = time.time()
@@ -442,9 +260,10 @@ class Api:
 
     # -- analysis -----------------------------------------------------------
     def submit(self, data: bytes, filename: str, pipeline: str,
-               wait: bool, priority: int = PRIORITY_NORMAL) -> tuple[int, dict]:
+               wait: bool) -> tuple[int, dict]:
         """Persist the upload and schedule it. Returns (http_code, body)."""
-        if not self.registry.can_accept():
+        counts = self.registry.counts()
+        if counts[QUEUED] + counts[RUNNING] >= self.args.max_queued + self.args.max_workers:
             return 503, {"error": "task queue is full, retry later"}
 
         task_id = uuid.uuid4().hex[:12]
@@ -452,12 +271,12 @@ class Api:
         # Task-id prefix keeps the analyzer stem unique, so concurrent uploads
         # of the same file never share exports/<stem>_analysis/.
         stored = f"{task_id}_{safe}"
-        task = Task(task_id, pipeline, filename, stored, priority=priority)
+        task = Task(task_id, pipeline, filename, stored)
         task.dir.mkdir(parents=True, exist_ok=True)
         (task.dir / stored).write_bytes(data)
-        
-        position = self.registry.enqueue(task)
-        
+        self.registry.add(task)
+
+        self.pool.submit(self._run, task)
         if not wait:
             return 202, {"status": "queued", "task": task.view(),
                          "poll": f"/tasks/{task.id}"}
@@ -475,15 +294,15 @@ class Api:
             return 502, body
         return 409, body  # cancelled / error
 
-    def _worker_loop(self) -> None:
-        while not self._workers_stop.is_set():
-            task = self.registry.dequeue()
-            if task is None:
-                self._workers_stop.wait(0.1)
-                continue
-            self._run(task)
-
     def _run(self, task: Task) -> None:
+        with self.registry._lock:  # noqa: SLF001 - registry owns the transition
+            if task.cancel_requested:
+                task.state = CANCELLED
+                task.finished = utcnow()
+                return
+            task.state = RUNNING
+            task.started = utcnow()
+
         # file on disk is the sanitized, task-id-prefixed name
         args = [str(self.analyzer), "--pipeline", task.pipeline, str(task.dir / task.stored)]
         task.log_path = task.dir / "analyzer.log"
@@ -494,11 +313,7 @@ class Api:
                     stdout=logf, stderr=subprocess.STDOUT,
                     **spawn_kwargs(),
                 )
-                with self.registry._lock:  # noqa: SLF001
-                    task.proc = proc
-                    cancel_requested = task.cancel_requested
-                if cancel_requested:
-                    kill_tree(proc)
+                task.proc = proc
                 try:
                     rc = proc.wait(timeout=self.args.timeout)
                 except subprocess.TimeoutExpired:
@@ -519,68 +334,8 @@ class Api:
             task.state = ERROR
             task.error = f"could not start the analyzer: {exc}"
         finally:
-            with self.registry._lock:  # noqa: SLF001
-                task.proc = None
-            task.finished = utcnow()
-            self.registry.mark_done(task.id)
-
-    def run_capability(self, name: str, data: bytes, filename: str,
-                       timeout: Optional[float] = None) -> tuple[int, dict]:
-        """Run a single capability inline (no task queue) and return its
-        artifact JSON directly."""
-        phases, keep = CAPABILITIES[name]
-        task_id = uuid.uuid4().hex[:12]
-        safe = sanitize_filename(filename)
-        stored = f"{task_id}_{safe}"
-        task = Task(task_id, name, filename, stored)
-        task.dir.mkdir(parents=True, exist_ok=True)
-        (task.dir / stored).write_bytes(data)
-        task.log_path = task.dir / "analyzer.log"
-
-        spec = json.dumps(phases)  # planner: inline JSON phase list
-        args = [str(self.analyzer), "--pipeline", spec, str(task.dir / stored)]
-        started = time.monotonic()
-        try:
-            with open(task.log_path, "wb") as logf:
-                proc = subprocess.Popen(
-                    args, cwd=str(REPO), env=self.child_env(),
-                    stdout=logf, stderr=subprocess.STDOUT,
-                    **spawn_kwargs(),
-                )
-                task.proc = proc
-                try:
-                    rc = proc.wait(timeout=timeout or self.args.timeout)
-                except subprocess.TimeoutExpired:
-                    kill_tree(proc)
-                    task.state = ERROR
-                    task.error = f"analysis exceeded {timeout or self.args.timeout}s"
-                else:
-                    task.exit_code = rc
-                    task.state = DONE if rc == 0 else FAILED
-                    if rc != 0:
-                        task.error = failure_reason(task)
-        except OSError as exc:
-            task.state = ERROR
-            task.error = f"could not start the analyzer: {exc}"
-        finally:
             task.proc = None
             task.finished = utcnow()
-
-        body: dict[str, Any] = {
-            "capability": name,
-            "phases": phases,
-            "state": task.state,
-            "exit_code": task.exit_code,
-            "error": task.error,
-            "filename": filename,
-            "duration_ms": int((time.monotonic() - started) * 1000),
-            "artifacts": inline_artifacts(task, keep),
-        }
-        code = 200 if task.state == DONE else (
-            504 if task.state == ERROR and task.error and "exceeded" in task.error
-            else 502)
-        purge_task(task)
-        return code, body
 
     def cancel(self, task: Task) -> bool:
         with self.registry._lock:  # noqa: SLF001
@@ -616,20 +371,15 @@ class Api:
             if counts[QUEUED] + counts[RUNNING] == 0:
                 break
             time.sleep(0.5)
-        for task in self.registry.running_tasks():
-            self.cancel(task)
-
-    def stop_workers(self) -> None:
-        self._workers_stop.set()
-        self.registry.cancel_queued()
-        for worker in self._workers:
-            worker.join(timeout=5)
+        for task in self.registry.running():
+            if task.proc is not None:
+                kill_tree(task.proc)
 
     def stop(self, grace: float) -> None:
         """Stop accepting, let running analyses finish, kill the stragglers."""
         self._retention_stop.set()
         self.drain(grace)
-        self.stop_workers()
+        self.pool.shutdown(wait=False, cancel_futures=True)
 
 
 # ---------------------------------------------------------------------------
@@ -638,38 +388,6 @@ class Api:
 def create_app(api: Api) -> Flask:
     app = Flask(__name__, static_folder=None)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD + 64 * 1024  # multipart overhead
-
-    # OpenAPI for the analyzer, so the admin panel documents this service from
-    # the live app rather than by parsing this file. Assets come from flasgger's
-    # own static directory, not a CDN, so it works on an isolated network.
-    #
-    # `headers` must be an empty list - flasgger iterates it in an
-    # after_request hook on every response, and a missing key 500s every route.
-    # The spec and UI are exempt from the rate limiter below: they start no
-    # analysis, upload nothing, and a throttled spec is just a broken page.
-    try:
-        from flasgger import Swagger
-
-        Swagger(app, config={
-            "title": "Static analyzer API",
-            "version": "1.0",
-            "description": (
-                "REST wrapper around the static analyzer. Upload a sample, "
-                "pick a pipeline, poll the task, download the artifacts."
-            ),
-            "headers": [],
-            "specs": [{
-                "endpoint": "apispec_1",
-                "route": "/apispec_1.json",
-                "rule_filter": lambda rule: True,
-                "model_filter": lambda tag: True,
-            }],
-            "swagger_ui": True,
-            "specs_route": "/apidocs/",
-            "static_url_path": "/flasgger_static",
-        })
-    except ImportError:  # pragma: no cover - optional dependency
-        pass
 
     def client_ip() -> str:
         return request.remote_addr or "?"
@@ -686,14 +404,8 @@ def create_app(api: Api) -> Flask:
 
     @app.before_request
     def gate() -> Optional[Response]:
-        if api.shutdown_event.is_set() and request.method == "POST":
+        if api.shutdown_event.is_set():
             return jsonify(error="server is shutting down"), 503
-        # Documentation is free to read: it starts no analysis, uploads nothing
-        # and exposes no sample data. Throttling it would only make the panel's
-        # documentation page fail under the same load that caused the throttle.
-        if request.path in ("/apidocs/", "/apispec_1.json") or \
-                request.path.startswith("/flasgger_static/"):
-            return None
         return rate("flood:" + client_ip(), api.args.read_limit, 60.0)
 
     # -- errors as JSON -----------------------------------------------------
@@ -716,34 +428,17 @@ def create_app(api: Api) -> Flask:
 
     # -- GET ---------------------------------------------------------------
     @app.get("/")
-    @app.get("/api")
     def index():
-        """Service index: version, endpoints, pipelines and capabilities
-        ---
-        tags: [meta]
-        responses:
-          200:
-            description: What this service offers
-        """
         return jsonify(
             service="static-analyzer-api",
             version="0.2.0",
-            endpoints=["/health", "/phases", "/pipelines", "/capabilities",
-                       "/analyze", "/tasks"],
+            endpoints=["/health", "/phases", "/pipelines", "/analyze", "/tasks"],
             max_upload_bytes=MAX_UPLOAD,
             pipelines=[p["name"] for p in api.pipelines],
-            capabilities=sorted(CAPABILITIES),
         )
 
     @app.get("/health")
     def health():
-        """Liveness plus queue depth and rate-limit state
-        ---
-        tags: [meta]
-        responses:
-          200:
-            description: Status, analyzer path, queued and running counts
-        """
         counts = api.registry.counts()
         return jsonify(
             status="shutting_down" if api.shutdown_event.is_set() else "ok",
@@ -758,76 +453,21 @@ def create_app(api: Api) -> Flask:
 
     @app.get("/phases")
     def phases():
-        """Analyzer phase catalog as JSON
-        ---
-        tags: [meta]
-        responses:
-          200:
-            description: Every phase the analyzer knows about
-          503:
-            description: Catalog was not available at startup
-        """
         if api.phases is None:
             return jsonify(error="phase catalog unavailable"), 503
         return jsonify(api.phases)
 
     @app.get("/pipelines")
     def pipelines():
-        """Named pipeline configs discovered on disk
-        ---
-        tags: [meta]
-        responses:
-          200:
-            description: Pipeline name, description and source path
-        """
         return jsonify(api.pipelines)
 
     @app.get("/tasks")
     def task_list():
-        """List analysis tasks, newest first
-        ---
-        tags: [tasks]
-        parameters:
-          - name: limit
-            in: query
-            required: false
-            type: integer
-            description: Maximum number of tasks to return
-        responses:
-          200:
-            description: Task summaries without manifests
-        """
         limit = request.args.get("limit", 100, type=int)
-        return jsonify([t.view(full=False) for t in api.registry.list_tasks()[:limit]])
-
-    @app.get("/queue")
-    def queue_status():
-        """Queue depth, positions and running tasks
-        ---
-        tags: [tasks]
-        responses:
-          200:
-            description: Queue state, including whether it can accept work
-        """
-        return jsonify(api.registry.queue_status())
+        return jsonify([t.view(full=False) for t in api.registry.list()[:limit]])
 
     @app.get("/tasks/<task_id>")
     def task_detail(task_id: str):
-        """Task detail, with the manifest once it has finished
-        ---
-        tags: [tasks]
-        parameters:
-          - name: task_id
-            in: path
-            required: true
-            type: string
-            description: Task handle from POST /analyze
-        responses:
-          200:
-            description: Task state and, when terminal, its manifest
-          404:
-            description: Unknown task id
-        """
         task = api.registry.get(task_id)
         if task is None:
             return jsonify(error="unknown task", id=task_id), 404
@@ -835,21 +475,6 @@ def create_app(api: Api) -> Flask:
 
     @app.get("/tasks/<task_id>/log")
     def task_log(task_id: str):
-        """Tail of the analyzer's stdout and stderr for a task
-        ---
-        tags: [tasks]
-        parameters:
-          - name: task_id
-            in: path
-            required: true
-            type: string
-            description: Task handle from POST /analyze
-        responses:
-          200:
-            description: Last 64 KB of the run log, as plain text
-          404:
-            description: Unknown task id
-        """
         task = api.registry.get(task_id)
         if task is None:
             return jsonify(error="unknown task", id=task_id), 404
@@ -858,21 +483,6 @@ def create_app(api: Api) -> Flask:
 
     @app.get("/tasks/<task_id>/artifacts")
     def task_artifacts(task_id: str):
-        """List the artifact files a run produced
-        ---
-        tags: [tasks]
-        parameters:
-          - name: task_id
-            in: path
-            required: true
-            type: string
-            description: Task handle from POST /analyze
-        responses:
-          200:
-            description: File list with sizes and download links
-          404:
-            description: Unknown task id
-        """
         task = api.registry.get(task_id)
         if task is None:
             return jsonify(error="unknown task", id=task_id), 404
@@ -880,26 +490,6 @@ def create_app(api: Api) -> Flask:
 
     @app.get("/tasks/<task_id>/artifacts/<path:rel>")
     def task_artifact(task_id: str, rel: str):
-        """Download one artifact from a run
-        ---
-        tags: [tasks]
-        parameters:
-          - name: task_id
-            in: path
-            required: true
-            type: string
-            description: Task handle from POST /analyze
-          - name: rel
-            in: path
-            required: true
-            type: string
-            description: Artifact path, relative to the run root
-        responses:
-          200:
-            description: The file, as an attachment
-          404:
-            description: Unknown task, or the path escapes the run directory
-        """
         task = api.registry.get(task_id)
         if task is None:
             return jsonify(error="unknown task", id=task_id), 404
@@ -918,173 +508,9 @@ def create_app(api: Api) -> Flask:
         return send_file(target, mimetype=ctype, as_attachment=True,
                          download_name=target.name)
 
-    # -- upload parsing (shared by /analyze and capability endpoints) ------
-    def read_upload() -> tuple[Optional[tuple[bytes, str, dict]], Optional[tuple[dict, int]]]:
-        """Returns ((data, filename, form_fields), None) or (None, (error, code)).
-
-        Multipart must go through request.files FIRST - get_data() would
-        consume the stream before werkzeug can parse the parts."""
-        if request.content_length is None and not request.headers.get("Transfer-Encoding"):
-            return None, ({"error": "Content-Length required"}, 411)
-        if (request.content_length or 0) > MAX_UPLOAD + 64 * 1024:
-            return None, ({"error": "sample too large", "max_bytes": MAX_UPLOAD,
-                           "received_bytes": request.content_length}, 413)
-
-        multipart = "multipart/form-data" in (request.content_type or "")
-        filename = request.args.get("filename")
-        form: dict[str, str] = {}
-        if multipart:
-            part = request.files.get("file")
-            if part is None and request.files:
-                part = next(iter(request.files.values()))
-            if part is None:
-                return None, ({"error": "no file part in multipart body"}, 400)
-            data = part.read()
-            filename = filename or part.filename
-            form = request.form.to_dict()
-        else:
-            # raw body: fields arrive as query params (reading request.form
-            # here would try to parse the binary stream)
-            data = request.get_data(cache=False)  # 413 via MAX_CONTENT_LENGTH
-
-        filename = filename or request.headers.get("X-Filename") or "sample.bin"
-        if not data:
-            return None, ({"error": "empty body"}, 400)
-        if len(data) > MAX_UPLOAD:  # belt and braces (raw bodies)
-            return None, ({"error": "sample too large", "max_bytes": MAX_UPLOAD}, 413)
-        return (data, filename, form), None
-
-    # -- granular capabilities ---------------------------------------------
-    @app.get("/capabilities")
-    def capability_index():
-        """Index of granular capability endpoints
-        ---
-        tags: [capabilities]
-        responses:
-          200:
-            description: One entry per capability, with its phases and aliases
-        description: >
-          Each capability runs a single phase and returns its artifact JSON
-          inline, without going through the task queue. Useful when you want one
-          specific artifact and do not want to run a whole pipeline.
-        """
-        return jsonify([
-            {"name": name, "description": CAPABILITY_DOCS.get(name, ""),
-             "phases": phases, "endpoint": f"/capabilities/{name}",
-             "alias": f"/{name}"}
-            for name, (phases, _) in sorted(CAPABILITIES.items())
-        ])
-
-    def run_capability_route(name: str):
-        if name not in CAPABILITIES:
-            return jsonify(error="unknown capability", capability=name,
-                           available=sorted(CAPABILITIES)), 404
-        blocked = rate("analyze:" + client_ip(), api.args.rate_limit,
-                       api.args.rate_window)
-        if blocked is not None:
-            return blocked
-        upload, err = read_upload()
-        if err is not None:
-            return jsonify(err[0]), err[1]
-        data, filename, _form = upload
-        try:
-            timeout = request.args.get("timeout", type=float)
-        except (TypeError, ValueError):
-            timeout = None
-        code, body = api.run_capability(name, data, filename, timeout)
-        return jsonify(body), code
-
-    @app.post("/capabilities/<name>")
-    def capability_post(name: str):
-        """Run one capability and return its artifact JSON inline
-        ---
-        tags: [capabilities]
-        parameters:
-          - name: name
-            in: path
-            required: true
-            type: string
-            description: Capability name, e.g. hashes, capa, disasm
-          - name: body
-            in: body
-            required: true
-            description: Raw sample bytes, or a multipart form with a file part
-          - name: timeout
-            in: query
-            required: false
-            type: number
-            description: Seconds to allow before the run is killed
-        responses:
-          200:
-            description: Artifact JSON produced by the capability
-          400:
-            description: Empty body, or no file part in a multipart request
-          413:
-            description: Sample exceeds the 10 MB limit
-          502:
-            description: The analyzer failed or timed out
-        description: >
-          Aliases exist for every capability - POST /strings is the same as
-          POST /capabilities/strings. No task queue is involved: the run is
-          synchronous and the artifact comes back in the response body.
-        """
-        return run_capability_route(name)
-
-    # short aliases: POST /strings, POST /hashes, ...
-    for _cap in CAPABILITIES:
-        app.add_url_rule(f"/{_cap}", f"cap_{_cap}",
-                         (lambda c: lambda: run_capability_route(c))(_cap),
-                         methods=["POST"])
-
     # -- POST /analyze ------------------------------------------------------
     @app.post("/analyze")
     def analyze():
-        """Run a full pipeline over an uploaded sample
-        ---
-        tags: [analysis]
-        parameters:
-          - name: body
-            in: body
-            required: true
-            description: Raw sample bytes, or a multipart form with a file part
-          - name: pipeline
-            in: query
-            required: false
-            type: string
-            description: Pipeline name, or an inline JSON list of phase tags
-          - name: wait
-            in: query
-            required: false
-            type: boolean
-            description: Block until the run finishes instead of returning 202
-          - name: priority
-            in: query
-            required: false
-            type: integer
-            description: 0 high, 1 normal, 2 low
-          - name: filename
-            in: query
-            required: false
-            type: string
-            description: Override the stored filename
-        responses:
-          200:
-            description: Finished, when wait=true
-          202:
-            description: Queued; poll the task at the Location header
-          400:
-            description: Empty body
-          409:
-            description: Cancelled while wait=true
-          413:
-            description: Sample exceeds the 10 MB limit
-          429:
-            description: Rate limited
-          502:
-            description: The analyzer failed
-          504:
-            description: Timed out
-        """
         blocked = rate("analyze:" + client_ip(), api.args.rate_limit,
                        api.args.rate_window)
         if blocked is not None:
@@ -1092,23 +518,36 @@ def create_app(api: Api) -> Flask:
 
         pipeline = request.args.get("pipeline", "default")
         wait = request.args.get("wait", "false").lower() in ("1", "true", "yes")
-        priority = request.args.get("priority", type=int, default=PRIORITY_NORMAL)
+        filename = request.args.get("filename")
 
-        upload, err = read_upload()
-        if err is not None:
-            return jsonify(err[0]), err[1]
-        data, filename, form = upload
-        if "wait" not in request.args and form.get("wait"):
-            wait = form["wait"].lower() in ("1", "true", "yes")
-        if "pipeline" not in request.args and form.get("pipeline"):
-            pipeline = form["pipeline"]
-        if "priority" not in request.args and form.get("priority"):
-            try:
-                priority = int(form["priority"])
-            except (TypeError, ValueError):
-                pass
+        if request.content_length is None and not request.headers.get("Transfer-Encoding"):
+            return jsonify(error="Content-Length required"), 411
+        if (request.content_length or 0) > MAX_UPLOAD + 64 * 1024:
+            return jsonify(error="sample too large", max_bytes=MAX_UPLOAD,
+                           received_bytes=request.content_length), 413
 
-        code, payload = api.submit(data, filename, pipeline, wait, priority)
+        data = request.get_data(cache=False)  # 413 via MAX_CONTENT_LENGTH
+        multipart = "multipart/form-data" in (request.content_type or "")
+        if multipart:
+            part = request.files.get("file")
+            if part is None and request.files:
+                part = next(iter(request.files.values()))
+            if part is None:
+                return jsonify(error="no file part in multipart body"), 400
+            data = part.read()
+            filename = filename or part.filename
+            if "wait" not in request.args and request.form.get("wait"):
+                wait = request.form["wait"].lower() in ("1", "true", "yes")
+            if "pipeline" not in request.args and request.form.get("pipeline"):
+                pipeline = request.form["pipeline"]
+        filename = filename or request.headers.get("X-Filename") or "sample.bin"
+
+        if not data:
+            return jsonify(error="empty body"), 400
+        if len(data) > MAX_UPLOAD:  # belt and braces (raw bodies)
+            return jsonify(error="sample too large", max_bytes=MAX_UPLOAD), 413
+
+        code, payload = api.submit(data, filename, pipeline, wait)
         resp = jsonify(payload)
         resp.status_code = code
         if code == 202:
@@ -1118,21 +557,6 @@ def create_app(api: Api) -> Flask:
     # -- DELETE -------------------------------------------------------------
     @app.delete("/tasks/<task_id>")
     def task_delete(task_id: str):
-        """Cancel a running task, then purge it
-        ---
-        tags: [tasks]
-        parameters:
-          - name: task_id
-            in: path
-            required: true
-            type: string
-            description: Task handle from POST /analyze
-        responses:
-          200:
-            description: removed, plus whether it was cancelled
-          404:
-            description: Unknown task id
-        """
         task = api.registry.get(task_id)
         if task is None:
             return jsonify(error="unknown task", id=task_id), 404
@@ -1259,33 +683,6 @@ def purge_task(task: Task) -> None:
     shutil.rmtree(task.export_dir, ignore_errors=True)
 
 
-def inline_artifacts(task: Task, keep: tuple[str, ...]) -> dict[str, Any]:
-    """Read the run's produced JSON files whose path matches `keep` and return
-    {relpath: parsed-json} (raw text when not valid JSON)."""
-    out: dict[str, Any] = {}
-    base = task.export_dir
-    if not base.is_dir():
-        return out
-    budget = MAX_INLINE
-    for path in sorted(base.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(base).as_posix()
-        if keep and not any(f in rel for f in keep):
-            continue
-        size = path.stat().st_size
-        if size > budget:
-            out[rel] = {"truncated": True, "bytes": size}
-            continue
-        budget -= size
-        text = path.read_text(encoding="utf-8", errors="replace")
-        try:
-            out[rel] = json.loads(text)
-        except ValueError:
-            out[rel] = text
-    return out
-
-
 def list_artifacts(task: Task) -> list[dict]:
     base = task.export_dir
     if not base.is_dir():
@@ -1303,28 +700,47 @@ def list_artifacts(task: Task) -> list[dict]:
     return out
 
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    def server_setting(name: str, default: str) -> str:
-        if name in os.environ:
-            return os.environ[name]
-        env_file = REPO / ".env"
-        if env_file.is_file():
-            for line in env_file.read_text(encoding="utf-8-sig").splitlines():
-                entry = line.strip()
-                if entry and not entry.startswith("#") and "=" in entry:
-                    key, value = entry.split("=", 1)
-                    if key.strip() == name:
-                        return value.strip().strip("\"'")
-        return default
+def _env(name: str, default: str = "") -> str:
+    """Process env, then the repository `.env`, then the default.
 
+    The panel already resolves settings this way (see panel/config.setting),
+    and this function is the other half of that contract - the panel's own
+    docstring says "same precedence as server.py", which was aspirational until
+    now.
+
+    It mattered: the repository `.env` sets SA_API_PORT=60025, so the panel
+    dialled 60025 while this server bound its own hardcoded default of 60020.
+    Every phase-catalog read came back WinError 10061 and the Analysis
+    Configuration page reported "analyzer offline" against a server that was
+    running perfectly well three lines above it in the same terminal. Two
+    numbers that disagree look exactly like a dead service.
+
+    Only fills in a name that is not already in the environment, so an explicit
+    export still wins and nothing here can override the operator's shell.
+    """
+    if name in os.environ:
+        return os.environ[name]
+    try:
+        raw = (REPO / ".env").read_text(encoding="utf-8-sig")
+    except OSError:
+        return default
+    prefix = name + "="
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].strip().strip("\"'")
+    return default
+
+
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Flask REST API around the static analyzer")
-    p.add_argument("--host", default=server_setting("SA_API_HOST", "127.0.0.1"))
-    p.add_argument("--port", type=int, default=int(server_setting("SA_API_PORT", "60020")))
+    p.add_argument("--host", default=_env("SA_API_HOST", "127.0.0.1"))
+    p.add_argument("--port", type=int, default=int(_env("SA_API_PORT", "60020")))
     p.add_argument("--analyzer",
-                   default=os.environ.get("SA_ANALYZER") or str(
+                   default=_env("SA_ANALYZER") or str(
                        REPO / "build-ucrt" / "static_analyzer.exe"))
     p.add_argument("--max-workers", type=int,
-                   default=int(os.environ.get("SA_MAX_WORKERS", "2")),
+                   default=int(_env("SA_MAX_WORKERS", "2")),
                    help="concurrent analyses (default 2)")
     p.add_argument("--max-queued", type=int, default=8,
                    help="queued tasks accepted beyond the workers before 503")
@@ -1345,57 +761,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def setup_logging(verbose: bool) -> None:
-    """Configure loguru for structured logging."""
-    if logger is None:
-        # Fallback to stdlib logging if loguru not available
-        logging.basicConfig(
-            level=logging.DEBUG if verbose else logging.INFO,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
-        logging.getLogger("werkzeug").setLevel(
-            logging.DEBUG if verbose else logging.WARNING)
-        return
-
-    logger.remove()  # Remove default handler
-    log_level = "DEBUG" if verbose else "INFO"
-    
-    # Console output with colors
-    logger.add(
-        sys.stderr,
-        level=log_level,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-               "<level>{level: <8}</level> | "
-               "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-               "<level>{message}</level>",
-        colorize=True,
-    )
-    
-    # File logging with rotation
-    log_dir = REPO / "logs"
-    log_dir.mkdir(exist_ok=True)
-    logger.add(
-        log_dir / "server_{time:YYYY-MM-DD}.log",
-        level=log_level,
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
-        rotation="1 day",
-        retention="7 days",
-        compression="zip",
-    )
-    
-    # Reduce werkzeug noise
-    logging.getLogger("werkzeug").setLevel(
-        logging.DEBUG if verbose else logging.WARNING)
-
-
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
-    setup_logging(args.verbose)
-    
-    if logger:
-        log = logger.bind(name="analyzer.api")
-    else:
-        log = logging.getLogger("analyzer.api")
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logging.getLogger("werkzeug").setLevel(
+        logging.DEBUG if args.verbose else logging.WARNING)
 
     api = Api(args)
     if not api.analyzer.is_file():
@@ -1403,7 +776,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         if alt:
             api.analyzer = Path(alt)
         else:
-            log.error("analyzer not found: %s (build it or pass --analyzer)", args.analyzer)
+            log.error("analyzer not found: %s (build it or pass --analyzer)",
+                      args.analyzer)
             return 1
     api.warm_caches()
 
@@ -1420,7 +794,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     def on_signal(signum: int, _frame: Any) -> None:
         if api.shutdown_event.is_set():
             return
-        log.info("signal %d: draining (max %.0fs), refusing new work...", signum, args.shutdown_timeout)
+        log.info("signal %d: draining (max %.0fs), refusing new work...",
+                 signum, args.shutdown_timeout)
         api.shutdown_event.set()
 
         def drain_then_stop() -> None:
@@ -1437,13 +812,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                 pass
 
     threading.Thread(target=api.retention_loop, daemon=True).start()
-    print(f"Starting server on {args.host}:{args.port}", flush=True)
-    log.info("listening on http://{}:{} (analyzer={}, workers={}, rate={}/min, max upload={} MB)",
-             args.host, args.port, api.analyzer, args.max_workers, args.rate_limit, MAX_UPLOAD // (1024 * 1024))
+    log.info("listening on http://%s:%d (analyzer=%s, workers=%d, rate=%d/min, "
+             "max upload=%d MB)",
+             args.host, args.port, api.analyzer, args.max_workers,
+             args.rate_limit, MAX_UPLOAD // (1024 * 1024))
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:  # handler replaced; safety net only
-        api.shutdown_event.set()
+            api.shutdown_event.set()
 
     log.info("shutting down...")
     api.stop(args.shutdown_timeout)
@@ -1453,4 +829,4 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

@@ -12,5 +12,27 @@ upload_artifacts: true
 # MEGA destination parent. The bundle lands in <remote_root>/<sample>_artifact.
 remote_root: /
 
+# Seal the bundle to a public key before it is uploaded.
+#
+# Off by default. With this on, the plaintext archive stays on local disk and
+# only the sealed file goes to MEGA - and if sealing fails the upload is
+# ABORTED rather than falling back to plaintext, so a missing or broken key
+# can never quietly downgrade the bundle.
+#
+# Algorithm: X25519 ECDH + HKDF-SHA256 + AES-256-GCM, through the Python
+# 'cryptography' library, entirely in-process. No gpg, no openssl, no shell.
+encrypt_artifacts: true
+
+# Which key to seal to.
+#   user   the operator keypair on this machine (mega/seal.py keygen user)
+#   admin  the lab's public key - only the PUBLIC half is needed to encrypt,
+#          so the admin private key never has to exist on this machine
+encryption_recipient: user
+
+# Where the admin public key lives. Leave empty to use the default location
+# (%APPDATA%\IAProject\bundle-keys\admin.pub) or IA_BUNDLE_ADMIN_PUBKEY.
+# Accepts a base64 X25519 public key or a PEM one.
+admin_public_key: ""
+
 # Maximum upload command runtime in seconds.
 timeout_seconds: 900

@@ -3,6 +3,7 @@
 
 #include "logging.hpp"
 
+#include "app_paths.hpp"
 #include "redact.hpp"
 
 #include <spdlog/async.h>
@@ -259,7 +260,10 @@ struct module_state {
     bool track_resources = true;
     bool atexit_registered = false;
     level min_level_value = level::info;
-    std::filesystem::path directory{"logs"};
+    // Under the AppData root rather than the working directory: run logs are
+    // machine state, and writing them into the source tree kept `git status`
+    // permanently dirty and put a copy of every run into every backup.
+    std::filesystem::path directory = app_paths::logs_root();
     std::string basename{"static_analyzer"};
     std::size_t max_bytes = 200u * 1024u * 1024u;
     std::size_t max_files = 5;
@@ -321,7 +325,7 @@ void collect_host_info(module_state* st) {
 }
 
 struct paths_t {
-    std::filesystem::path directory{"logs"};
+    std::filesystem::path directory = app_paths::logs_root();
     std::string basename{"static_analyzer"};
     std::size_t max_files = 5;
 };

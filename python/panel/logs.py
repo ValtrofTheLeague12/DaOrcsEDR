@@ -35,11 +35,20 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 # `None` means no cap, deliberately. The cap is the bug being fixed; any
 # number here would reintroduce it somewhere new.
 SOURCES: list[tuple[str, str, Path, str, int | None]] = [
-    ("repo", "Analyzer", config.REPO / "logs", "*.log", None),
+    # The analyzer's own logs live under the AppData root now, so it can be run
+    # from anywhere without leaving a log tree in whatever directory it was
+    # started from. `repo` is kept as a source too: an older tree from before
+    # the move, or a run with IA_APPDATA_DIR pointed elsewhere, and silently
+    # not showing the operator their crash dumps would be worse than a
+    # duplicate line.
+    ("appdata", "Analyzer", config.logs_dir(), "*.log", None),
     # trace.txt is a .txt and is the largest file in the tree (~79 MB, still
     # growing, no rotation). It needs its own entry or it is invisible.
-    ("repo-trace", "Analyzer trace", config.REPO / "logs", "*.txt", None),
-    ("repo-jsonl", "Analyzer JSONL", config.REPO / "logs", "*.jsonl", None),
+    ("appdata-trace", "Analyzer trace", config.logs_dir(), "*.txt", None),
+    ("appdata-jsonl", "Analyzer JSONL", config.logs_dir(), "*.jsonl", None),
+    ("repo", "Analyzer (pre-AppData)", config.REPO / "logs", "*.log", None),
+    ("repo-trace", "Analyzer trace (pre-AppData)", config.REPO / "logs", "*.txt", None),
+    ("repo-jsonl", "Analyzer JSONL (pre-AppData)", config.REPO / "logs", "*.jsonl", None),
     ("admin", "Admin terminal", config.ADMIN_TERMINAL / "logs", "*.log", None),
     ("py", "Python API", config.REPO / "python" / "logs", "*.log", None),
     ("py-jsonl", "Python API JSONL", config.REPO / "python" / "logs", "*.jsonl", None),
@@ -67,6 +76,23 @@ def _age(path: Path) -> float:
         return 0.0
 
 
+def _kind(group: str, path: Path) -> str:
+    """Coarse file type, so the viewer can split traces out without guessing.
+
+    `.txt` is treated as a trace regardless of which directory it came from -
+    the analyzer's trace.txt is 79 MB and must never be handed to the log
+    viewer's generic path by accident.
+    """
+    suffix = path.suffix.lower()
+    if group == "repo-trace" or suffix == ".txt":
+        return "trace"
+    if suffix in (".jsonl", ".json"):
+        return "jsonl"
+    if suffix == ".log":
+        return "log"
+    return "other"
+
+
 def _entry(path: Path, root: Path, group: str) -> dict:
     try:
         stat = path.stat()
@@ -79,6 +105,7 @@ def _entry(path: Path, root: Path, group: str) -> dict:
         "id": _id_for(root, path),
         "group": group,
         "name": path.name,
+        "kind": _kind(group, path),
         "bytes": size,
         "modified": mtime,
         "age_seconds": round(_age(path)),
@@ -201,4 +228,93 @@ def tail(key: str, lines: int = 80, max_bytes: int = 512 * 1024) -> dict:
         # Reported so the viewer can say so rather than silently dropping data.
         "ansi_stripped": stripped,
         "jsonl": path.suffix == ".jsonl" or path.name.endswith(".json"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Trace summary.
+#
+# Trace output is a different animal from the rest of the logs and deserves its
+# own panel for the same reason it deserves its own parser: it is enormous,
+# append-only, unrotated, and nobody opens it to read lines. They open it to
+# answer a question - how many runs, how many failed, which stage ate the time -
+# and reading 79 MB to answer that is not a workflow.
+#
+# So this computes the answer over a bounded tail and returns numbers, leaving
+# the raw lines for the viewer beside it. Bounded is the important word: the
+# summary is derived from the same backward window `tail` already reads, so it
+# can never cost more than the view next to it.
+# ---------------------------------------------------------------------------
+
+_LEVEL = re.compile(
+    r"\b(TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL|CRIT|PANIC)\b")
+_BRACKET_TIME = re.compile(r"\[(\d{2})/(\w{3})/(\d{4})(?::(\d{2}):(\d{2}):(\d{2}))?")
+_ISO_TIME = re.compile(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})")
+_LEVEL_TONE = {
+    "error": "danger", "err": "danger", "fatal": "danger", "critical": "danger",
+    "crit": "danger", "panic": "danger", "warn": "warning", "warning": "warning",
+    "notice": "warning", "info": "accent", "information": "accent",
+    "debug": "muted", "trace": "muted", "verbose": "muted",
+}
+
+
+def _minute_key(line: str) -> str | None:
+    """Coarse timestamp bucket, or None when the line carries no time.
+
+    A minute is the right resolution for a run log: it separates the phases of
+    one build without pretending to know when a single syscall happened.
+    """
+    m = _BRACKET_TIME.search(line)
+    if m:
+        return f"{m.group(3)}-{m.group(2)}-{m.group(1)} {m.group(4) or '00'}:{m.group(5) or '00'}"
+    m = _ISO_TIME.search(line)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)} {m.group(4)}:{m.group(5)}"
+    return None
+
+
+def summary(key: str, lines: int = 2000) -> dict:
+    """Counts, level split and a per-minute histogram over a bounded tail."""
+    # Not named `tail`: that would shadow the module-level function this call
+    # needs on the very next line.
+    window = tail(key, lines)
+    if window.get("error"):
+        return {"error": window["error"], "levels": {}, "timeline": [],
+                "sources": [], "total": 0}
+
+    rows: list[str] = window.get("lines") or []
+    levels: dict[str, int] = {}
+    timeline: dict[str, int] = {}
+    sources: dict[str, int] = {}
+
+    for line in rows:
+        hit = _LEVEL.search(line)
+        if hit:
+            name = hit.group(1).lower()
+            levels[name] = levels.get(name, 0) + 1
+        bucket = _minute_key(line)
+        if bucket:
+            timeline[bucket] = timeline.get(bucket, 0) + 1
+        # The logger name, where there is one: "ml.serve:", "[=)", "module.name".
+        m = re.match(r"^[\s\dT:,.\-+]*\[?([A-Za-z_][\w.]*)\]?:", line)
+        if m and m.group(1) not in ("http", "https"):
+            sources[m.group(1)] = sources.get(m.group(1), 0) + 1
+
+    # Sorted by time, and capped, so the chart never gets a thousand bars.
+    buckets = sorted(timeline.items())
+    if len(buckets) > 48:
+        buckets = buckets[-48:]
+
+    return {
+        "id": key,
+        "name": window.get("name"),
+        "sampled_lines": len(rows),
+        "truncated": bool(window.get("truncated")),
+        "bytes": window.get("bytes"),
+        "total": len(rows),
+        "levels": dict(sorted(levels.items(), key=lambda kv: -kv[1])),
+        "timeline": [{"minute": k, "count": v} for k, v in buckets],
+        "sources": [{"name": k, "count": v}
+                    for k, v in sorted(sources.items(), key=lambda kv: -kv[1])[:8]],
+        "tones": {name: _LEVEL_TONE.get(name, "default") for name in levels},
     }

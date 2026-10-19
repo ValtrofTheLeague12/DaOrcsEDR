@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert } from '@heroui/react'
+import { Alert } from '@heroui/react/alert'
 import { auth } from '../api'
 import Icon from '../components/Icon'
 

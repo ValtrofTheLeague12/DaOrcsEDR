@@ -15,13 +15,19 @@ from pathlib import Path
 from colorama import Fore, Style, init
 from loguru import logger
 
+# Generated state goes under the AppData root, not the working directory. The
+# analyzer spawns this script from python/, so a relative "logs" and "cache" put
+# a log tree and a cache tree inside the source repo.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from panel.config import cache_dir as appdata_cache, logs_dir as appdata_logs  # noqa: E402
+
 init(autoreset=True)
 
 URL_FILE   = Path("url")
-CACHE_DIR  = Path("cache")
+CACHE_DIR  = appdata_cache()
 MALAPI_DIR = Path("malapi")
 LOTS_DIR   = Path("lots")
-LOG_DIR    = Path("logs")
+LOG_DIR    = appdata_logs()
 LOG_FILE   = LOG_DIR / "logs.jsonl"
 WSL_DISTRO = None
 DEPTH      = 3

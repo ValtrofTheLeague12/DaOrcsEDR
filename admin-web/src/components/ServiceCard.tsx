@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Card, Chip } from '@heroui/react'
+import { Card } from '@heroui/react/card'
+import { Chip } from '@heroui/react/chip'
 import { Sparkline, type SparkTone } from './Stat'
 import { NetStrip } from './NetFacts'
 import { ms } from '../lib/format'

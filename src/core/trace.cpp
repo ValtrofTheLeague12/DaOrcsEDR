@@ -2,6 +2,8 @@
 
 #include "trace.hpp"
 
+#include "app_paths.hpp"
+
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -22,11 +24,12 @@ std::filesystem::path trace_path() {
       override_path != nullptr && *override_path != '\0') {
     return override_path;
   }
-#ifdef STATIC_ANALYZER_SOURCE_DIR
-  return std::filesystem::path(STATIC_ANALYZER_SOURCE_DIR) / "logs" / "trace.txt";
-#else
-  return std::filesystem::current_path() / "logs" / "trace.txt";
-#endif
+  // Under the AppData root like every other generated file. This used to be
+  // <source>/logs, which meant the 512 MB trace buffer landed in the repo - and
+  // since the file is pre-sized to its full buffer, one crashed run left half a
+  // gigabyte sitting in the working tree.
+  app_paths::ensure(app_paths::logs_root());
+  return app_paths::logs_root() / "trace.txt";
 }
 }  // namespace
 
@@ -57,6 +60,23 @@ extern "C" void trace_write_text(std::string_view text) {
   }
 }
 
+extern "C" void trace_flush() {
+  std::lock_guard<std::mutex> lock(trace_mutex);
+  if (trace_file.is_open()) trace_file.flush();
+}
+
+std::string trace_path_name() {
+  return trace_file.is_open() ? trace_path().string() : std::string();
+}
+
+std::size_t trace_used_bytes() {
+  if (trace_file.is_open()) {
+    const std::streampos pos = trace_file.tellp();
+    if (pos > 0) return static_cast<std::size_t>(pos);
+  }
+  return 0;
+}
+
 extern "C" void __cyg_profile_func_enter(void*, void*) {}
 extern "C" void __cyg_profile_func_exit(void*, void*) {}
 
@@ -73,6 +93,8 @@ std::string trace_symbolize(const void*) { return {}; }
 #else
 
 #include "trace.hpp"
+
+#include "app_paths.hpp"
 
 #include <windows.h>
 #include <dbghelp.h>
@@ -108,17 +130,14 @@ void*       s_trace_map_view = nullptr;
 std::size_t s_trace_map_cap  = 0;
 std::size_t s_trace_used     = 0;
 std::size_t s_trace_flushed  = 0;
+bool        s_trace_truncated = false;
 std::string s_trace_path;
 
 std::string trace_path() {
-#ifdef STATIC_ANALYZER_SOURCE_DIR
-    const std::filesystem::path root(STATIC_ANALYZER_SOURCE_DIR);
-#else
-    const std::filesystem::path root = std::filesystem::current_path();
-#endif
     const char* override_path = std::getenv("TRACE_FILE");
     if (override_path != nullptr && *override_path != '\0') return override_path;
-    return (root / "logs" / "trace.txt").string();
+    app_paths::ensure(app_paths::logs_root());
+    return (app_paths::logs_root() / "trace.txt").string();
 }
 
 constexpr std::size_t k_trace_map_size    = 512ull * 1024ull * 1024ull;
@@ -236,7 +255,6 @@ TRACE_NO_INSTRUMENT void load_symbols_from_self() {
             }
 
             if (raw_name && raw_name[0] != '\0') {
-                char demangled[1024] = {};
                 int status = 0;
                 char* dm = abi::__cxa_demangle(raw_name, nullptr, nullptr, &status);
                 const char* final_name = (status == 0 && dm) ? dm : raw_name;
@@ -326,7 +344,39 @@ TRACE_NO_INSTRUMENT void flush_range_to_disk_locked() {
 
 TRACE_NO_INSTRUMENT void write_line_locked(const char* fmt, ...) {
     if (s_trace_file == INVALID_HANDLE_VALUE) return;
-    if (s_trace_used >= k_trace_map_size) return;
+
+    // A trace that silently stops is worse than one that ends: the reader sees
+    // a file that just stops mid-run and cannot tell a quiet phase from a lost
+    // one. So the first line that does not fit carries the fact that the rest
+    // was dropped, once and only.
+    if (s_trace_used >= k_trace_map_size) {
+        if (!s_trace_truncated) {
+            s_trace_truncated = true;
+            char note[256];
+            const int n = std::snprintf(
+                note, sizeof(note),
+                "[trace] TRUNCATED at %llu bytes - the %llu MB buffer is full and "
+                "everything after this line was dropped\n",
+                static_cast<unsigned long long>(k_trace_map_size),
+                static_cast<unsigned long long>(k_trace_map_size >> 20));
+            if (n > 0) {
+                const std::size_t need = std::min<std::size_t>(
+                    static_cast<std::size_t>(n), k_trace_map_size - s_trace_used);
+                if (s_trace_map_view != nullptr) {
+                    std::memcpy(static_cast<char*>(s_trace_map_view) + s_trace_used, note, need);
+                } else {
+                    LARGE_INTEGER offset{};
+                    offset.QuadPart = static_cast<LONGLONG>(s_trace_used);
+                    SetFilePointerEx(s_trace_file, offset, nullptr, FILE_BEGIN);
+                    DWORD written = 0;
+                    WriteFile(s_trace_file, note, static_cast<DWORD>(need), &written, nullptr);
+                }
+                s_trace_used += need;
+                flush_range_to_disk_locked();
+            }
+        }
+        return;
+    }
 
     char buf[640];
     va_list args;
@@ -377,6 +427,7 @@ extern "C" TRACE_NO_INSTRUMENT void trace_enable() {
         s_trace_path = trace_path();
         s_trace_used = 0;
         s_trace_flushed = 0;
+        s_trace_truncated = false;
         std::error_code ec;
         const std::filesystem::path parent = std::filesystem::path(s_trace_path).parent_path();
         if (!parent.empty()) std::filesystem::create_directories(parent, ec);
@@ -429,6 +480,16 @@ extern "C" TRACE_NO_INSTRUMENT void trace_enable() {
     }
 
     tracing_enabled.store(true, std::memory_order_release);
+
+    // The per-thread depth stack is not reset here on purpose for the normal
+    // single-enable case, but a second enable after a disable would otherwise
+    // inherit whatever depth the thread happened to be at, and every later
+    // depth= number would be offset by it. Resetting here is a single store per
+    // thread and cannot be wrong.
+    t_depth = 0;
+    t_cached_func = nullptr;
+    t_cached_idx = -1;
+
     ReleaseSRWLockExclusive(&trace_lock);
 }
 
@@ -458,6 +519,27 @@ extern "C" TRACE_NO_INSTRUMENT void trace_disable() {
     }
     ReleaseSRWLockExclusive(&trace_lock);
 }
+
+extern "C" TRACE_NO_INSTRUMENT void trace_flush() {
+    // The crash handler calls this before it writes anything. Without it the
+    // last megabyte of trace - the calls immediately before the fault - is
+    // still sitting in the mapped view when the process dies.
+    if (!tracing_enabled.load(std::memory_order_acquire) &&
+        s_trace_used == s_trace_flushed) {
+        return;
+    }
+    AcquireSRWLockExclusive(&trace_lock);
+    flush_range_to_disk_locked();
+    if (s_trace_file != INVALID_HANDLE_VALUE) FlushFileBuffers(s_trace_file);
+    ReleaseSRWLockExclusive(&trace_lock);
+}
+
+std::string trace_path_name() {
+    if (s_trace_file == INVALID_HANDLE_VALUE) return {};
+    return s_trace_path;
+}
+
+std::size_t trace_used_bytes() { return s_trace_used; }
 
 extern "C" TRACE_NO_INSTRUMENT void trace_write_text(std::string_view text) {
     if (text.empty()) return;

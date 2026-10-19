@@ -5,3 +5,7 @@ name: capa
 description: "capa capability detection (rule-based: network, persistence, anti-analysis)"
 
 phases: [capa]
+
+environment:
+  CTI_SKIP: 1
+  ML_SKIP: 1

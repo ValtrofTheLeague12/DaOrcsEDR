@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #include "ml_api.hpp"
 #include "radare2_runner.hpp"
 #include "report.hpp"
+#include "yara_gen.hpp"
 
 namespace pipeline {
 
@@ -76,6 +78,12 @@ struct context {
   extractor::extraction_result_t full{};
   cti::report                    cti_report{};
   ml_api::score_result_t         ml_score{};
+    // YARA rule GENERATION (not the yara scan, which is inside the extraction
+    // result). `attempted` is false when the phase never ran; a missing
+    // yarGen-Go checkout is recorded as a skip reason rather than a failure,
+    // because it is an optional tool rather than a broken install.
+    yara_gen::result_t             yara_gen_result{};
+    std::string                    yara_gen_skip_reason;
   // Why the ML phase did not run, empty once it did. run_summary() prints this
   // so an absent model reads as "skipped, and here is why" rather than as a
   // missing section.
@@ -101,6 +109,20 @@ struct context {
   const planner::pipeline_config* active_plan = nullptr;
   // One bit per planner::phase_id, set after each configured phase returns.
   std::uint64_t ran_mask = 0;
+  // The same bits, but only for phases THIS process executed. A resumed run
+  // sets ran_mask for skipped phases too - a phase gated on "did radare2 run?"
+  // must not change its behaviour because the work happened in an earlier
+  // process - and run_summary.json reports this one instead, because that is
+  // the honest answer to "what did this run do".
+  std::uint64_t executed_mask = 0;
+  // Set when the run stopped because the operator asked it to (Ctrl+C), as
+  // opposed to finishing or failing.
+  bool interrupted = false;
+  // Phases inherited from an earlier run of this sample, and where that list
+  // came from ("--resume", "--from capa", a checkpoint path). Null when this
+  // was an ordinary run.
+  std::optional<std::vector<std::string>> resumed_phases;
+  std::string resume_source;
 
   // -------- phase outputs kept for partial-pipeline export --------
   // The default pipeline re-reads these from ctx.full (produced by
@@ -115,6 +137,10 @@ struct context {
   std::vector<std::string>     exported_artifacts;
   bool                         artifact_bundle_created = false;
   bool                         artifact_bundle_uploaded = false;
+  // Whether the uploaded bytes were sealed to a public key. Recorded in the
+  // run manifest because "it was uploaded" and "it was uploaded in the clear"
+  // are different facts about the same run.
+  bool                         artifact_bundle_encrypted = false;
   std::string                  artifact_action_error;
 };
 
@@ -154,6 +180,7 @@ void run_cminer(context& ctx);
 void run_error_recovery(context& ctx);
 void run_cti(context& ctx);
 void run_ml_score(context& ctx);            // EMBER2024 model, via ml/serve.py
+void run_yara_gen(context& ctx);            // yarGen-Go rule GENERATION, opt-in
 void run_export(context& ctx);            // report files + CTI JSON + STIX + MalAPI
 void run_dashboard(context& ctx);
 void run_sanity(context& ctx);

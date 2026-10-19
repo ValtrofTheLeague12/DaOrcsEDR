@@ -1,4 +1,6 @@
-import { Card, Chip, Alert } from '@heroui/react'
+import { Card } from '@heroui/react/card'
+import { Chip } from '@heroui/react/chip'
+import { Alert } from '@heroui/react/alert'
 import Icon from '../components/Icon'
 import VmListPanel from '../components/VmListPanel'
 import { VM_MACHINES, VM_TARGETS, guestsOf, type VmTarget } from '../lib/vms'

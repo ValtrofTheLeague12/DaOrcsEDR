@@ -29,6 +29,58 @@ ADMIN_TERMINAL = REPO / "admin-terminal"
 COMPOSE_FILE = REPO / "compose.yaml"
 KAFKA_COMPOSE_FILE = REPO / "kafka-agent" / "docker-compose.yaml"
 
+# Everything the project GENERATES lives under one AppData root, named after the
+# application basename rather than after any one component. This mirrors
+# include/core/app_paths.hpp on the C++ side - the two must agree, because the
+# panel tails the analyzer's logs and neither should have to care which language
+# wrote them.
+#
+#     %APPDATA%/IAProject/logs          run logs, crash reports, trace.txt
+#     %APPDATA%/IAProject/cache         provider and tool caches
+#     %APPDATA%/IAProject/panel-cache   this panel's own cache
+#     %APPDATA%/IAProject/bundle-keys   evidence-bundle encryption keys
+#     %APPDATA%/IAProject/mega-secrets  sealed MEGA credentials
+#
+# exports/ and data/ deliberately stay in the tree: results are what an operator
+# browses and hands to someone else, and the corpus is checked in.
+APP_NAME = "IAProject"
+
+
+def appdata_root() -> Path:
+    """The one directory every generated file belongs under.
+
+    IA_APPDATA_DIR overrides it, which is what the tests use to get a throwaway
+    tree instead of writing into the real profile.
+    """
+    override = os.environ.get("IA_APPDATA_DIR")
+    if override:
+        return Path(override)
+    if os.name == "nt":
+        base = os.environ.get("APPDATA")
+        if base:
+            return Path(base) / APP_NAME
+        return Path.home() / "AppData" / "Roaming" / APP_NAME
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if xdg:
+        return Path(xdg) / APP_NAME
+    return Path.home() / ".local" / "share" / APP_NAME
+
+
+def logs_dir() -> Path:
+    """Where the analyzer writes logs, dumps, trace and resume checkpoints."""
+    return appdata_root() / "logs"
+
+
+def cache_dir() -> Path:
+    """Regenerable provider/tool caches."""
+    return appdata_root() / "cache"
+
+
+def panel_cache_dir() -> Path:
+    """This panel's own cache. Not machine state the analyzer knows about."""
+    return appdata_root() / "panel-cache"
+
+
 PANEL_HOST = "127.0.0.1"
 PANEL_PORT_DEFAULT = 60100
 
@@ -65,11 +117,21 @@ def setting(name: str, default: str = "") -> str:
         raw = ENV_FILE.read_text(encoding="utf-8-sig")
     except OSError:
         return default
-    prefix = name + "="
     for line in raw.splitlines():
         stripped = line.strip()
-        if stripped.startswith(prefix):
-            return stripped[len(prefix):].strip().strip("\"'")
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Split on the first `=` and compare the whole key, rather than matching
+        # a `name=` prefix.
+        #
+        # The prefix form was quietly wrong in two ways: it ignored any spaces a
+        # human wrote around the `=` - so `SA_API_PORT = 60025` fell through to
+        # the default with nothing to say so - and it could satisfy a request for
+        # SA_API_PORT from a line reading SA_API_PORT_EXTRA=...
+        key, sep, value = stripped.partition("=")
+        if not sep or key.strip() != name:
+            continue
+        return value.strip().strip("\"'")
     return default
 
 

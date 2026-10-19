@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
-import { Card, Chip, Alert } from '@heroui/react'
+import { Card } from '@heroui/react/card'
+import { Chip } from '@heroui/react/chip'
+import { Alert } from '@heroui/react/alert'
 import { api, usePoll } from '../api'
 import Icon from '../components/Icon'
 import { StatTile, Sparkline } from '../components/Stat'
@@ -542,10 +544,10 @@ export default function System() {
 
           {/* --- where the disk is ----------------------------------------- */}
           <Section title="Storage" note={`${data.disks.length} fixed volume(s)`}>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="storage-volume-grid">
               {data.disks.map((d) => (
-                <Card key={d.path} className="w-full">
-                  <Card.Header className="flex items-center justify-between gap-3">
+                <Card key={d.path} className="storage-volume-card w-full">
+                  <Card.Header className="storage-volume-header flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       {/* Drive letter, not the raw path. "C:" is what an operator
                           recognises; "C:\Users\<you>\Desktop\IAProject" is a
@@ -573,13 +575,13 @@ export default function System() {
                       {d.used_percent === null ? '—' : `${d.used_percent}% used`}
                     </Chip>
                   </Card.Header>
-                  <Card.Content className="flex flex-col gap-2">
+                  <Card.Content className="storage-volume-content flex flex-col gap-2">
                     <Meter
                       label="Used"
                       value={d.used_percent}
                       detail={`${gb(d.used_bytes)} used · ${gb(d.free_bytes)} free of ${gb(d.total_bytes)}`}
                     />
-                    <div className="flex items-baseline justify-between gap-2 border-t border-default-100 pt-2">
+                    <div className="storage-volume-free flex items-baseline justify-between gap-2 border-t border-default-100 pt-2">
                       <span className="text-[11px] text-default-500">Free</span>
                       <span className="font-mono text-[11px] tabular-nums">
                         {bytes(d.free_bytes)} of {bytes(d.total_bytes, 0)}

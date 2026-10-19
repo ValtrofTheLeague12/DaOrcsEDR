@@ -40,6 +40,12 @@ void info(std::string_view message) {
 void enable_utf8_output() {
 #ifdef _WIN32
   SetConsoleOutputCP(CP_UTF8);
+  const HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+  DWORD mode = 0;
+  if (output != nullptr && output != INVALID_HANDLE_VALUE &&
+      GetConsoleMode(output, &mode)) {
+    SetConsoleMode(output, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+  }
 #endif
 }
 

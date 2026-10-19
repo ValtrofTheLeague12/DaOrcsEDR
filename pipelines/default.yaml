@@ -21,3 +21,7 @@ stages:
 
   - name: reporting
     phases: [export, dashboard, sanity, summary]
+
+environment:
+  CTI_SKIP: 1
+  ML_SKIP: 1

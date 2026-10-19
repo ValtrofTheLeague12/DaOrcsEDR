@@ -39,13 +39,16 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import sys
 import tarfile
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import megacmd  # noqa: E402
+import seal    # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
@@ -132,9 +135,39 @@ def build_archive(source: Path, archive: Path) -> tuple[int, int, int]:
 
 
 def write_readme(out_dir: Path, artifact: str, source: Path, archive: Path,
-                 digest: str, files: int, raw_bytes: int, archive_bytes: int) -> Path:
+                 digest: str, files: int, raw_bytes: int, archive_bytes: int,
+                 encryption: dict | None = None) -> Path:
     now = datetime.now(timezone.utc).astimezone()
     readme = out_dir / "README.txt"
+    if encryption:
+        crypto = f"""
+Encryption
+----------
+This bundle was SEALED before upload. Only the `{encryption['sealed_file']}`
+file went to remote storage; the archive above never left this host.
+
+    algorithm        : {encryption['algorithm']}
+    format           : {encryption['format']}
+    sealed to        : {encryption['recipient']} key {encryption['recipient_key_id']}
+    sealed file      : {encryption['sealed_file']} ({encryption['sealed_bytes']} bytes)
+    sealed sha256    : {sha256_file(out_dir / encryption['sealed_file'])}
+    chunks           : {encryption['chunks']} x {encryption['chunk_bytes']} bytes
+    library          : python 'cryptography' - X25519 ECDH + HKDF-SHA256 +
+                       AES-256-GCM, entirely in-process (no gpg/openssl)
+
+To open it, on a machine holding the matching PRIVATE key:
+
+    python mega/seal.py decrypt {encryption['sealed_file']}
+
+A private key that is lost is a bundle that is gone. There is no recovery
+path, by design.
+"""
+    else:
+        crypto = """
+Encryption
+----------
+NOT sealed. The archive above was uploaded as-is.
+"""
     readme.write_text(
         f"""Evidence bundle - {artifact}
 {'=' * (18 + len(artifact))}
@@ -155,7 +188,7 @@ archive bytes     : {archive_bytes}
 SHA-256           : {digest}
                    {archive.name}.sha256 holds the same digest in
                    `<digest>  <filename>` form, so `sha256sum -c` verifies it.
-
+{crypto}
 Restore
 -------
     sha256sum -c {archive.name}.sha256
@@ -169,7 +202,8 @@ SHA-256. A mismatch means the evidence changed, not that the tooling drifted.
 
 
 def write_manifest(out_dir: Path, artifact: str, source: Path, archive: Path,
-                   digest: str, members: list[tuple[str, int]]) -> Path:
+                   digest: str, members: list[tuple[str, int]],
+                   encryption: dict | None = None) -> Path:
     now = datetime.now(timezone.utc).astimezone()
     manifest = {
         "artifact": artifact,
@@ -182,7 +216,24 @@ def write_manifest(out_dir: Path, artifact: str, source: Path, archive: Path,
         "file_count": len(members),
         "files": [{"path": p, "size": s} for p, s in members],
         "tool": "mega/upload.py",
+        # Machine-readable counterpart of the README's Encryption section: a
+        # consumer that has the manifest can tell whether the remote copy is
+        # readable by anyone or only by a key holder.
+        "encrypted": bool(encryption),
     }
+    if encryption:
+        manifest["encryption"] = {
+            "algorithm": encryption["algorithm"],
+            "format": encryption["format"],
+            "recipient": encryption["recipient"],
+            "recipient_key_id": encryption["recipient_key_id"],
+            "sealed_file": encryption["sealed_file"],
+            "sealed_bytes": encryption["sealed_bytes"],
+            "sealed_sha256": sha256_file(out_dir / encryption["sealed_file"]),
+            "chunks": encryption["chunks"],
+            "chunk_bytes": encryption["chunk_bytes"],
+            "library": "python-cryptography",
+        }
     path = out_dir / "manifest.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return path
@@ -220,6 +271,40 @@ def upload_megacmd(local_dir: Path, remote_root: str, timeout: int) -> str:
     megacmd.run("mkdir", "-p", dest, timeout=megacmd.QUICK_TIMEOUT)
     megacmd.run("put", str(local_dir), dest, timeout=timeout)
     return f"{dest}/{local_dir.name}".replace("//", "/")
+
+
+def stage_for_upload(out_dir: Path, artifact: str, shipped: Path,
+                     shipped_name: str, encryption: dict | None):
+    """The folder to actually hand to MEGAcmd, and the temp root to clean up.
+
+    `put <folder>` uploads EVERYTHING in the folder. When the bundle is sealed
+    that folder still holds the plaintext archive, so uploading it as-is would
+    put the evidence on a third-party account in the clear next to the
+    ciphertext - the protection would be decorative. So when sealing, only the
+    shippable files are staged and the plaintext is left behind on local disk.
+
+    The staged folder MUST be called `<artifact>_artifact`: MEGAcmd nests the
+    upload on the folder NAME, so the remote path is derived from it. That is
+    also why the staging root is a temp directory rather than exports/ - a
+    differently-named sibling would land remotely as `.quick_test_artifact.upload`
+    and break every consumer that expects `quick_test_artifact`.
+
+    Returns (path, temp_root_or_None).
+    """
+    if not encryption:
+        return out_dir, None
+
+    root = Path(tempfile.mkdtemp(prefix="ia-bundle-upload-"))
+    stage = root / f"{artifact}_artifact"
+    stage.mkdir()
+    for name in (shipped_name, f"{shipped_name}.sha256", "manifest.json", "README.txt"):
+        src = out_dir / name
+        if not src.is_file():
+            raise BundleError(f"refusing to upload: {name} is missing from {out_dir}")
+        # copy2 rather than a link: the stage has to be deletable afterwards
+        # without any chance of touching the real bundle.
+        shutil.copy2(src, stage / name)
+    return stage, root
 
 
 def remote_exists(remote_path: str) -> bool:
@@ -262,6 +347,16 @@ def main() -> int:
                     help="also build a second bundle and prove the checksum reproduces")
     ap.add_argument("--timeout", type=int, default=megacmd.DEFAULT_TIMEOUT,
                     help="seconds to allow the MEGAcmd upload")
+    ap.add_argument("--encrypt", dest="encrypt", action="store_true", default=None,
+                    help="seal the archive to a recipient public key before upload "
+                         "(X25519 + HKDF-SHA256 + AES-256-GCM, in-process)")
+    ap.add_argument("--no-encrypt", dest="encrypt", action="store_false",
+                    help="upload the archive as-is, even when config asks for sealing")
+    ap.add_argument("--recipient", choices=["user", "admin"], default="user",
+                    help="seal to this machine's operator key, or to the lab admin's "
+                         "public key (only the public half is needed)")
+    ap.add_argument("--admin-key", default=None,
+                    help="path to the admin public key (base64 or PEM)")
     ap.add_argument("--expect-account", default=None,
                     help="refuse to upload unless MEGAcmd is logged in as this "
                          "address (default: the email in the sealed credential)")
@@ -286,16 +381,52 @@ def main() -> int:
         print(f"[+] {archive.name}: {files} files, {raw_bytes} bytes source -> {archive_bytes} bytes")
 
         digest = sha256_file(archive)
-        (out_dir / f"{archive.name}.sha256").write_text(
-            f"{digest}  {archive.name}\n", encoding="ascii")
-
         members = [(str(rel).replace("\\", "/"), p.stat().st_size)
                    for p, rel in collect(source)]
-        readme = write_readme(out_dir, artifact, source, archive, digest, files, raw_bytes, archive_bytes)
-        manifest = write_manifest(out_dir, artifact, source, archive, digest, members)
 
         print(f"[+] sha256  {digest}")
-        print(f"[+] wrote   {readme.name}, {manifest.name}, {archive.name}.sha256")
+
+        # Sealing happens before the manifest and README are written, because
+        # both have to record who the bundle was sealed to and what the sealed
+        # bytes hash to. Writing them first would produce a bundle whose own
+        # paperwork says it is plaintext.
+        encryption = None
+        if args.encrypt:
+            # Seal BEFORE anything leaves the machine. The plaintext archive
+            # stays local; only the sealed file is a candidate for upload.
+            recipient = (seal.admin_recipient(Path(args.admin_key))
+                         if args.recipient == "admin" else seal.user_recipient())
+            print(f"[+] sealing to the '{args.recipient}' key "
+                  f"{seal.key_id_hex(recipient.public)}")
+            try:
+                encryption = seal.seal_file(archive, recipient)
+            except seal.SealError as exc:
+                # A failed seal must stop the upload. Falling through to "upload
+                # the plaintext anyway" is the one outcome that would silently
+                # undo the protection the operator asked for.
+                print(f"upload: could not seal the bundle: {exc}", file=sys.stderr)
+                print("        Refusing to upload the unencrypted archive.", file=sys.stderr)
+                return 4
+            print(f"[+] sealed  {encryption['sealed_file']} "
+                  f"({encryption['chunks']} chunk(s))")
+
+        # What actually goes to the remote, and the digest that describes it.
+        if encryption:
+            shipped = out_dir / encryption["sealed_file"]
+            shipped_name = encryption["sealed_file"]
+            shipped_digest = sha256_file(shipped)
+        else:
+            shipped = archive
+            shipped_name = archive.name
+            shipped_digest = digest
+        (out_dir / f"{shipped_name}.sha256").write_text(
+            f"{shipped_digest}  {shipped_name}\n", encoding="ascii")
+
+        readme = write_readme(out_dir, artifact, source, archive, digest, files,
+                              raw_bytes, archive_bytes, encryption)
+        manifest = write_manifest(out_dir, artifact, source, archive, digest,
+                                  members, encryption)
+        print(f"[+] wrote   {readme.name}, {manifest.name}, {shipped_name}.sha256")
 
         if args.dry_run:
             again = out_dir / f"{artifact}_evidence.recheck.tar.gz"
@@ -311,7 +442,8 @@ def main() -> int:
         return 1
 
     if args.no_upload:
-        print("[+] --no-upload: bundle is local only")
+        print("[+] --no-upload: bundle is local only"
+              + (f" (sealed as {encryption['sealed_file']})" if encryption else ""))
         return 0
 
     remote_root = args.remote_root or "/"
@@ -344,18 +476,30 @@ def main() -> int:
         print(f"[+] session {live}")
 
     expected_remote = f"{remote_root.rstrip('/')}/{artifact}_artifact".replace("//", "/")
+    stage = None
     try:
-        print(f"[+] uploading {out_dir.name}/ -> {expected_remote}")
-        landed = upload_megacmd(out_dir, remote_root, args.timeout)
+        print(f"[+] uploading {out_dir.name}/ -> {expected_remote}"
+              + (f"  (sealed: {shipped_name})" if encryption else ""))
+        to_send, stage = stage_for_upload(out_dir, artifact, shipped, shipped_name, encryption)
+        landed = upload_megacmd(to_send, remote_root, args.timeout)
         if not remote_exists(landed):
             print(f"upload: MEGAcmd reported success but {landed} is not there.",
                   file=sys.stderr)
             return 1
         print(f"[+] uploaded: {landed}")
+        if encryption:
+            print(f"[+] encrypted for the '{encryption['recipient']}' key "
+                  f"{encryption['recipient_key_id']}")
         return 0
     except megacmd.MegaError as exc:
         print(f"upload: {exc}", file=sys.stderr)
         return 1
+    except BundleError as exc:
+        print(f"upload: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if stage is not None:
+            shutil.rmtree(stage, ignore_errors=True)
 
 
 if __name__ == "__main__":

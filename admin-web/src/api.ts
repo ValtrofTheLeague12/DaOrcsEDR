@@ -1,23 +1,37 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
+  AnalysisConfig,
+  ArtifactExportJob,
   ArtifactsSnapshot,
+  AnalyzerBuildJob,
+  BuildInspect,
+  BuildJob,
+  BuildOverview,
+  BuildTestCatalogue,
+  UtilsOverview,
+  DepRefresh,
   ClamdResults,
   ClamdStatus,
+  ComposeFile,
   ContainerList,
   DocsCatalog,
   LogList,
+  LogSummary,
   LogTail,
   NetMap,
   Overview,
   PanelConfig,
+  PipelineConfig,
   QilingGuestMetrics,
   QilingRootfsJob,
   QilingRuns,
   QilingVmStatus,
   Stats,
   SystemInfo,
+  TraceMetrics,
   VmActionResult,
   VmList,
+  VmMetrics,
 } from './types'
 
 // Every call is same-origin and relative. The dev server proxies /api to the
@@ -58,6 +72,10 @@ export const auth = {
 export const api = {
   overview: () => json<Overview>('/api/overview'),
   config: () => json<PanelConfig>('/api/config'),
+  // Pipelines, the phase catalog and the artifact/MEGA upload options - what the
+  // analyzer will do, read from the YAML the analyzer itself reads. Static
+  // config rather than live state, so it is polled slowly and refreshed by hand.
+  analysisConfig: () => json<AnalysisConfig>('/api/analysis/config'),
   system: () => json<SystemInfo>('/api/system'),
   stats: () => json<Stats>('/api/stats'),
   logs: () => json<LogList>('/api/logs'),
@@ -65,6 +83,15 @@ export const api = {
   // interpolate without encoding - but encode anyway; it costs nothing.
   tail: (id: string, lines = 80) =>
     json<LogTail>(`/api/logs/${encodeURIComponent(id)}/tail?lines=${lines}`),
+  // Level counts and a per-minute volume histogram over the same bounded
+  // window the tail reads, so the header chips and the lines below them can
+  // never disagree about what was counted.
+  logSummary: (id: string, lines = 2000) =>
+    json<LogSummary>(`/api/logs/${encodeURIComponent(id)}/summary?lines=${lines}`),
+  // Native analyzer trace metrics. A separate endpoint because a trace is not a
+  // log: it has no levels and no timestamps, only ENTER/LEAVE call-graph pairs.
+  traceMetrics: (id: string) =>
+    json<TraceMetrics>(`/api/trace/${encodeURIComponent(id)}`),
   containers: () => json<ContainerList>('/api/containers'),
   // Topology of the host, its networks, VMs and containers, as a graph.
   netmap: () => json<NetMap>('/api/netmap'),
@@ -101,9 +128,22 @@ export const api = {
       `/api/containers/${encodeURIComponent(project)}/${encodeURIComponent(service)}/${action}`,
       { method: 'POST' },
     ),
+  // A build runs for minutes and its log is the useful part, so this returns a
+// job handle immediately and the UI polls containerBuildJob for output.
+containerBuild: (project: string) =>
+    json<{ ok: boolean; job_id: string; reused: boolean }>(
+      `/api/containers/${encodeURIComponent(project)}/build`,
+      { method: 'POST' },
+    ),
+  containerBuildJob: (jobId: string) =>
+    json<BuildJob>(`/api/containers/build/${encodeURIComponent(jobId)}`),
+  containerCompose: (project: string) =>
+    json<ComposeFile>(
+      `/api/containers/${encodeURIComponent(project)}/compose`,
+    ),
   // Local evidence bundles, their MEGA copies, and the effective throughput
-  // between consecutive uploads. Read-only; uploading stays a CLI action
-  // because it pushes analysis evidence to cloud storage.
+  // between consecutive uploads. Uploading stays a CLI action; recovery is
+  // exposed separately because it downloads and verifies an existing bundle.
   // `refresh` bypasses the server's 5-minute MEGA cache - the Rescan button
   // needs to see an upload that just happened, not one from five minutes ago.
   artifacts: (remoteRoot = '/', refresh = false) =>
@@ -111,18 +151,156 @@ export const api = {
       `/api/artifacts?remote_root=${encodeURIComponent(remoteRoot)}` +
         (refresh ? '&refresh=1' : ''),
     ),
+  artifactArchiveUrl: (name: string) =>
+    `/api/artifacts/local/${encodeURIComponent(name)}/archive`,
+  recoverArtifact: (name: string, remoteRoot = '/') =>
+    json<{ ok: boolean; detail: string }>('/api/artifacts/recover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, remote_root: remoteRoot }),
+    }),
+  // The mirror of recover: push a bundle that is on disk up to MEGA. Job-based,
+  // because sealing a large bundle and pushing it takes minutes and the log is
+  // the useful part. Gated server-side on `upload_artifacts` in
+  // config/artifacts.yaml, which is why this can come back 403.
+  exportArtifact: (name: string, remoteRoot = '/') =>
+    json<{ ok: boolean; job_id: string; reused: boolean }>('/api/artifacts/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, remote_root: remoteRoot }),
+    }),
+  artifactExportJob: (jobId: string) =>
+    json<ArtifactExportJob>(`/api/artifacts/export/${encodeURIComponent(jobId)}`),
   // Every registered VirtualBox machine with its address and live services.
-  // One showvminfo per machine, so this is heavier than the netmap poll.
+  // One showvminfo per machine, so this is heavier than the netmap poll. Guest
+  // metrics are already attached per machine from the cached SSH/SFTP
+  // collection, so no extra request is needed to draw the gauges.
   vms: () => json<VmList>('/api/vms'),
+  // Standalone metrics endpoint, for anything that wants the collector without
+  // the whole fleet listing around it.
+  vmMetrics: () => json<VmMetrics>('/api/vm-metrics'),
   // The machine name goes in the BODY, not the path. A VirtualBox machine name
   // is free text - it can contain slashes and spaces - so putting it in a URL
   // means encoding problems on the way out and a name that never got quoted on
   // the way in. The backend checks it against the registered list regardless.
-  vmAction: (name: string, action: 'start' | 'stop') =>
+  //
+  // `headless` is only read for `start`. It is omitted from the body entirely
+  // when true, so the default a server-side client would apply is exactly the
+  // one being sent - the request for the common case is byte-identical to what
+  // it was before this parameter existed.
+  vmAction: (name: string, action: 'start' | 'stop', headless = true) =>
     json<VmActionResult>(`/api/vms/${action}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, ...(action === 'start' && !headless ? { headless: false } : {}) }),
+    }),
+
+  // --- build: dependencies, artefacts, one build at a time ------------------
+  //
+  // One call for the overview because both halves answer the same question -
+  // "can this be built right now?" - and two calls could render a green
+  // toolchain beside a stale binary. startBuild is job-based for the same
+  // reason the container build is: a full compile runs for minutes and the log
+  // is the part worth watching.
+  buildOverview: () => json<BuildOverview>('/api/build'),
+  // On demand, because the stack half probes services that can be started
+  // after the page is already open - a report computed at load time would keep
+  // calling MalAPI down until a manual reload.
+  checkBuildDeps: () =>
+    json<DepRefresh>('/api/build/check-deps', { method: 'POST' }),
+  startBuild: (clean = false) =>
+    json<{ ok: boolean; job_id: string; command: string; clean: boolean }>(
+      '/api/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clean }),
+      }),
+  buildJob: (jobId: string) =>
+    json<AnalyzerBuildJob>(`/api/build/${encodeURIComponent(jobId)}`),
+  // So a reload reattaches to a build that is already going, rather than
+  // showing an idle panel while the compiler works.
+  currentBuild: () => json<AnalyzerBuildJob | null>('/api/build/current'),
+
+  // Operator maintenance for the vendored stack: SBOM, the MalAPI rule
+  // checkout, the YARA packs and yarGen-Go. One call for all four so the four
+  // cards cannot describe four different moments.
+  utilsOverview: () => json<UtilsOverview>('/api/utils'),
+  runUtils: (ids: string[]) =>
+    json<{ ok: boolean; job_id?: string; running?: string[]; error?: string }>(
+      '/api/utils', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
+
+  // Provenance, freshness, validation and build configuration. One call,
+  // because the three together are one verdict - "can I trust this binary?" -
+  // and a page that fetched them separately could render a green check beside a
+  // stale commit.
+  buildInspect: () => json<BuildInspect>('/api/build/inspect'),
+
+  // The test catalogue, and the runner. Selection is explicit because the
+  // entries are not equivalent: some write files, one runs the analyzer end to
+  // end, and a single "Run tests" button cannot say which it is about to do.
+  buildTests: () => json<BuildTestCatalogue>('/api/build/tests'),
+  startBuildTests: (ids: string[]) =>
+    json<{ ok: boolean; job_id?: string; running?: string[]; error?: string }>(
+      '/api/build/tests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
+
+  // --- writing the analysis configuration -----------------------------------
+  //
+  // The only mutating calls in this client. Each one sends a fixed set of keys
+  // the analyzer understands and nothing else - no arbitrary YAML crosses the
+  // wire - and each is validated server-side with the rules the analyzer itself
+  // enforces, so a bad edit is refused rather than left to fail at startup.
+  setArtifactOptions: (options: {
+    store_artifact?: boolean
+    upload_artifacts?: boolean
+    remote_root?: string
+    timeout_seconds?: number
+  }) =>
+    json<{ ok: boolean; artifacts: AnalysisConfig['artifacts'] }>(
+      '/api/analysis/artifact-options',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(options),
+      },
+    ),
+  setPipelineEnvironment: (pipeline: string, environment: Record<string, boolean | number | string>) =>
+    json<{ ok: boolean; pipeline: PipelineConfig }>('/api/analysis/pipeline/environment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pipeline, environment }),
+    }),
+  setPipelineRush: (pipeline: string, enabled: boolean) =>
+    json<{ ok: boolean; pipeline?: PipelineConfig; error?: string }>(
+      '/api/analysis/pipeline/rush', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pipeline, enabled }),
+    }),
+
+  // The writable form of the yarGen decision. Edits the same inline
+  // `phases: [...]` list as the rush toggle, inserting before `export` so the
+  // generated rule file is part of the artifact set rather than written after it.
+  setYaraGen: (pipeline: string, enabled: boolean) =>
+    json<{ ok: boolean; pipeline?: PipelineConfig; error?: string }>(
+      '/api/analysis/pipeline/yara-gen', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pipeline, enabled }),
+    }),
+
+  savePipeline: (name: string, content: string) =>
+    json<{ ok: boolean; pipeline: PipelineConfig }>('/api/analysis/pipeline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, content }),
     }),
 }
 

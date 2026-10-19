@@ -35,6 +35,23 @@ except Exception as exc:  # pragma: no cover
     sys.exit(2)
 
 HERE = Path(__file__).resolve().parent
+
+
+def app_paths_cache_dir() -> Path:
+    """The project's AppData cache root.
+
+    Imported rather than reimplemented: the analyzer (include/core/app_paths.hpp),
+    the panel (panel/config.py) and this script all have to agree on where
+    generated files live, and three separate implementations of "where is the
+    cache" is how the tree fills up again. panel/config.py imports nothing heavy,
+    and `python/` is this script's own directory, so the import cannot fail for
+    a reason worth handling.
+    """
+    if str(HERE) not in sys.path:
+        sys.path.insert(0, str(HERE))
+    from panel.config import cache_dir
+
+    return cache_dir()
 sys.path.insert(0, str(HERE))
 
 # Shared with python/_view_stix.py so the STIX graph is built one way. A
@@ -855,7 +872,12 @@ def load_mbc_details(capa: dict) -> dict:
         return {}
 
     root = HERE.parent
-    cache_dir = os.environ.get("CTI_CACHE_DIR") or "cti-cache"
+    # The CTI cache is regenerable machine state, so it goes under the AppData
+    # root with the analyzer's other caches. It used to default to a bare
+    # "cti-cache" in the working directory, which meant it landed in the repo
+    # when the dashboard ran from there and in whatever unrelated directory the
+    # operator happened to be in otherwise. CTI_CACHE_DIR still overrides.
+    cache_dir = os.environ.get("CTI_CACHE_DIR") or str(app_paths_cache_dir())
     candidates = []
     env = os.environ.get("MBC_BUNDLE")
     if env:

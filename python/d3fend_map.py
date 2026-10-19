@@ -39,6 +39,12 @@ ROOT = HERE.parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+# The fetched knowledge cache is regenerable machine state, so it lives under
+# the AppData root rather than in cti-cache/ inside the working tree. The
+# resolver is imported, not reimplemented, so the analyzer, the panel and this
+# script cannot drift apart on where that is.
+from panel.config import cache_dir as appdata_cache  # noqa: E402
+
 # Tactic shortnames and normalise_tactic() come from the same table the STIX
 # section uses, so the two views of one capa run always agree on names.
 try:
@@ -47,7 +53,7 @@ except Exception:  # pragma: no cover - stix_graph is stdlib-only too
     stix_graph = None
 
 API_URL = "https://d3fend.mitre.org/api/offensive-technique/attack/{tid}.json"
-CACHE_PATH = ROOT / "cti-cache" / "knowledge" / "d3fend.json"
+CACHE_PATH = appdata_cache() / "knowledge" / "d3fend.json"
 TECHNIQUE_RE = re.compile(r"T\d{4}(?:\.\d{3})?")
 FETCH_TIMEOUT = 8.0
 FETCH_WORKERS = 8

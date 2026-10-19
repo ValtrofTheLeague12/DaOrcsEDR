@@ -103,6 +103,11 @@ mega/*.bak
 !python/admin_server.py
 !python/panel/
 !python/panel/*
+
+# Scripts directly in python/. `die_scan.py` and `malapi_pipeline.py` were
+# already invisible here before this line existed - the same trap as src/ and
+# include/, with `!python/panel/*` covering only the subdirectory.
+!python/*.py
 # HMAC key for the panel's session cookie. Generated on first run, 0600, and
 # signing-key shaped: anything holding it can mint a session. The !python/panel/*
 # above re-includes the whole directory, so it has to be denied explicitly or it
@@ -124,3 +129,50 @@ admin-web/dist
 !admin-web/index.html
 !admin-web/src
 !admin-web/src/**
+
+# ---------------------------------------------------------------------------
+# Source trees, wholesale.
+#
+# The whitelist above needs a line per file, which means every new source file
+# is invisible to `git status` until someone remembers to add one here - a trap
+# that has already cost work twice in this project. src/ and include/ contain
+# nothing but .c/.cpp/.h/.hpp (checked: no generated files, no build output), so
+# they can simply be unignored whole.
+# ---------------------------------------------------------------------------
+!src/
+!src/**
+!include/
+!include/**
+
+# The logos the startup and crash banners resolve, in their documented order:
+# crash.logo -> daorcs.logo -> pdcursor.logo. The .swp is a vim swap file for an
+# art file under edit, and stays ignored.
+!logos/
+!logos/*.logo
+
+# tools/ holds vendored checkouts (cminer, bin, compressor_tool,
+# sample_archive) that stay ignored on purpose. Only the scripts added to it are
+# listed, rather than !tools/*.py, so titlecase_summaries.py stays excluded as
+# it was.
+!tools/
+!tools/selftest_cli.py
+!tools/dll_closure.py
+!tools/panel_mem_probe.py
+!tools/BUILD_PANEL_PLAN.md
+
+# `!mega/` unignores the directory but the leading `*` re-ignores what is inside
+# it, so each file still needs its own line - the same rule the whole rest of
+# this file follows.
+!mega/seal.py
+!mega/test_seal.py
+
+# Unit tests. The whole tree, because a whitelist that has to be edited per new
+# test file is the same trap as above, and a test that is invisible is a test
+# that does not exist as far as the next person is concerned.
+!unit/
+!unit/**
+
+# ...but not the byte-code pytest leaves in it. Later patterns win, so these go
+# after the negation above; without them a test run makes the tree dirty.
+unit/**/__pycache__/
+unit/**/*.pyc

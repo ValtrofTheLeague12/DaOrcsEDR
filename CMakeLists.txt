@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 # C is required in addition to CXX: the vendored zstd sources are C.
-project(StaticAnalyzer LANGUAGES C CXX)
+project(StaticAnalyzer VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -522,10 +522,91 @@ add_executable(static_analyzer
 )
 install(TARGETS static_analyzer RUNTIME DESTINATION bin)
 
+# Ship the MinGW runtime next to the executable.
+#
+# This is not tidiness, it is the difference between the binary running and not
+# running. The loader searches the executable's own directory BEFORE PATH, so
+# placing the DLLs here makes the binary immune to a same-named DLL sitting
+# earlier on PATH - and that is not hypothetical here. Graphviz installs its own
+# zlib1.dll into "C:\Program Files\Graphviz\bin", that directory comes before
+# msys64 on a default Windows PATH, and the loader picked Graphviz's zlib rather
+# than the one this executable links against. The symptom was a silent failure
+# to start: exit code 0xC0000139 (STATUS_ENTRYPOINT_NOT_FOUND) with no output
+# whatsoever, which reads like a broken build rather than a PATH collision.
+get_filename_component(_ucrt_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+
+# The transitive closure of the executable's imports, by source directory. An
+# explicit list rather than a wildcard on purpose: msys64's bin holds hundreds
+# of DLLs, many alternate versions of each other, and copying all of it beside
+# the executable would make the shadowing problem worse instead of better. The
+# closure is walked, not guessed - a DLL that is merely named on PATH can still
+# fail to load if it is the wrong build. Regenerate with tools/dll_closure.py.
+set(_runtime_dlls_ucrt
+    libsystre-0.dll          # Rust support library, pulled in by trace.cpp
+    libtre-5.dll             # ... which needs it in turn
+    libwinpthread-1.dll
+    libgcc_s_seh-1.dll
+    libstdc++-6.dll
+    zlib1.dll
+    # libcurl's closure
+    libcurl-4.dll
+    libbrotlidec.dll
+    libcrypto-3-x64.dll
+    libidn2-0.dll
+    libnghttp2-14.dll
+    libnghttp3-9.dll
+    libngtcp2-16.dll
+    libngtcp2_crypto_ossl-0.dll
+    libpsl-5.dll
+    libssh2-1.dll
+    libssl-3-x64.dll
+    libzstd.dll
+    # libre2's closure (absl)
+    libre2-11.dll
+    libabsl_hash-2508.0.0.dll
+    libabsl_log_internal_message-2508.0.0.dll
+    libabsl_raw_hash_set-2508.0.0.dll
+    libabsl_spinlock_wait-2508.0.0.dll
+    libabsl_str_format_internal-2508.0.0.dll
+    libabsl_strings-2508.0.0.dll
+    libabsl_synchronization-2508.0.0.dll
+    # PDCurses
+    libpdcurses.dll
+)
+set(_runtime_dlls_graphviz
+    cgraph.dll
+    cdt.dll
+)
+
+set(_copy_runtime_commands)
+foreach(_dll IN LISTS _runtime_dlls_ucrt)
+    # Copied only if it exists, so a machine missing one still builds.
+    if(_ucrt_bin AND EXISTS "${_ucrt_bin}/${_dll}")
+        list(APPEND _copy_runtime_commands
+             COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                     "${_ucrt_bin}/${_dll}"
+                     "$<TARGET_FILE_DIR:static_analyzer>/${_dll}")
+    endif()
+endforeach()
+foreach(_dll IN LISTS _runtime_dlls_graphviz)
+    if(GRAPHVIZ_CGRAPH_LIBRARY)
+        get_filename_component(_graphviz_libdir "${GRAPHVIZ_CGRAPH_LIBRARY}" DIRECTORY)
+        # .../<root>/bin/cgraph.dll sits beside .../<root>/lib/cgraph.lib
+        get_filename_component(_graphviz_bin "${_graphviz_libdir}/../bin" ABSOLUTE)
+        if(EXISTS "${_graphviz_bin}/${_dll}")
+            list(APPEND _copy_runtime_commands
+                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                         "${_graphviz_bin}/${_dll}"
+                         "$<TARGET_FILE_DIR:static_analyzer>/${_dll}")
+        endif()
+    endif()
+endforeach()
+
 # Ship pipeline and artifact configuration, plus the uploader's runtime
 # modules, beside the executable. This keeps named pipelines and opt-in bundle
 # actions available when launched outside the source tree.
 add_custom_command(TARGET static_analyzer POST_BUILD
+    ${_copy_runtime_commands}
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/pipelines"
             "$<TARGET_FILE_DIR:static_analyzer>/pipelines"
@@ -545,8 +626,31 @@ add_custom_command(TARGET static_analyzer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/mega/credential.py"
             "$<TARGET_FILE_DIR:static_analyzer>/mega/credential.py"
-    COMMENT "Copying pipeline configs next to static_analyzer"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/mega/seal.py"
+            "$<TARGET_FILE_DIR:static_analyzer>/mega/seal.py"
+    COMMENT "Copying runtime DLLs, pipeline and config next to static_analyzer"
 )
+# The copies above ride on the exe link, so make has no reason to re-run them
+# when only a YAML file changed - and that is exactly the common case, because
+# the Analysis Configuration page edits pipelines/*.yaml in place without
+# touching a source file. The result was a copy beside the executable that
+# served stale settings to anyone launching the analyzer from outside the tree.
+# This target runs on every build for that reason, and depends on the directory
+# so an edit re-triggers it.
+file(GLOB_RECURSE _pipeline_sidecar_deps CONFIGURE_DEPENDS
+     "${CMAKE_SOURCE_DIR}/pipelines/*")
+add_custom_target(static_analyzer_sidecar ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/pipelines"
+            "$<TARGET_FILE_DIR:static_analyzer>/pipelines"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/config/artifacts.yaml"
+            "$<TARGET_FILE_DIR:static_analyzer>/config/artifacts.yaml"
+    DEPENDS ${_pipeline_sidecar_deps}
+    COMMENT "Refreshing pipelines/ and config/ next to static_analyzer"
+)
+add_dependencies(static_analyzer_sidecar static_analyzer)
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/pipelines/"
         DESTINATION bin/pipelines
         FILES_MATCHING
@@ -759,9 +863,57 @@ else()
     set(STATIC_ANALYZER_MAGIC_DB "/usr/share/misc/magic.mgc")
 endif()
 
+# Build identity, resolved once here and compiled in.
+#
+# The executable should be able to answer "what are you" wherever it ends up -
+# on another machine, in an evidence bundle, attached to a bug report - without
+# anything shipped beside it. See include/core/build_info.hpp.
+find_package(Git QUIET)
+set(IA_BUILD_COMMIT "")
+set(IA_BUILD_BRANCH "")
+set(IA_BUILD_DIRTY 0)
+if(GIT_FOUND)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                    OUTPUT_VARIABLE IA_BUILD_COMMIT
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --abbrev-ref HEAD
+                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                    OUTPUT_VARIABLE IA_BUILD_BRANCH
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    # Uncommitted changes at configure time. Recorded rather than ignored: a
+    # binary built from a dirty tree cannot be reproduced from its commit, and
+    # the provenance line is the only place that fact can live.
+    execute_process(COMMAND "${GIT_EXECUTABLE}" status --porcelain
+                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                    OUTPUT_VARIABLE IA_BUILD_DIRTY_OUT
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    string(REGEX MATCHALL "\n" _nl "${IA_BUILD_DIRTY_OUT}")
+    list(LENGTH _nl IA_BUILD_DIRTY)
+    # One newline per changed file, minus the trailing one.
+    math(EXPR IA_BUILD_DIRTY "${IA_BUILD_DIRTY} - 1")
+    if(IA_BUILD_DIRTY LESS 0)
+        set(IA_BUILD_DIRTY 0)
+    endif()
+    if(NOT IA_BUILD_COMMIT)
+        # Not actually a checkout after all (a submodule-less export, a tarball
+        # that merely has a .git file). Claim nothing rather than claim wrong.
+        set(IA_BUILD_COMMIT "")
+        set(IA_BUILD_DIRTY 0)
+    endif()
+endif()
+
 target_compile_definitions(static_analyzer PRIVATE
     STATIC_ANALYZER_MAGIC_DATABASE="${STATIC_ANALYZER_MAGIC_DB}"
     STATIC_ANALYZER_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    IA_BUILD_VERSION="${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.0"
+    IA_BUILD_COMMIT="${IA_BUILD_COMMIT}"
+    IA_BUILD_BRANCH="${IA_BUILD_BRANCH}"
+    IA_BUILD_DIRTY=${IA_BUILD_DIRTY}
+    IA_BUILD_DIR="${CMAKE_BINARY_DIR}"
     CTI_WITH_COLLECT
 )
 
@@ -781,3 +933,101 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         -Wl,--allow-multiple-definition
     )
 endif()
+
+# ---------------------------------------------------------------------------
+# Unit tests.
+#
+# Deliberately NOT in `all`: a test target that builds by default is a test
+# target nobody runs, and it makes every incremental analyzer build pay for it.
+# Build and run it explicitly:
+#
+#     cmake -S . -B build-ucrt
+#     cmake --build build-ucrt --target test_default_pipeline
+#     cmake --build build-ucrt --target test_app_paths
+#     cmake --build build-ucrt --target test_resume
+#
+# No gtest. unit/c++/test_main.hpp is the entire harness - a registry, four
+# macros and an exit code - which is why this needed no dependency change to get
+# a first suite running. See unit/README.md for what belongs here and what does
+# not.
+#
+# One executable per file rather than one binary: they link different amounts of
+# the analyzer (app_paths links almost nothing, the default-pipeline check links
+# none of it), and a single binary would force the union of all three.
+# ---------------------------------------------------------------------------
+add_library(unit_harness INTERFACE)
+target_include_directories(unit_harness INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++")
+
+# Each test compiles the analyzer sources it exercises directly. They are not a
+# library in the main build - the analyzer's own target globs them in - and
+# making them one here would mean restructuring that for the sake of tests.
+function(ia_add_unit_test name)
+  add_executable(${name} ${ARGN})
+  # spdlog is linked because the analyzer's headers reference it, not because
+  # these tests log anything - which is why console_stub.cpp exists.
+  target_link_libraries(${name} PRIVATE unit_harness spdlog::spdlog)
+  target_include_directories(${name} PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/include"
+      # The analyzer includes its module headers bare ("app_paths.hpp", not
+      # "core/app_paths.hpp"), because it appends every include/<module> to the
+      # search path. These targets compile analyzer sources, so they need the same
+      # list rather than a hand-maintained subset of it.
+      ${ANALYZER_INCLUDE_DIRS}
+      # This project resolves nlohmann/json as a bare include dir rather than as
+      # a find_package target, so the tests follow the same convention instead of
+      # introducing one that only they use.
+      "${NLOHMANN_JSON_INCLUDE_DIR}")
+  if(NOT MSVC)
+    target_compile_options(${name} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+  endif()
+  # Built the way static_analyzer is built, deliberately.
+  #
+  # With STATIC_ANALYZER_STATIC_RUNTIME the analyzer links libgcc and libstdc++
+  # statically; these targets did not, so they loaded build-ucrt's copies of
+  # libstdc++-6.dll - the ones copied for the analyzer - against a different
+  # runtime than they were compiled for. That is not a theoretical hazard: it
+  # reproduced as a SIGSEGV inside std::filesystem on the very first call.
+  # A test that cannot share the build settings of the code it tests will find
+  # bugs that are not there and miss bugs that are.
+  if(STATIC_ANALYZER_STATIC_RUNTIME AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(${name} PRIVATE -static-libgcc -static-libstdc++)
+  endif()
+endfunction()
+
+ia_add_unit_test(test_app_paths
+    "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++/test_app_paths.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/app_paths.cpp"
+    # The harness prints the suite logo on start and the crash logo on a fault,
+    # by calling the analyzer's own banner functions rather than reimplementing
+    # them. console_stub.cpp supplies the one console function banner.cpp calls,
+    # so the tests do not have to link logging -> redact -> file_hasher just to
+    # colour some ASCII art.
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/banner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++/console_stub.cpp")
+
+ia_add_unit_test(test_resume
+    "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++/test_resume.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/resume.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/banner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++/console_stub.cpp")
+
+# Links no analyzer code beyond the banner: it reads the catalog by RUNNING the
+# built binary, which is deliberate - a copy of the phase names in the test would
+# pass forever after the catalog moved on, which is the bug it exists to catch.
+ia_add_unit_test(test_default_pipeline
+    "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++/test_default_pipeline.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/banner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/unit/c++/console_stub.cpp")
+add_dependencies(test_default_pipeline static_analyzer)
+
+# Convenience: build all three. The run_* targets run one each.
+add_custom_target(unit_tests
+    DEPENDS test_app_paths test_resume test_default_pipeline
+    COMMENT "built: test_app_paths, test_resume, test_default_pipeline")
+
+foreach(_t test_app_paths test_resume test_default_pipeline)
+  add_custom_target(run_${_t}
+      COMMAND $<TARGET_FILE:${_t}> WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+      DEPENDS ${_t} USES_TERMINAL
+      COMMENT "unit: ${_t}")
+endforeach()

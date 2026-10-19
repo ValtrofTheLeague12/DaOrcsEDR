@@ -22,6 +22,7 @@
 
 #include <yara.h>
 
+#include "app_paths.hpp"
 #include "console.hpp"
 #include "logging.hpp"
 
@@ -356,11 +357,14 @@ void ensure_yara_initialized() {
 std::filesystem::path disk_cache_path(std::uint64_t hash, std::size_t chunk) {
   std::ostringstream name;
   name << "yara_rules_" << hex16(hash) << "_c" << chunk << ".cache";
-  return std::filesystem::path("logs") / name.str();
+  // These caches are large - a ruleset compiles to tens of megabytes of chunks
+  // per sample - and they are pure machine state, so they belong under the
+  // AppData root with everything else rather than in the source tree.
+  return app_paths::logs_root() / name.str();
 }
 
 std::filesystem::path disk_cache_errors_path(std::uint64_t hash) {
-  return std::filesystem::path("logs") / ("yara_rules_" + hex16(hash) + ".errors");
+  return app_paths::logs_root() / ("yara_rules_" + hex16(hash) + ".errors");
 }
 
 std::size_t choose_chunks(std::size_t file_count) {
@@ -803,9 +807,7 @@ std::unique_ptr<compiled_set_t> compile_rule_set(
             entry->files_failed);
 
   // Best-effort disk cache: next run of this rule-set hash skips the compile.
-  if (std::error_code ec; !std::filesystem::exists("logs", ec)) {
-    std::filesystem::create_directories("logs", ec);
-  }
+  app_paths::ensure(app_paths::logs_root());
   {
     // Chunk caches are tens of MB each; write them in parallel so the
     // one-time compile run does not pay a serial 75 MB write.
@@ -910,12 +912,12 @@ std::unique_ptr<compiled_set_t> load_from_disk(
 
 // --- error log ----------------------------------------------------------------
 
-const char* kErrorLogPath = "logs/yara_errors.log";
+const std::string kErrorLogPath =
+    (app_paths::logs_root() / "yara_errors.log").string();
 
 void write_error_log(const std::filesystem::path& rules_dir, std::uint64_t hash,
                      const std::vector<std::string>& errors) {
-  std::error_code ec;
-  std::filesystem::create_directories("logs", ec);
+  app_paths::ensure(app_paths::logs_root());
   std::ofstream out(kErrorLogPath, std::ios::trunc);
   if (!out) {
     LOG_WARN("yara: cannot write {}", kErrorLogPath);

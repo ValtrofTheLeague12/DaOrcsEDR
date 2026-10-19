@@ -8,9 +8,9 @@
 
 namespace curses_ui {
 
-// The splash logo - the lines of logos/pdcursor.logo exactly as the file has
-// them, plus the width of the widest one for centring. Both front-ends draw it
-// at that size and never rescale it, so this carries no terminal of its own.
+// The startup logo - daorcs.logo when non-empty, otherwise pdcursor.logo, with
+// the width of the widest line for centring. Both front-ends draw it at that
+// size and never rescale it, so this carries no terminal of its own.
 struct logo_t {
   std::vector<std::string> lines;
   int width = 0;

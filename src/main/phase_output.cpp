@@ -588,6 +588,30 @@ void run_summary(context& ctx) {
     }
   }
 
+  // Generated rules, reported next to everything else that ran. A skip says
+  // why; a success says how many and flags that nobody has reviewed them,
+  // because that caveat has to travel with the number or it will not be read.
+  if (planner::has(ctx, planner::phase_id::yara_gen)) {
+    if (!ctx.yara_gen_skip_reason.empty()) {
+      print_kv("YARA gen", "skipped (" + ctx.yara_gen_skip_reason + ")");
+    } else if (ctx.yara_gen_result.st == yara_gen::status::ok) {
+      print_kv_colored("YARA gen",
+                       std::to_string(ctx.yara_gen_result.simple_rules +
+                                      ctx.yara_gen_result.super_rules) +
+                           " rule(s) generated - UNREVIEWED",
+                       console::yellow);
+      print_kv("  file", ctx.yara_gen_result.rule_file);
+      if (!ctx.yara_gen_result.llm_used)
+        print_kv("  llm pass", "skipped (" +
+            (ctx.yara_gen_result.llm_reason.empty()
+                 ? std::string("no LLM available")
+                 : ctx.yara_gen_result.llm_reason) + ")");
+    } else if (ctx.yara_gen_result.attempted) {
+      print_kv_colored("YARA gen", "failed: " + ctx.yara_gen_result.error,
+                       console::red);
+    }
+  }
+
   if (planner::has(ctx, planner::phase_id::radare2)) {
     std::size_t core = 0, sections = 0;
     for (const auto& f : ctx.r2_result.files) {

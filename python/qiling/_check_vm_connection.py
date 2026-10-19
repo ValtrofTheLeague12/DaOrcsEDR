@@ -232,7 +232,7 @@ def start_vm(vm_name: str | None = None, headless: bool = True,
             return True, f"VM '{name}' is already running"
         return False, f"could not start '{name}': {detail}"
     if _wait_until(lambda: name in list_running_vms(), min(timeout, 30)):
-        return True, f"VM '{name}' started (headless)"
+        return True, f"VM '{name}' started ({'headless' if headless else 'gui'})"
     return False, f"'{name}' start accepted but the VM never showed as running"
 
 

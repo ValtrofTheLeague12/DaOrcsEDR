@@ -6,7 +6,9 @@ import json
 import re
 import shutil
 import subprocess
+import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from . import config
@@ -248,6 +250,7 @@ def list_containers() -> dict:
             "daemon": {"available": False, "running": False,
                        "version": None, "error": "docker not on PATH"},
             "engine": None, "storage": None, "projects": [],
+            "compose_files": _compose_files(),
             "stats_available": False, "updated_at": round(now, 1),
         }
         _cache.update(at=now, payload=payload)
@@ -460,7 +463,8 @@ def list_containers() -> dict:
     history = _history_attach(entries)
     payload = {
         "daemon": daemon, "engine": engine, "storage": storage,
-        "projects": projects, "stats_available": bool(stats_by_key),
+        "projects": projects, "compose_files": _compose_files(),
+        "stats_available": bool(stats_by_key),
         "stats_containers": agg_count, "updated_at": round(now, 1),
         "history": history,
     }
@@ -543,6 +547,136 @@ def control(project: str, service: str, action: str):
     return True, service + " created and started"
 
 
+# --- image builds ------------------------------------------------------------
+#
+# A build is a long job with output worth watching, so it runs on a worker
+# thread and the log is polled. The previous version blocked the request for up
+# to 15 minutes and then returned the last 4000 characters, which is the one
+# part of a build an operator actually wants: the part where it failed.
+#
+# Jobs live in memory only, like _history: this is a status console, not a
+# queue, and nothing here survives a panel restart.
+#
+# The command is still `docker compose build`, not a hand-rolled per-service
+# build. Compose owns build args, cache config and service selection; the Docker
+# SDK's build() takes a single context and would mean re-implementing that.
+
+MAX_LOG_LINES = 4000
+JOB_TTL = 3600.0        # seconds a finished job stays readable
+
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+
+
+def _prune_jobs(now: float) -> None:
+    for job_id in [k for k, v in _jobs.items()
+                   if v.get("state") != "running"
+                   and now - v.get("finished_at", now) > JOB_TTL]:
+        del _jobs[job_id]
+
+
+def start_build(project: str) -> tuple[bool, dict]:
+    """Kick off a build for an allowlisted project; returns the job handle.
+
+    One build per project at a time. A second click returns the job already
+    running rather than starting a competing `docker compose build` against
+    the same Docker daemon, which would contend on the build cache.
+    """
+    target = next((p for p in config.compose_projects()
+                   if p["label"] == project), None)
+    if target is None:
+        return False, {"error": "unknown compose project " + project}
+    exe = _exe()
+    if not exe:
+        return False, {"error": "docker not on PATH"}
+
+    now = time.time()
+    with _jobs_lock:
+        _prune_jobs(now)
+        for job in _jobs.values():
+            if job["project"] == project and job["state"] == "running":
+                return True, {"job_id": job["job_id"], "reused": True}
+        job_id = uuid.uuid4().hex[:12]
+        job = {
+            "job_id": job_id, "project": project, "state": "running",
+            "lines": [], "dropped": 0, "started_at": now,
+            "finished_at": None, "exit_code": None,
+        }
+        _jobs[job_id] = job
+
+    threading.Thread(
+        target=_run_build, args=(job, exe, target), daemon=True,
+    ).start()
+    return True, {"job_id": job_id, "reused": False}
+
+
+def _run_build(job: dict, exe: str, target: dict) -> None:
+    """Stream `docker compose build` into the job record.
+
+    stderr is folded into stdout on purpose: compose writes its progress to both,
+    and separating them would interleave two files arbitrarily rather than in
+    the order they happened.
+    """
+    lines: list[str] = job["lines"]
+    try:
+        proc = subprocess.Popen(
+            [exe, "compose", "-f", str(target["file"]), "build"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            bufsize=1, cwd=config.REPO,
+        )
+    except OSError as exc:
+        job["lines"].append(f"could not start docker compose build: {exc}")
+        job.update(state="error", exit_code=-1, finished_at=time.time())
+        return
+
+    try:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            job["lines"].append(raw.rstrip("\n"))
+            if len(job["lines"]) > MAX_LOG_LINES:
+                # Keep the tail: the end of a build log is the failure.
+                drop = len(job["lines"]) - MAX_LOG_LINES
+                del job["lines"][:drop]
+                job["dropped"] += drop
+        code = proc.wait(timeout=BUILD_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        job["lines"].append(
+            f"build exceeded the {BUILD_TIMEOUT // 60}-minute limit and was killed")
+        code = -1
+    except Exception as exc:  # noqa: BLE001 - the UI shows the reason
+        job["lines"].append(f"build failed: {type(exc).__name__}: {exc}")
+        code = -1
+
+    if code == 0:
+        job["lines"].append("")
+        job["lines"].append("Build finished successfully.")
+        _cache["at"] = 0.0          # next poll sees the new images
+    job.update(state="done" if code == 0 else "error",
+               exit_code=code, finished_at=time.time())
+
+
+def build_job(job_id: str) -> dict | None:
+    """The current state of a build job, or None if it is not one of ours."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return None
+        return {
+            "job_id": job["job_id"],
+            "project": job["project"],
+            "state": job["state"],
+            "lines": list(job["lines"]),
+            "dropped": job["dropped"],
+            "exit_code": job["exit_code"],
+            "elapsed": round((job["finished_at"] or time.time()) - job["started_at"], 1),
+        }
+
+
+BUILD_TIMEOUT = 900
+
+
 def _collect_stats(exe: str) -> dict:
     proc = _run([exe, "stats", "--no-stream", "--format", "{{json .}}"], 20)
     if proc is None or proc.returncode != 0:
@@ -573,6 +707,17 @@ def _projects_skeleton() -> list[dict]:
             "label": proj["label"], "compose_file": rel,
             "services": list(proj["services"]), "containers": [],
         })
+    return out
+
+
+def _compose_files() -> list[dict]:
+    out = []
+    for proj in config.compose_projects():
+        try:
+            rel = str(proj["file"].relative_to(config.REPO))
+        except ValueError:
+            rel = str(proj["file"])
+        out.append({"label": proj["label"], "file": rel})
     return out
 
 

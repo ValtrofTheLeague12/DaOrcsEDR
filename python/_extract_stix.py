@@ -55,7 +55,15 @@ except Exception as exc:  # pragma: no cover
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-DEFAULT_CACHE = ROOT / "cti-cache" / "knowledge" / "enterprise-attack.json"
+
+# The ATT&CK knowledge copy is a fetched cache, so it belongs under the AppData
+# root with the rest of the generated state. Imported rather than reimplemented
+# so this script, the panel and the analyzer agree on one location.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+from panel.config import cache_dir as appdata_cache  # noqa: E402
+
+DEFAULT_CACHE = appdata_cache() / "knowledge" / "enterprise-attack.json"
 MITRE_CTI_URL = (
     "https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/"
     "enterprise-attack/enterprise-attack.json"

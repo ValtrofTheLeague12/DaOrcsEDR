@@ -12,6 +12,7 @@
 #include <string_view>
 #include <vector>
 
+#include "app_paths.hpp"
 #include "console.hpp"
 #include "exporter.hpp"
 #include "guards.hpp"
@@ -43,7 +44,7 @@ void run_capa(context& ctx) {
   const auto started = report_clock::now();
   capa::options capa_opts;
   capa_opts.executable            = "capa";
-  capa_opts.cache_dir             = "cache/capa";
+  capa_opts.cache_dir             = (app_paths::cache_root() / "capa").string();
   capa_opts.cache_salt            = "v1";
   capa_opts.include_library_rules = false;
   capa_opts.max_addresses         = 32;

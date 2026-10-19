@@ -1,4 +1,5 @@
-import { Card, Chip } from '@heroui/react'
+import { Card } from '@heroui/react/card'
+import { Chip } from '@heroui/react/chip'
 import Icon from './Icon'
 import Pager, { usePaged } from './Pager'
 import type { VirtTool, VirtStatus } from '../types'

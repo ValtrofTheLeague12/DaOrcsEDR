@@ -5,7 +5,12 @@ param(
     # Pipeline spec: a bare name (extract_strings), a .yaml/.json path,
     # 'default', or inline JSON like '["strings","model"]'.
     [string]$Pipeline,
-    [switch]$ListPipelines
+    [switch]$ListPipelines,
+    # Stop after linking. Skips the smoke test that runs the freshly built
+    # analyzer against itself, which is useful interactively but floods a log
+    # with several thousand lines of self-analysis and buries the compile
+    # output it was meant to follow.
+    [switch]$NoRun
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,6 +69,14 @@ if ($ListPipelines) {
 $RunArgs = @()
 if ($Pipeline) {
     $RunArgs += @('--pipeline', $Pipeline)
+}
+
+if ($NoRun) {
+    # The exe existence check above is the last thing that can fail the build,
+    # so linking really is done at this point.
+    Write-Host "Built (not run -NoRun): $Analyzer" -ForegroundColor Green
+    Write-Host 'Build completed successfully.' -ForegroundColor Green
+    exit 0
 }
 
 if ($InputFile) {

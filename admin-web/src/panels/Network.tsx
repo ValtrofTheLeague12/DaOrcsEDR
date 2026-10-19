@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { Card, Chip, Alert } from '@heroui/react'
+import { Card } from '@heroui/react/card'
+import { Chip } from '@heroui/react/chip'
+import { Alert } from '@heroui/react/alert'
 import { api, usePoll } from '../api'
 import Icon from '../components/Icon'
 import SubNav from '../components/SubNav'
@@ -8,8 +10,20 @@ import VirtRoster from '../components/VirtRoster'
 import VboxStatusPanel from '../components/VboxStatus'
 import Loading from '../components/Loading'
 import { ago } from '../lib/format'
+import type { NetMap } from '../types'
 
 type NetTab = 'map' | 'interfaces' | 'docker' | 'hypervisors'
+
+function groupHostInterfaces(adapters: NetMap['host_adapters']) {
+  const groups = new Map<string, NetMap['host_adapters']>()
+  for (const adapter of adapters) {
+    const name = adapter.alias || 'Unidentified interface'
+    const addresses = groups.get(name) ?? []
+    addresses.push(adapter)
+    groups.set(name, addresses)
+  }
+  return [...groups.entries()]
+}
 
 export default function Network() {
   const [tab, setTab] = useState<NetTab>('map')
@@ -23,6 +37,7 @@ export default function Network() {
   // fragment gets flagged as comparing against an already-exhausted literal.
   const isDocker = tab === 'docker'
   const isHypervisors = tab === 'hypervisors'
+  const interfaceGroups = data ? groupHostInterfaces(data.host_adapters) : []
 
   return (
     <div className="network-page">
@@ -124,38 +139,44 @@ export default function Network() {
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <Card className="network-panel-card w-full">
             <Card.Header className="flex items-center justify-between gap-3">
-              <Card.Title className="text-sm font-semibold">Host interfaces</Card.Title>
+              <div>
+                <Card.Title className="text-sm font-semibold">Host interfaces</Card.Title>
+                <p className="mt-1 text-[11px] text-default-500">
+                  Addresses grouped by adapter name
+                </p>
+              </div>
               <Chip size="sm" variant="soft">{data.host_adapters.length} found</Chip>
             </Card.Header>
             <Card.Content>
-              {data.host_adapters.length === 0 ? (
+              {interfaceGroups.length === 0 ? (
                 <p className="py-4 text-[12px] text-default-400">No host adapters discovered.</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-[12px]">
-                    <thead>
-                      <tr className="border-b border-default-200 text-[11px] uppercase tracking-wider text-default-400">
-                        <th className="py-2 pr-3 font-medium">IP</th>
-                        <th className="py-2 pr-3 font-medium">Interface</th>
-                        <th className="py-2 font-medium">Type</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.host_adapters.map((a) => (
-                        <tr key={a.ip} className="border-b border-default-100 last:border-0">
-                          <td className="py-2 pr-3 font-mono tabular-nums">{a.ip}</td>
-                          <td className="max-w-[220px] truncate py-2 pr-3 text-default-500" title={a.alias}>
-                            {a.alias || '—'}
-                          </td>
-                          <td className="py-2">
-                            <Chip size="sm" variant="soft" color={a.loopback ? 'default' : 'success'}>
-                              {a.loopback ? 'loopback' : 'lan'}
+                <div className="interface-inventory-grid">
+                  {interfaceGroups.map(([name, addresses]) => (
+                    <article className="interface-inventory-card" key={name}>
+                      <div className="interface-inventory-heading">
+                        <span className="topology-node-icon is-adapter" aria-hidden="true">IF</span>
+                        <div className="min-w-0">
+                          <h3 className="truncate" title={name}>{name}</h3>
+                          <p>{addresses.length} IPv4 address{addresses.length === 1 ? '' : 'es'}</p>
+                        </div>
+                      </div>
+                      <div className="interface-inventory-addresses">
+                        {addresses.map((address) => (
+                          <div className="interface-inventory-address" key={address.ip}>
+                            <code>{address.ip}</code>
+                            <Chip
+                              size="sm"
+                              variant="soft"
+                              color={address.loopback ? 'default' : 'success'}
+                            >
+                              {address.loopback ? 'loopback' : 'host IP'}
                             </Chip>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  ))}
                 </div>
               )}
             </Card.Content>
@@ -236,59 +257,79 @@ export default function Network() {
       )}
 
       {data && isDocker && (
-        <div>
+        <section className="docker-inventory" aria-label="Docker network inventory">
+          <header className="docker-inventory-header">
+            <div>
+              <p className="eyebrow">Container networking</p>
+              <h2>Docker networks</h2>
+              <p>Attached containers and their addresses, grouped by network.</p>
+            </div>
+            <div className="docker-inventory-total">
+              <span className="network-summary-icon"><Icon name="containers" size={15} /></span>
+              <div>
+                <strong>{data.counts.containers}</strong>
+                <span>attached containers</span>
+              </div>
+            </div>
+          </header>
           {data.docker.length === 0 ? (
             <Card className="network-panel-card w-full">
               <Card.Content>
-                <p className="py-4 text-[12px] text-default-400">
-                  No Docker networks with containers. Daemon down or nothing attached.
+                <p className="docker-empty-title">No Docker networks discovered</p>
+                <p className="docker-empty-detail">
+                  The daemon may be unavailable, or there may be no networks with attached containers.
                 </p>
               </Card.Content>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="docker-network-grid">
               {data.docker.map((n) => (
-                <Card key={n.name} className="network-panel-card w-full">
-                  <Card.Header className="flex items-center justify-between gap-3">
-                    <Card.Title className="truncate font-mono text-sm" title={n.name}>
-                      {n.name}
-                    </Card.Title>
-                    <Chip size="sm" variant="soft">
-                      {n.containers.length} container(s)
-                    </Chip>
+                <Card key={n.name} className="docker-network-card w-full">
+                  <Card.Header className="docker-network-header flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="docker-network-icon" aria-hidden="true">
+                        <Icon name="containers" size={17} />
+                      </span>
+                      <div className="min-w-0">
+                        <Card.Title className="truncate font-mono text-sm" title={n.name}>
+                          {n.name}
+                        </Card.Title>
+                        <p className="docker-network-driver">{n.driver || 'bridge'} driver</p>
+                      </div>
+                    </div>
+                    <span className="docker-network-count">
+                      <strong>{n.containers.length}</strong>
+                      <span>attached</span>
+                    </span>
                   </Card.Header>
-                  <Card.Content>
-                    <p className="mb-2 font-mono text-[11px] text-default-400">
-                      {n.driver || 'bridge'} · {n.subnet || 'no subnet'}
-                    </p>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-[12px]">
-                        <thead>
-                          <tr className="border-b border-default-200 text-[11px] uppercase tracking-wider text-default-400">
-                            <th className="py-1.5 pr-3 font-medium">Container</th>
-                            <th className="py-1.5 font-medium">IP</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {n.containers.map((c) => (
-                            <tr key={c.name} className="border-b border-default-100 last:border-0">
-                              <td className="max-w-[200px] truncate py-1.5 pr-3 font-mono" title={c.name}>
-                                {c.name}
-                              </td>
-                              <td className="py-1.5 font-mono tabular-nums text-default-500">
-                                {c.ip || '—'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                  <Card.Content className="docker-network-content">
+                    <div className="docker-subnet">
+                      <span>Subnet</span>
+                      <code>{n.subnet || 'Not reported'}</code>
+                    </div>
+                    <div className="docker-container-list">
+                      <div className="docker-container-list-heading">
+                        <span>Container</span>
+                        <span>IPv4 address</span>
+                      </div>
+                      {n.containers.map((c) => (
+                        <div className="docker-container-row" key={c.name}>
+                          <span className="docker-container-identity">
+                            <span className="docker-container-dot" aria-hidden="true" />
+                            <span className="truncate font-mono" title={c.name}>{c.name}</span>
+                          </span>
+                          <code className={c.ip ? '' : 'is-unassigned'}>
+                            {c.ip || 'No address'}
+                          </code>
+                        </div>
+                      ))}
                     </div>
                   </Card.Content>
                 </Card>
               ))}
             </div>
           )}
-        </div>
+        </section>
       )}
 
       {/* Hypervisor detection first, then the VirtualBox-specific detail below

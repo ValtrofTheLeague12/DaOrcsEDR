@@ -1,10 +1,17 @@
 import { useState } from 'react'
-import { Alert, Button, Card, Chip } from '@heroui/react'
+import { Alert } from '@heroui/react/alert'
+import { Button } from '@heroui/react/button'
+import { Card } from '@heroui/react/card'
+import { Chip } from '@heroui/react/chip'
 import Loading from '../components/Loading'
+import Icon from '../components/Icon'
 import { api, usePoll } from '../api'
-import type { Container, ContainerList, ContainerState, EngineStats, StorageSection } from '../types'
+import type { Container, ContainerList, ContainerState, EngineStats, StorageSection, ComposeFile } from '../types'
 import { ago, bytes, pct, shortDuration } from '../lib/format'
 import { Sparkline, type SparkTone } from '../components/Stat'
+import Pager, { usePaged } from '../components/Pager'
+import ComposeFileViewer from '../components/ComposeFileViewer'
+import BuildLog from '../components/BuildLog'
 
 // ---------------------------------------------------------------------------
 // Live Docker state, read from the Docker CLI by the panel backend.
@@ -250,8 +257,20 @@ function StorageCard({ storage }: { storage: NonNullable<ContainerList['storage'
 
 export default function Containers() {
   const [busy, setBusy] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [building, setBuilding] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ message: string; status: 'success' | 'danger' } | null>(null)
   const { data, error, loading, refresh } = usePoll<ContainerList>(api.containers, INTERVAL)
+  const composeFiles = data?.compose_files ?? [
+    ...new Map(
+      (data?.projects ?? [])
+        .filter((project) => project.compose_file)
+        .map((project) => [project.label, { label: project.label, file: project.compose_file }]),
+    ).values(),
+  ]
+  const allContainers = data?.projects.flatMap((project) =>
+    project.containers.map((container) => ({ project, container })),
+  ) ?? []
+  const paged = usePaged(allContainers, 4)
 
   const act = async (c: Container, action: 'start' | 'stop') => {
     const key = `${c.project}/${c.name}:${action}`
@@ -259,20 +278,82 @@ export default function Containers() {
     setNotice(null)
     try {
       const res = await api.containerAction(c.project, c.name, action)
-      setNotice(res.detail)
+      setNotice({ message: res.detail, status: 'success' })
       refresh()
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e))
+      setNotice({ message: e instanceof Error ? e.message : String(e), status: 'danger' })
     } finally {
       setBusy(null)
     }
   }
 
+  // A build is asynchronous now: the endpoint returns a job handle and the log
+  // streams in the popup. The panel being up for the whole build is the point,
+  // so it is not torn down on close - only the "building" lock is released,
+  // and a click while it is still running reattaches to the same job.
+  const [buildJob, setBuildJob] = useState<{ jobId: string; project: string } | null>(null)
+
+  const buildCompose = async (project: string) => {
+    setBuilding(project)
+    setNotice(null)
+    try {
+      const res = await api.containerBuild(project)
+      setBuildJob({ jobId: res.job_id, project })
+      if (res.reused) {
+        setNotice({ message: `${project}: a build was already running; showing its output.`, status: 'success' })
+      }
+    } catch (e) {
+      setBuilding(null)
+      setNotice({
+        message: e instanceof Error ? e.message : String(e),
+        status: 'danger',
+      })
+    }
+  }
+
+  const finishBuild = () => {
+    setBuilding(null)
+    setNotice(null)
+    refresh()
+  }
+
+  const [composeViewerOpen, setComposeViewerOpen] = useState(false)
+  const [selectedCompose, setSelectedCompose] = useState<{ label: string; file: string } | null>(null)
+
+  // Runtime state comes from the poll this page already runs, so the badge costs
+  // no extra request and the compose endpoint stays a plain file read.
+  const runningServices = new Set(
+    (data?.projects ?? []).flatMap((p) =>
+      p.containers.filter((c) => c.state === 'running').map((c) => c.name),
+    ),
+  )
+
+  const fetchComposeContent = async (): Promise<ComposeFile | null> => {
+    if (!selectedCompose) return null
+    return api.containerCompose(selectedCompose.label)
+  }
+
+  const openComposeViewer = (label: string, file: string) => {
+    setSelectedCompose({ label, file })
+    setComposeViewerOpen(true)
+  }
+
+  const closeComposeViewer = () => {
+    setComposeViewerOpen(false)
+    setSelectedCompose(null)
+  }
+
   return (
-    <>
-      <div className="mb-6 flex items-baseline justify-between gap-4">
-        <h2 className="page-title">Containers</h2>
-        <div className="flex items-center gap-3">
+    <div className="containers-page">
+      <header className="containers-page-header">
+        <div>
+          <p className="eyebrow">Infrastructure</p>
+          <h2 className="page-title mt-1">Containers</h2>
+          <p className="containers-page-description">
+            Live service status, resource usage, and safe start/stop controls.
+          </p>
+        </div>
+        <div className="containers-page-actions">
           <span className="font-mono text-xs text-default-500">
             {data?.updated_at ? `updated ${ago(data.updated_at)}` : 'live from the Docker CLI'}
           </span>
@@ -280,7 +361,7 @@ export default function Containers() {
             Refresh
           </Button>
         </div>
-      </div>
+      </header>
 
       {loading && !data && (
         <Loading label="Loading container state…" hint="reading the Docker CLI" />
@@ -294,8 +375,8 @@ export default function Containers() {
       )}
 
       {notice && (
-        <Alert status="accent" className="mb-4">
-          <Alert.Description>{notice}</Alert.Description>
+        <Alert status={notice.status === 'danger' ? 'danger' : 'accent'} className="mb-4">
+          <Alert.Description>{notice.message}</Alert.Description>
         </Alert>
       )}
 
@@ -308,64 +389,126 @@ export default function Containers() {
         </Alert>
       )}
 
-      {data?.engine && <EngineCard engine={data.engine} partial={data.engine.stats_partial} history={data.history} />}
+      {data?.engine && (
+        <EngineCard
+          engine={data.engine}
+          partial={data.engine.stats_partial}
+          history={data.history}
+        />
+      )}
       {data?.storage && <StorageCard storage={data.storage} />}
 
-      {data && !data.stats_available && data.daemon.running && (
-        <Alert status="warning" className="mb-4">
-          <Alert.Title>No live metrics this poll</Alert.Title>
-          <Alert.Description>
-            <code>docker stats</code> returned nothing — states and ports below are still live,
-            usage meters show "—" until the next successful poll.
-          </Alert.Description>
-        </Alert>
-      )}
-
-      <Alert status="warning" className="mb-4">
-        <Alert.Title>Start and stop only</Alert.Title>
-        <Alert.Description>
-          No <code>down</code> or <code>recreate</code>: <code>recreate</code> on
-          guacamole touches its Postgres volume, and a misclick there is not
-          cheap to undo. Logs and shell are also absent — the kafka-agent has no
-          HTTP surface at all, so its logs are currently its only visibility.
-        </Alert.Description>
-      </Alert>
-
       {data?.daemon.running && (
-        <div className="mb-4 flex items-center gap-2 text-xs text-default-500">
-          <Chip size="sm" variant="soft" color="success">
-            daemon {data.daemon.version}
-          </Chip>
+        <div className="containers-runtime-strip">
+          <span className="containers-runtime-indicator" />
+          <span className="containers-runtime-label">Docker engine</span>
+          <span className="containers-runtime-version">{data.daemon.version}</span>
+          <span className="containers-runtime-divider" />
           <span>
-            {data.projects.reduce((n, p) => n + p.containers.length, 0)} containers across{' '}
-            {data.projects.length} groups
+            {data.projects.reduce((n, p) => n + p.containers.length, 0)} containers
+          </span>
+          <span>
+            {data.projects.length} project{data.projects.length === 1 ? '' : 's'}
           </span>
         </div>
       )}
 
-      <div className="flex flex-col gap-4">
-        {data?.projects.map((p) => (
-          <div key={p.label}>
-            <div className="mb-2 flex items-baseline justify-between">
-              <h3 className="text-sm font-semibold">
-                {p.label}
-                {p.label === 'standalone' && (
-                  <span className="ml-2 text-[11px] font-normal text-default-400">
-                    not in any compose file — metrics only
-                  </span>
-                )}
-              </h3>
-              <span className="font-mono text-[11px] text-default-400">{p.compose_file}</span>
-            </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {p.containers.map((c) => {
+      <section className="compose-files-section" aria-labelledby="compose-files-title">
+        <header className="compose-files-heading">
+          <div>
+            <p className="eyebrow">Build configuration</p>
+            <h3 id="compose-files-title">Available Compose files</h3>
+            <p>Build project images, then refresh the service status below.</p>
+          </div>
+          <span className="compose-files-count">{composeFiles.length} configured</span>
+        </header>
+        {composeFiles.length === 0 ? (
+          <p className="compose-files-empty">No Docker Compose files are configured.</p>
+        ) : (
+          <div className="compose-files-grid">
+            {composeFiles.map((file) => {
+              const project = data?.projects.find((item) => item.label === file.label)
+              const running = project?.containers.filter((container) => container.state === 'running').length ?? 0
+              const services = project?.containers.length ?? 0
+              const isBuilding = building === file.label
+              return (
+                <article className="compose-file-card" key={file.label}>
+                  <div className="compose-file-info">
+                    <span className="compose-file-icon" aria-hidden="true">
+                      <Icon name="build" size={16} />
+                    </span>
+                    <div className="min-w-0">
+                      <h4>{file.label}</h4>
+                      <p className="compose-file-path" title={file.file}>{file.file}</p>
+                    </div>
+                  </div>
+                  <div className="compose-file-status">
+                    <span className={`compose-status-dot ${data?.daemon.running ? (running > 0 ? 'is-running' : 'is-idle') : 'is-unavailable'}`} />
+                    <span>
+                      {!data?.daemon.running
+                        ? 'Docker engine unavailable'
+                        : services > 0
+                          ? `${running} of ${services} services running`
+                          : 'No service status reported'}
+                    </span>
+                  </div>
+                  <div className="compose-file-actions flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="compose-view-button"
+                      onClick={() => openComposeViewer(file.label, file.file)}
+                      disabled={!data?.daemon.running}
+                      title={`View ${file.file} content`}
+                    >
+                      <Icon name="file-text" size={13} />
+                      View content
+                    </button>
+                    <button
+                      type="button"
+                      className="compose-build-button"
+                      onClick={() => void buildCompose(file.label)}
+                      disabled={!data?.daemon.running || building !== null || busy !== null}
+                      title={!data?.daemon.running ? 'Start Docker Desktop to build images' : `Build images from ${file.file}`}
+                    >
+                      <Icon name="build" size={13} />
+                      {isBuilding ? 'Building images…' : 'Build images'}
+                    </button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      <div className="containers-project-list">
+        {data?.projects.map((p) => {
+          const projectContainers = paged.slice.filter((item) => item.project.label === p.label)
+          if (projectContainers.length === 0) return null
+          return (
+          <section key={p.label} className="containers-project">
+            <header className="containers-project-header">
+              <div className="min-w-0">
+                <h3>{p.label}</h3>
+                <p>
+                  {p.label === 'standalone'
+                    ? 'Standalone containers · metrics only'
+                    : `${p.containers.length} service${p.containers.length === 1 ? '' : 's'}`}
+                </p>
+              </div>
+              <span className="containers-compose-path" title={p.compose_file}>
+                {p.compose_file}
+              </span>
+            </header>
+            <div className="containers-card-grid">
+              {projectContainers.map(({ container: c }) => {
                 const up = c.state === 'running'
                 const key = `${c.project}/${c.name}`
                 const track = data?.history?.series[key]
                 const showTrack = (data?.history?.samples ?? 0) > 1 && track !== undefined
                 return (
-                  <Card key={key} className="w-full">
-                    <Card.Header className="flex items-center justify-between gap-2">
+                  <Card key={key} className="container-service-card w-full">
+                    <Card.Header className="container-service-header flex items-center justify-between gap-2">
                       <Card.Title className="truncate font-mono text-sm" title={c.container_name ?? c.name}>
                         {c.name}
                       </Card.Title>
@@ -374,11 +517,12 @@ export default function Containers() {
                       </Chip>
                     </Card.Header>
 
-                    <Card.Content className="flex flex-col gap-2">
-                      <p className="truncate font-mono text-[11px] text-default-400" title={c.image ?? ''}>
-                        {c.image ?? '—'}
-                      </p>
-                      <p className="text-xs text-default-500">{c.status}</p>
+                    <Card.Content className="container-service-content flex flex-col gap-2">
+                      <div className="container-image-line">
+                        <span>Image</span>
+                        <code className="truncate" title={c.image ?? ''}>{c.image ?? '—'}</code>
+                      </div>
+                      <p className="container-service-status">{c.status}</p>
 
                       {c.health !== 'none' && (
                         <div>
@@ -402,7 +546,7 @@ export default function Containers() {
                           not running (stats has no row for it): render "—" with
                           an empty meter, never a zero that reads as "idle". */}
                       {up && (
-                        <div className="flex flex-col gap-2 border-t border-default-100 pt-2">
+                        <div className="container-metrics">
                           <Meter
                             label="CPU"
                             display={c.cpu_percent === null ? '—' : `${c.cpu_percent.toFixed(1)}%`}
@@ -433,14 +577,14 @@ export default function Containers() {
                           nulls appended, so the line visibly breaks instead of
                           freezing or dropping to zero. */}
                       {showTrack && track && (
-                        <div className="grid grid-cols-2 gap-3 border-t border-default-100 pt-2">
+                        <div className="container-trends">
                           <Trend label="CPU" unit="%" data={track.cpu} tone="accent" />
                           <Trend label="MEM" unit="%" data={track.mem} tone="success" max={100} />
                         </div>
                       )}
 
                       {c.ports.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
+                        <div className="container-ports">
                           {c.ports.map((pt) => (
                             <span
                               key={pt}
@@ -453,12 +597,12 @@ export default function Containers() {
                       )}
                     </Card.Content>
 
-                    <Card.Footer className="flex justify-end gap-2">
+                    <Card.Footer className="container-service-actions flex justify-end gap-2">
                       <button
                         disabled={busy !== null || up || !c.controllable || !data?.daemon.running}
                         onClick={() => act(c, 'start')}
                         title={c.controllable ? '' : 'Not a compose service — cannot be started from here'}
-                        className="rounded-md border border-default-300 px-3 py-1.5 text-xs hover:border-accent hover:text-accent disabled:opacity-40"
+                        className="container-action start"
                       >
                         {busy === `${key}:start` ? 'Starting…' : 'Start'}
                       </button>
@@ -466,7 +610,7 @@ export default function Containers() {
                         disabled={busy !== null || !up || !c.controllable || !data?.daemon.running}
                         onClick={() => act(c, 'stop')}
                         title={c.controllable ? '' : 'Not a compose service — cannot be stopped from here'}
-                        className="rounded-md border border-default-300 px-3 py-1.5 text-xs hover:border-danger hover:text-danger disabled:opacity-40"
+                        className="container-action stop"
                       >
                         {busy === `${key}:stop` ? 'Stopping…' : 'Stop'}
                       </button>
@@ -475,9 +619,37 @@ export default function Containers() {
                 )
               })}
             </div>
-          </div>
-        ))}
+          </section>
+          )
+        })}
+        <Pager
+          page={paged.page}
+          pages={paged.pages}
+          first={paged.first}
+          last={paged.last}
+          total={allContainers.length}
+          onPrev={paged.prev}
+          onNext={paged.next}
+        />
       </div>
-    </>
+
+      <ComposeFileViewer
+        isOpen={composeViewerOpen}
+        onClose={closeComposeViewer}
+        projectLabel={selectedCompose?.label ?? ''}
+        filePath={selectedCompose?.file ?? ''}
+        fetchContent={fetchComposeContent}
+        runningServices={runningServices}
+      />
+
+      {buildJob && (
+        <BuildLog
+          jobId={buildJob.jobId}
+          projectLabel={buildJob.project}
+          onClose={() => setBuildJob(null)}
+          onFinished={finishBuild}
+        />
+      )}
+    </div>
   )
 }

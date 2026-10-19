@@ -41,8 +41,11 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
+import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -79,14 +82,16 @@ _HISTORY_LIMIT = 500
 
 
 def cache_dir() -> Path:
-    """Where the panel keeps state that should outlive a restart."""
+    """Where the panel keeps state that should outlive a restart.
+
+    Delegates to config.panel_cache_dir() so there is exactly one definition of
+    the AppData root; IA_PANEL_CACHE_DIR still wins for a caller that wants this
+    one directory somewhere else without moving everything else.
+    """
     override = os.environ.get("IA_PANEL_CACHE_DIR")
     if override:
         return Path(override)
-    base = os.environ.get("APPDATA")
-    if base:
-        return Path(base) / "IAProject" / "panel-cache"
-    return Path.home() / "AppData" / "Roaming" / "IAProject" / "panel-cache"
+    return config.panel_cache_dir()
 
 
 def history_path() -> Path:
@@ -274,6 +279,49 @@ def _local_bundle(dirpath: Path) -> dict | None:
         "verified": None,
         "verify_detail": "not hashed",
     }
+
+
+def valid_name(name: str) -> bool:
+    """Whether a value is a single artifact name accepted by the MEGA tools."""
+    forbidden = '<>:"|?*'
+    return bool(
+        name
+        and "/" not in name
+        and "\\" not in name
+        and not name.startswith(".")
+        and name.rstrip(" .") == name
+        and not any(char in forbidden or ord(char) < 32 for char in name)
+    )
+
+
+def local_archive(name: str) -> Path | None:
+    """Resolve a local archive without allowing a name or symlink to escape exports/."""
+    if not valid_name(name):
+        return None
+    exports = (config.REPO / "exports").resolve()
+    archive = (exports / f"{name}{BUNDLE_SUFFIX}" /
+               f"{name}{EVIDENCE_SUFFIX}").resolve()
+    try:
+        archive.relative_to(exports)
+    except ValueError:
+        return None
+    return archive if archive.is_file() else None
+
+
+def invalidate_local_cache() -> None:
+    """Drop the short-lived local listing after an artifact has been recovered."""
+    _local_cache.update(at=0.0, payload=None)
+
+
+def invalidate_remote_cache() -> None:
+    """Drop the MEGA listing after something was pushed to it.
+
+    The remote listing is cached for five minutes, which is the right cadence
+    for a polled status page and the wrong one straight after an upload the
+    operator just triggered - they would watch a successful export and be told
+    nothing arrived.
+    """
+    _remote_cache.update(at=0.0, payload=None)
 
 
 def local(force: bool = False) -> list[dict]:
@@ -808,3 +856,210 @@ def snapshot(remote_root: str = "/", force: bool = False) -> dict:
 
 if __name__ == "__main__":  # manual probe: `python -m python.panel.artifacts`
     print(json.dumps(snapshot(), indent=2))
+
+
+# ---------------------------------------------------------------------------
+# Export: seal and push a local bundle to MEGA
+#
+# The mirror of Recover, which pulls a remote bundle down. This pushes one up,
+# through the same mega/upload.py an operator would run by hand - not a
+# reimplementation of it, because that script owns the determinism guarantees
+# (sorted members, normalised mtimes, the checksum taken over the finished file)
+# and a second uploader would quietly be a different thing producing different
+# bytes under the same name.
+#
+# Job-based rather than a blocking request: sealing a large bundle and pushing it
+# over a consumer link is minutes, and the interesting part is the log. Same
+# in-memory job shape as the compose build in containers.py, for the same reason.
+#
+# Gated on config/artifacts.yaml's upload_artifacts. That option is the operator
+# saying "this lab does not send evidence off the host", and a button in a
+# browser is exactly the kind of thing that has to honour it: the toggle that
+# turns uploading off must mean it everywhere, not just in the analyzer.
+# ---------------------------------------------------------------------------
+
+EXPORT_MAX_LOG_LINES = 4000
+EXPORT_JOB_TTL = 3600.0
+
+# The uploader gets the configured timeout; the subprocess gets that plus a
+# margin for sealing and process teardown, so a stuck upload is still killed.
+EXPORT_GRACE = 180.0
+
+_uploader_job_lock = threading.Lock()
+_uploader_jobs: dict[str, dict] = {}
+
+
+def _valid_remote_root(root: str) -> str | None:
+    """The root if it is a plain absolute MEGA path, else None."""
+    if not isinstance(root, str):
+        return None
+    root = root.strip()
+    if not root.startswith("/") or "\\" in root or "\x00" in root:
+        return None
+    if any(part == ".." for part in root.split("/")):
+        return None
+    return root
+
+
+def start_export(name: str, remote_root: str = "/", timeout: int | None = None) -> tuple[bool, dict]:
+    """Seal and upload one bundle; returns (ok, job-or-error)."""
+    if not valid_name(name):
+        return False, {"error": "invalid artifact name"}
+    root = _valid_remote_root(remote_root)
+    if root is None:
+        return False, {"error": "invalid MEGA remote root"}
+
+    bundle_dir = config.REPO / "exports" / f"{name}{BUNDLE_SUFFIX}"
+    if not bundle_dir.is_dir():
+        return False, {
+            "error": f"no local bundle for '{name}'",
+            "detail": f"expected {bundle_dir.name}/ under exports/; run an analysis "
+                      "with store_artifact enabled first",
+        }
+
+    # Read through the analysis parser so the button's gate and the toggle the
+    # operator just flipped can never disagree about whether uploading is on.
+    from . import analysis  # local import: analysis imports nothing from here
+
+    if not analysis.artifact_upload_enabled():
+        return False, {
+            "error": "uploading is disabled",
+            "detail": "upload_artifacts is false in config/artifacts.yaml - "
+                      "enable it on the Analysis Configuration page first",
+        }
+
+    seconds = timeout or analysis.artifact_upload_timeout()
+
+    # Pre-flight the key BEFORE the job starts. A missing key is a configuration
+    # problem the operator can fix in a second; discovering it two minutes into a
+    # streaming upload job, after the bundle has been built, is not the same
+    # experience. upload.py still refuses to fall back to plaintext, so this is
+    # about telling people early rather than about safety.
+    encrypt = analysis.artifact_encrypt_enabled()
+    recipient = analysis.artifact_encryption_recipient()
+    if encrypt:
+        try:
+            _resolve_recipient(recipient, analysis.artifact_admin_public_key())
+        except Exception as exc:                       # noqa: BLE001
+            return False, {
+                "error": f"cannot seal to the '{recipient}' key",
+                "detail": f"{type(exc).__name__}: {exc}",
+            }
+
+    now = time.time()
+    with _uploader_job_lock:
+        _prune_uploader_jobs(now)
+        for job in _uploader_jobs.values():
+            if job["name"] == name and job["state"] == "running":
+                return True, {"job_id": job["job_id"], "reused": True}
+        job_id = uuid.uuid4().hex[:12]
+        _uploader_jobs[job_id] = {
+            "job_id": job_id, "name": name, "remote_root": root,
+            "state": "running", "lines": [], "dropped": 0,
+            "encrypt": encrypt, "recipient": recipient,
+            "started_at": now, "finished_at": None, "exit_code": None,
+        }
+
+    threading.Thread(target=_run_export, args=(_uploader_jobs[job_id], root, seconds),
+                     daemon=True).start()
+    return True, {"job_id": job_id, "reused": False, "encrypted": encrypt,
+                  "recipient": recipient if encrypt else None}
+
+
+def _resolve_recipient(recipient: str, admin_key: str):
+    """Load the recipient key now, so a missing one is a 400 and not a job log.
+
+    Imported lazily: seal.py pulls in `cryptography`, and the artifacts page has
+    to load on a machine where that is not installed even when nobody is
+    exporting anything.
+    """
+    sys.path.insert(0, str(config.REPO / "mega"))
+    import seal                                       # noqa: PLC0415
+    if recipient == "admin":
+        return seal.admin_recipient(Path(admin_key) if admin_key else None)
+    return seal.user_recipient()
+
+
+def _prune_uploader_jobs(now: float) -> None:
+    for job_id in [k for k, v in _uploader_jobs.items()
+                   if v.get("state") != "running"
+                   and now - v.get("finished_at", now) > EXPORT_JOB_TTL]:
+        del _uploader_jobs[job_id]
+
+
+def _run_export(job: dict, remote_root: str, timeout: int) -> None:
+    """Stream mega/upload.py into the job record.
+
+    An argument list, never a shell string: the artifact name is a path
+    component that reaches a filesystem and a remote path, and neither should be
+    anything a shell could interpret.
+    """
+    script = config.REPO / "mega" / "upload.py"
+    if not script.is_file():
+        job["lines"].append(f"uploader not found: {script}")
+        job.update(state="error", exit_code=-1, finished_at=time.time())
+        return
+
+    command = [sys.executable, str(script), "--artifact", job["name"],
+               "--remote-root", remote_root, "--timeout", str(timeout),
+               # Stated explicitly, both ways, so what leaves the host is the
+               # config's decision and never a default that happens to match.
+               "--encrypt" if job.get("encrypt") else "--no-encrypt",
+               "--recipient", job.get("recipient") or "user"]
+    try:
+        proc = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+            cwd=config.REPO,
+        )
+    except OSError as exc:
+        job["lines"].append(f"could not start the uploader: {exc}")
+        job.update(state="error", exit_code=-1, finished_at=time.time())
+        return
+
+    try:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            job["lines"].append(raw.rstrip("\n"))
+            if len(job["lines"]) > EXPORT_MAX_LOG_LINES:
+                drop = len(job["lines"]) - EXPORT_MAX_LOG_LINES
+                del job["lines"][:drop]
+                job["dropped"] += drop
+        code = proc.wait(timeout=timeout + EXPORT_GRACE)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        job["lines"].append(
+            f"upload exceeded {timeout + int(EXPORT_GRACE)}s and was killed")
+        code = -1
+    except Exception as exc:  # noqa: BLE001 - the UI shows the reason
+        job["lines"].append(f"upload failed: {type(exc).__name__}: {exc}")
+        code = -1
+
+    if code == 0:
+        job["lines"].append("")
+        job["lines"].append(f"Exported {job['name']} to MEGA {remote_root}.")
+        # The listing is cached for five minutes and the bundle may be brand new,
+        # so a successful export invalidates it. Otherwise the button would work
+        # and the page would insist nothing arrived.
+        invalidate_remote_cache()
+        invalidate_local_cache()
+    job.update(state="done" if code == 0 else "error",
+               exit_code=code, finished_at=time.time())
+
+
+def export_job(job_id: str) -> dict | None:
+    """Current state of an export job, or None if it is not one of ours."""
+    with _uploader_job_lock:
+        job = _uploader_jobs.get(job_id)
+        if job is None:
+            return None
+        return {
+            "job_id": job["job_id"],
+            "name": job["name"],
+            "remote_root": job["remote_root"],
+            "state": job["state"],
+            "lines": list(job["lines"]),
+            "dropped": job["dropped"],
+            "exit_code": job["exit_code"],
+            "elapsed": round((job["finished_at"] or time.time()) - job["started_at"], 1),
+        }

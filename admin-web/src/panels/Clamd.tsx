@@ -1,4 +1,7 @@
-import { Alert, Button, Card, Chip } from '@heroui/react'
+import { Alert } from '@heroui/react/alert'
+import { Button } from '@heroui/react/button'
+import { Card } from '@heroui/react/card'
+import { Chip } from '@heroui/react/chip'
 import Loading from '../components/Loading'
 import Icon, { type IconName } from '../components/Icon'
 import { StatTile } from '../components/Stat'

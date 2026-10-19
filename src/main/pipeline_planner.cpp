@@ -1,5 +1,6 @@
 #include "pipeline_planner.hpp"
 
+#include "app_paths.hpp"
 #include "crash_handler.hpp"
 #include "debug_dump_macro.hpp"
 #include "exporter.hpp"
@@ -7,6 +8,7 @@
 #include "phase_compression.hpp"
 #include "pipeline.hpp"
 #include "redact.hpp"
+#include "resume.hpp"
 
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
@@ -98,6 +100,10 @@ const std::vector<phase_info>& build_catalog() {
       {phase_id::model, "model",
        "EMBER2024 LightGBM score (features are extracted inside ml/serve.py)",
        "ml/<stem>_ml.json", "ml", {}},
+      {phase_id::yara_gen, "yara_gen",
+       "generate NEW yara rules from this sample with yarGen-Go (opt-in: slow, "
+       "and the output is unreviewed - validate before deploying)",
+       "yara_gen/<stem>_generated.yar", "", {}},
       {phase_id::report_export, "export",
        "write the artifact set for everything that ran",
        "exports/<stem>_analysis/", "", {}},
@@ -565,7 +571,37 @@ pipeline_config parse_default() {
 
 pipeline_config load(const std::string& spec) {
   const std::string cleaned = trim(spec);
-  if (cleaned.empty() || cleaned == "default") return parse_default();
+  if (cleaned.empty() || cleaned == "default") {
+    // `default` is not only a built-in: it is also pipelines/default.yaml, and
+    // the Analysis Configuration page lists and edits that file like any other
+    // pipeline. Returning the built-in instead meant those edits - the
+    // environment skip flags above all - were silently discarded, because the
+    // file was never opened. A skip flag that does not skip is worse than no
+    // flag: it reads as protection that is not there.
+    //
+    // So: read the file when it exists, and keep the built-in as the fallback,
+    // so a missing or relocated pipelines/default.yaml still analyses a sample
+    // exactly as it always did.
+    for (const std::filesystem::path& cand : bare_candidates("default")) {
+      std::error_code ec;
+      if (!std::filesystem::exists(cand, ec) || ec) continue;
+      std::ifstream in(cand, std::ios::binary);
+      if (!in) continue;
+      const std::string text((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+      pipeline_config from_file = from_yaml_text(text, cand.string());
+      // An empty phase list is a config that would analyse nothing while
+      // looking configured. Said plainly rather than silently run as the
+      // built-in, which is a different plan than the operator is looking at.
+      if (from_file.phases.empty()) {
+        throw std::runtime_error(
+            cand.string() + ": selects no phases; the built-in default is used "
+                           "only when this file is absent");
+      }
+      return from_file;
+    }
+    return parse_default();
+  }
 
   const std::size_t first = cleaned.find_first_not_of(" \t\r\n");
   if (first != std::string::npos &&
@@ -643,7 +679,8 @@ artifact_options load_artifact_options() {
   }
 
   const std::set<std::string> allowed{
-      "store_artifact", "upload_artifacts", "remote_root", "timeout_seconds"};
+      "store_artifact", "upload_artifacts", "remote_root", "timeout_seconds",
+      "encrypt_artifacts", "encryption_recipient", "admin_public_key"};
   for (const auto& entry : root) {
     if (!entry.first.IsScalar()) {
       throw std::runtime_error(path.string() + ": artifact config keys must be strings");
@@ -658,6 +695,9 @@ artifact_options load_artifact_options() {
     if (root["upload_artifacts"]) options.upload_artifacts = root["upload_artifacts"].as<bool>();
     if (root["remote_root"]) options.remote_root = root["remote_root"].as<std::string>();
     if (root["timeout_seconds"]) options.timeout_seconds = root["timeout_seconds"].as<int>();
+    if (root["encrypt_artifacts"]) options.encrypt_artifacts = root["encrypt_artifacts"].as<bool>();
+    if (root["encryption_recipient"]) options.encryption_recipient = root["encryption_recipient"].as<std::string>();
+    if (root["admin_public_key"]) options.admin_public_key = root["admin_public_key"].as<std::string>();
   } catch (const YAML::Exception& e) {
     throw std::runtime_error(path.string() + ": invalid artifact option value: " + e.what());
   }
@@ -666,6 +706,29 @@ artifact_options load_artifact_options() {
   }
   if (options.timeout_seconds < 1 || options.timeout_seconds > 86400) {
     throw std::runtime_error(path.string() + ": 'timeout_seconds' must be between 1 and 86400");
+  }
+  if (options.encryption_recipient != "user" && options.encryption_recipient != "admin") {
+    throw std::runtime_error(path.string() + ": 'encryption_recipient' must be 'user' or 'admin'");
+  }
+  // IA_ARTIFACT_UPLOAD=0 is the escape hatch for anything that must not put
+  // evidence on a third-party account: CI, and the panel's test runner, which
+  // starts the analyzer from a browser button. It only ever turns uploading
+  // OFF - nothing can re-enable it - so it cannot be used to disable the
+  // operator's intent, only to override it in a context that asks for it
+  // explicitly by name.
+  if (const char* off = std::getenv("IA_ARTIFACT_UPLOAD");
+      off != nullptr && (std::string(off) == "0" || std::string(off) == "false")) {
+    if (options.upload_artifacts) {
+      LOG_WARN("artifacts: upload suppressed by IA_ARTIFACT_UPLOAD=0");
+    }
+    options.upload_artifacts = false;
+  }
+  // Naming the admin key without turning encryption on is almost always a
+  // mistake: it looks configured but does nothing. Said out loud rather than
+  // rejected, because it is not wrong on its own.
+  if (!options.admin_public_key.empty() && !options.encrypt_artifacts) {
+    LOG_WARN("artifacts: 'admin_public_key' is set but 'encrypt_artifacts' is false, "
+             "so the bundle will NOT be sealed");
   }
   std::vector<std::filesystem::path> script_candidates{
       path.parent_path().parent_path() / "mega" / "upload.py",
@@ -823,11 +886,87 @@ void run_phases(context& ctx, const pipeline_config& cfg) {
 
   // Prologue: always, unnumbered (hashes) or self-numbering (preamble sets
   // the phase total from the config).
+  //
+  // Both always run, even on a resume. They are cheap - open the file, hash it -
+  // and everything after them reads what they fill in (ctx.info, ctx.stem,
+  // ctx.file_hash), so skipping them would break the run rather than save time.
   run_preamble(ctx);
   run_hashes(ctx);
 
+  // Checkpointing starts here, not in main: the stem the point file is keyed by
+  // is produced by the prologue, so anything earlier would key every run of
+  // every sample under the same name.
+  resume::begin(cfg.name, cfg.source, ctx.path, logging::current_run_id(), ctx.stem);
+
+  const std::vector<phase_id> skipped = cfg.resumed;
+
+  if (!skipped.empty()) {
+    ctx.resumed_phases.emplace();
+    ctx.resume_source = cfg.resume_source;
+    for (phase_id p : cfg.phases) {
+      if (std::find(skipped.begin(), skipped.end(), p) != skipped.end()) {
+        ctx.resumed_phases->push_back(to_name(p));
+      }
+    }
+
+    std::string list;
+    for (const std::string& name : *ctx.resumed_phases) {
+      if (!list.empty()) list += ", ";
+      list += name;
+    }
+    console::info("resuming: " + std::to_string(ctx.resumed_phases->size()) +
+                  " phase(s) already completed, skipping [" + list + "]");
+    if (!cfg.resume_source.empty()) {
+      console::info("resume source: " + cfg.resume_source);
+    }
+
+    // What a skip costs, named.
+    //
+    // Results live in `context`, not on disk: a phase that is skipped leaves
+    // nothing in memory for the phases after it, so anything that declares a
+    // dependency on a skipped phase runs with less than it expects. The
+    // catalog's own `requires` list decides which phases those are, rather than
+    // a guess about which phases look dependent.
+    std::vector<std::string> warnings;
+    for (phase_id p : cfg.phases) {
+      if (std::find(skipped.begin(), skipped.end(), p) != skipped.end()) continue;
+      for (phase_id req : build_catalog()[static_cast<std::size_t>(p)].requires_phases) {
+        if (std::find(skipped.begin(), skipped.end(), req) == skipped.end()) continue;
+        warnings.push_back("'" + to_name(p) + "' needs '" + to_name(req) +
+                           "', which is being skipped");
+      }
+    }
+    if (!warnings.empty()) {
+      print_warn("resume is not free: a skipped phase leaves nothing in memory for "
+                 "the phases after it");
+      for (const std::string& w : warnings) print_warn("  " + w);
+      console::info("resume from before '" + to_name(skipped.front()) +
+                    "' instead if those results matter");
+    }
+  }
+
   for (phase_id p : cfg.phases) {
     const std::string phase_name = to_name(p);
+
+    // Ctrl+C is honoured between phases, never inside one: a phase can be part
+    // way through writing its artifacts, and abandoning it there is how a run
+    // leaves a half-written JSON that the next run reads as truth.
+    if (resume::stop_requested()) {
+      ctx.interrupted = true;
+      console::info("stopping before '" + phase_name +
+                    "' at the operator's request; resume this run with --resume");
+      break;
+    }
+
+    if (std::find(skipped.begin(), skipped.end(), p) != skipped.end()) {
+      // Marked in ran_mask so a phase gated on "did radare2 run?" behaves the
+      // way it would after a real run - `ran` in run_summary.json stays honest
+      // because that list is built from what this run actually executed.
+      ctx.ran_mask |= bit(p);
+      console::info("skipping '" + phase_name + "' (completed in an earlier run)");
+      continue;
+    }
+
     // The crash report leads with this, so a dump and a crash report of the
     // same run name the same phase.
     crash::set_state(phase_name, ctx.path);
@@ -858,6 +997,7 @@ void run_phases(context& ctx, const pipeline_config& cfg) {
       case phase_id::recovery:          run_error_recovery(ctx);    break;
       case phase_id::cti:               run_cti(ctx);               break;
       case phase_id::model:             run_ml_score(ctx);          break;
+      case phase_id::yara_gen:           run_yara_gen(ctx);           break;
       case phase_id::report_export:     run_export(ctx);            break;
       case phase_id::dashboard:         run_dashboard(ctx);         break;
       case phase_id::sanity:            run_sanity(ctx);            break;
@@ -865,6 +1005,11 @@ void run_phases(context& ctx, const pipeline_config& cfg) {
       default:                                                  break;
     }
     ctx.ran_mask |= bit(p);
+    ctx.executed_mask |= bit(p);
+    // The checkpoint is written here rather than from the interrupt handler, so
+    // it is also correct when the process dies the ungraceful way. One small
+    // file per phase, next to work that takes seconds.
+    resume::phase_completed(phase_name);
   }
 }
 
@@ -886,9 +1031,17 @@ void write_run_summary(const context& ctx, const pipeline_config& cfg,
   for (phase_id p : cfg.phases) requested.push_back(to_name(p));
   json inserted = json::array();
   for (const std::string& s : cfg.inserted) inserted.push_back(s);
+  // `ran` is what THIS run executed. `resumed_from` is what it inherited, kept
+  // separate because the two answer different questions: "what did this process
+  // do" and "what does the report contain". A resumed manifest that claimed
+  // the skipped phases ran here would be lying about its own provenance.
   json ran = json::array();
   for (phase_id p : cfg.phases) {
-    if ((ctx.ran_mask & bit(p)) != 0) ran.push_back(to_name(p));
+    if ((ctx.executed_mask & bit(p)) != 0) ran.push_back(to_name(p));
+  }
+  json resumed_from = json::array();
+  if (ctx.resumed_phases) {
+    for (const std::string& s : *ctx.resumed_phases) resumed_from.push_back(s);
   }
 
   json j = {
@@ -902,25 +1055,68 @@ void write_run_summary(const context& ctx, const pipeline_config& cfg,
                         {"upload_artifacts", cfg.artifacts.upload_artifacts},
                         {"remote_root", cfg.artifacts.remote_root},
                         {"timeout_seconds", cfg.artifacts.timeout_seconds},
+                        {"encrypt_artifacts", cfg.artifacts.encrypt_artifacts},
+                        {"encryption_recipient", cfg.artifacts.encryption_recipient},
                     }}}},
       {"input", ctx.path},
       {"stem", ctx.stem},
       {"format", {{"pe", ctx.is_pe}, {"elf", ctx.is_elf}, {"macho", ctx.is_macho}}},
       {"phases", {{"requested", std::move(requested)},
                   {"auto_inserted", std::move(inserted)},
-                  {"ran", std::move(ran)}}},
+                  {"ran", std::move(ran)},
+                  {"resumed_from", std::move(resumed_from)}}},
       {"artifacts", ctx.exported_artifacts},
       {"artifact_bundle", {
           {"created", ctx.artifact_bundle_created},
           {"uploaded", ctx.artifact_bundle_uploaded},
+          {"encrypted", ctx.artifact_bundle_encrypted},
           {"error", ctx.artifact_action_error},
       }},
-      {"result", exit_code == 0 ? "success" : "failed"},
+      {"result", ctx.interrupted ? "interrupted"
+                             : (exit_code == 0 ? "success" : "failed")},
       {"exit_code", exit_code},
       {"failed", ctx.failed},
       {"duration_ms", duration_ms},
   };
+  if (ctx.interrupted || ctx.resumed_phases) {
+    // Why this manifest is partial, and how to make it whole. The point file is
+    // named so the next step does not have to be guessed at.
+    j["resume"] = {
+        {"interrupted", ctx.interrupted},
+        {"source", ctx.resume_source},
+        {"checkpoint", resume::path_for(ctx.stem, app_paths::logs_root()).string()},
+        {"completed_count", ctx.resumed_phases ? ctx.resumed_phases->size() : 0u},
+    };
+  }
   if (!ctx.ml_skip_reason.empty()) j["ml_skip_reason"] = ctx.ml_skip_reason;
+  // Generated rules in the run manifest, for the same reason ml_skip_reason is
+  // here: the .yar file is the artifact, and the manifest should say what
+  // produced it without anyone having to open the yara_gen/ folder to learn
+  // whether the LLM pass ran.
+  if (!ctx.yara_gen_skip_reason.empty())
+    j["yara_gen_skip_reason"] = ctx.yara_gen_skip_reason;
+  if ((ctx.ran_mask & bit(phase_id::yara_gen)) != 0) {
+    const auto& g = ctx.yara_gen_result;
+    if (g.st == yara_gen::status::ok) {
+      j["yara_gen"] = {
+          {"rule_file", g.rule_file},
+          {"rule_bytes", g.rule_bytes},
+          {"simple_rules", g.simple_rules},
+          {"super_rules", g.super_rules},
+          {"identifier", g.identifier},
+          {"author", g.author},
+          // False is a downgrade worth recording: without config.yaml the
+          // strings are scored without the LLM pass, so the rules are weaker
+          // than the tool can produce and nobody should assume otherwise.
+          {"llm_used", g.llm_used},
+          {"llm_reason", g.llm_reason},
+          {"db_files", g.db_files},
+          {"reviewed", false},   // generated rules are never pre-reviewed
+      };
+    } else if (g.attempted) {
+      j["yara_gen_error"] = g.error;
+    }
+  }
   // Model provenance in the run manifest: which model build and which decision
   // point produced this run's verdict, without hunting through the ml/ JSON.
   if ((ctx.ran_mask & bit(phase_id::model)) != 0) {

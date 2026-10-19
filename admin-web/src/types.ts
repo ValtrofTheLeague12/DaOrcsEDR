@@ -161,6 +161,12 @@ export interface LogFile {
   id: string
   group: string
   name: string
+  /**
+   * Coarse file type from the server. `trace` is pulled out of the Logs panel
+   * into its own tab: trace.txt is ~80 MB of native call-graph records, and
+   * dropping it into a generic log viewer is how you get an unreadable page.
+   */
+  kind: 'log' | 'jsonl' | 'trace' | 'other'
   bytes: number
   modified: number
   age_seconds: number
@@ -196,6 +202,62 @@ export interface LogTail {
   ansi_stripped?: number
   // True for .jsonl and .json logs, which get structured rendering.
   jsonl?: boolean
+  /** Per-minute line counts over the same window, for the volume chart. */
+  timeline?: { minute: string; count: number }[]
+}
+
+/** Level counts and volume breakdown over a bounded backward read. */
+export interface LogSummary {
+  id?: string
+  name?: string
+  error?: string
+  total: number
+  sampled_lines: number
+  truncated: boolean
+  bytes?: number
+  levels: Record<string, number>
+  timeline: { minute: string; count: number }[]
+  sources: { name: string; count: number }[]
+  tones: Record<string, string>
+}
+
+/**
+ * Aggregates over a native analyzer trace.
+ *
+ * Not a log summary and not interchangeable with one: these files have no
+ * levels and no wall-clock timestamps. What is there is a call graph - ENTER /
+ * LEAVE pairs, nesting depth, and a duration on every return.
+ */
+export interface TraceMetrics {
+  available: boolean
+  name: string | null
+  bytes: number
+  /** Trace records parsed out of the read window. */
+  events: number
+  /** Lines that looked like records but did not match. Usually binary bleed. */
+  malformed: number
+  channels: { name: string; count: number }[]
+  depth: { max: number; current: number }
+  span: { first_ms: number | null; last_ms: number | null; duration_ms: number | null }
+  kinds: Record<string, number>
+  duration_ms: {
+    count: number
+    total: number
+    avg: number | null
+    p50: number | null
+    p95: number | null
+    max: number | null
+  }
+  slowest: { signature: string; depth: number; duration_ms: number }[]
+  symbols: { name: string; count: number }[]
+  memory: {
+    process_id: string | null
+    fields: Record<string, { bytes?: number; count?: number; percent?: number; raw: string }>
+  } | Record<string, never>
+  analyzed_at: number
+  /** True when the read window did not reach the start of the file. */
+  clipped: boolean
+  error: string | null
 }
 
 // --- containers -----------------------------------------------------------
@@ -287,6 +349,7 @@ export interface ContainerList {
     local_volumes: StorageSection | null
     build_cache: StorageSection | null
   } | null
+  compose_files?: { label: string; file: string }[]
   projects: { label: string; compose_file: string; containers: Container[] }[]
   stats_available: boolean
   stats_containers: number
@@ -301,7 +364,212 @@ export interface ContainerList {
   } | null
 }
 
+// --- image builds ---------------------------------------------------------
+
+/** One `docker compose build` running on the panel, polled for its log. */
+export interface BuildJob {
+  job_id: string
+  project: string
+  /** 'running' until the process exits, then 'done' or 'error'. */
+  state: 'running' | 'done' | 'error'
+  /** The whole log so far; it grows with every poll. */
+  lines: string[]
+  /**
+   * Lines the server dropped to stay bounded. Non-zero means the log shown is
+   * a tail, not the whole thing - the end of a build log is the part that
+   * explains a failure, so that is what is kept.
+   */
+  dropped: number
+  exit_code: number | null
+  elapsed: number
+}
+
+/**
+ * One `mega/upload.py` run started from the Remote artifacts tab.
+ *
+ * Same shape as a build job because it is the same idea: a process the panel
+ * started that the page polls for its log. Sharing the shape is what lets both
+ * use the one job modal.
+ */
+export interface ArtifactExportJob {
+  job_id: string
+  name: string
+  /** MEGA path the bundle was pushed under. */
+  remote_root: string
+  state: 'running' | 'done' | 'error'
+  lines: string[]
+  dropped: number
+  exit_code: number | null
+  elapsed: number
+}
+
 // --- clamav (guest on the Qiling VM) --------------------------------------
+
+/** How a run of characters in the raw YAML should be painted. */
+export type YamlKind =
+  | 'key' | 'string' | 'number' | 'bool' | 'null' | 'comment' | 'punct'
+
+/**
+ * A service exactly as PyYAML parsed it.
+ *
+ * `config` is deliberately not a fixed set of named fields. An allowlist drops
+ * whatever it does not name (profiles, cap_add, sysctls, ulimits, extra_hosts),
+ * so the viewer would quietly under-report the file it claims to be showing.
+ */
+export interface ComposeService {
+  name: string
+  config: Record<string, unknown>
+}
+
+export interface ComposeFile {
+  label: string
+  file: string
+  /** The file text, exactly as on disk. */
+  content: string
+  services: ComposeService[]
+  /**
+   * `[start, length, kind]` over `content`, taken from PyYAML's node marks and
+   * sorted, non-overlapping. The client paints these; it never parses YAML.
+   */
+  spans: [number, number, YamlKind][]
+}
+
+// --- analysis configuration ------------------------------------------------
+
+/**
+ * One named pipeline from `pipelines/*.yaml`.
+ *
+ * `phases` is what the file declares; `resolved` is the order the analyzer will
+ * actually run, after prerequisites and the always-appended epilogue. Keeping
+ * both is the point of the page - a hand-written config lists the phases the
+ * operator picked, not the ones the planner inserts.
+ */
+export interface PipelineConfig {
+  name: string
+  description: string
+  /** Repo-relative path of the YAML file. */
+  file: string
+  /** 'repo' for a file in pipelines/, 'shadowed' when a later file reuses the name. */
+  source: string
+  /** False when the analyzer would refuse this file. `error` says why. */
+  ok: boolean
+  error: string
+  stages: { name: string; phases: string[] }[]
+  /** Declared phases, deduplicated, in declared order. */
+  phases: string[]
+  environment: { key: string; value: string; secret: boolean }[]
+  /** Declared + inserted prerequisites + the epilogue: the real run order. */
+  resolved: string[]
+  /** Phases in `resolved` that are not in `phases`. */
+  inserted: string[]
+  /** Phase names not in the analyzer's catalog. Non-empty means exit 2. */
+  unknown_phases: string[]
+  /** 'ok' | 'unknown' | 'unavailable' - whether the catalog could be consulted. */
+  phase_check: string
+  /** File mtime (unix seconds). When the config itself last changed. */
+  mtime: number
+  /** True when a phase-rush marker in the file records trimmed phase lists. */
+  rushed: boolean
+  content: string
+  spans: [number, number, YamlKind][]
+}
+
+/**
+ * One `environment:` option the analyzer actually reads.
+ *
+ * `honoured_by` is a file and line in the analyzer, and it is rendered next to
+ * the control on purpose: the panel is making a claim on the operator's behalf,
+ * and the claim should be checkable rather than trusted. An option with no
+ * reader is not offered.
+ */
+export interface EnvOption {
+  key: string
+  label: string
+  kind: 'flag' | 'number' | 'text'
+  detail: string
+  honoured_by: string
+  /** Phases this option changes the behaviour of, for the same reason. */
+  affects: string[]
+  /** flag: whether it is on when the file says nothing. */
+  default?: boolean
+  /** number: bounds, inclusive. */
+  min?: number
+  max?: number
+}
+
+export interface PhaseInfo {
+  name: string
+  description: string
+  /** Where this phase's output lands; "" when it only prints to the console. */
+  artifact: string
+  /** Local service it needs; "" when it needs none. */
+  service: string
+  /** Phases the planner inserts before this one if the config omits them. */
+  requires: string[]
+}
+
+export interface AnalysisConfig {
+  pipelines_dir: string
+  pipelines_present: boolean
+  pipelines: PipelineConfig[]
+  pipeline_count: number
+  /** Names of pipelines the analyzer would reject. */
+  broken: string[]
+  phases: {
+    /** False when the analyzer is down and the catalog could not be read. */
+    available: boolean
+    source: string
+    error: string
+    items: PhaseInfo[]
+    count: number
+    /** Always run, not selectable. */
+    always_on: string[]
+    /** Appended to any config that omits them. */
+    epilogue: string[]
+  }
+  artifacts: {
+    present: boolean
+    file: string
+    store_artifact: boolean
+    upload_artifacts: boolean
+    remote_root: string
+    timeout_seconds: number
+    /** Seal the bundle to a public key before upload. */
+    encrypt_artifacts: boolean
+    /** 'user' = this machine's operator key, 'admin' = the lab's public key. */
+    encryption_recipient: 'user' | 'admin'
+    /** Admin public key path; '' means the default location. */
+    admin_public_key: string
+    /** Anything the analyzer's own loader would reject. */
+    errors: string[]
+    /** Repo-relative path of mega/upload.py, the MEGA uploader. */
+    uploader_script: string
+    /** File mtime (unix seconds). */
+    mtime: number
+    content: string
+    spans: [number, number, YamlKind][]
+  }
+  /** Convenience mirror of artifacts.upload_artifacts: the one option with an
+   *  effect outside this host. */
+  mega_upload: boolean
+  mega_encrypt: boolean
+  encryption_recipient: 'user' | 'admin'
+  admin_public_key: string
+  /** Writable `environment:` options, with the code that reads each one. */
+  options: EnvOption[]
+  rush: {
+    /** Phases phase-rush drops. Each is a deliberate call, see analysis.py. */
+    phases: string[]
+    /** Pipelines carrying a rush marker. */
+    active: string[]
+  }
+  /** Newest mtime across everything this page reads, unix seconds. The one
+   *  label that answers "is what I am looking at current?" honestly - a
+   *  `checked_at` on a polled page only ever describes the poll. */
+  newest_edit: number
+  /** When this payload was assembled, unix seconds. */
+  checked_at: number
+}
 
 export interface ClamdResultFile {
   file: string
@@ -663,6 +931,82 @@ export interface ArtifactsSnapshot {
   error?: string
 }
 
+/**
+ * One guest, sampled over SSH + SFTP.
+ *
+ * `state` is the field to branch on. `pending` means the first collection has
+ * not landed, `down` carries the reason in `error`, and `up` is the only state
+ * in which the numbers mean anything. A machine with `metrics: null` has no
+ * credentials on file - that is not the same as a machine at zero.
+ */
+export interface VmMetrics {
+  state: 'pending' | 'up' | 'down'
+  ip: string
+  collected_at: number | null
+  age_seconds: number | null
+  hostname: string | null
+  kernel: string | null
+  cores: number | null
+  uptime_seconds: number | null
+  load: { '1': number | null; '5': number | null; '15': number | null }
+  cpu_percent: number | null
+  memory: {
+    total_bytes: number | null
+    used_bytes: number | null
+    available_bytes: number | null
+    percent: number | null
+    swap_total_bytes: number | null
+    swap_used_bytes: number | null
+    swap_percent: number | null
+  }
+  disk: {
+    total_bytes: number | null
+    used_bytes: number | null
+    free_bytes: number | null
+    percent: number | null
+  }
+  network: {
+    rx_bytes: number | null
+    tx_bytes: number | null
+    ifaces: number | null
+    addresses: string[]
+  }
+  processes: {
+    count: number | null
+    top: { pid: number | null; name: string; mem_bytes: number; mem_percent: number | null }[]
+  }
+  /**
+   * Rolling trend window, oldest first, up to half an hour.
+   *
+   * Collected server-side so the chart is already populated when a reader
+   * arrives, rather than restarting empty on every page load. Present on
+   * anything the panel has measured at least once; absent on a payload the
+   * backend never got to measure.
+   */
+  history?: VmMetricSample[]
+  error: string
+}
+
+/**
+ * One point of the guest's trend series.
+ *
+ * Every field is nullable, and that is not sloppiness: a failed collection still
+ * produces a point with all-null fields, so a gap in the chart reads as "we
+ * stopped measuring here" rather than "the machine was idle here". Collapsing
+ * those two is how a chart ends up drawing a calm straight line through an
+ * outage.
+ */
+export interface VmMetricSample {
+  at: number
+  cpu: number | null
+  mem: number | null
+  disk: number | null
+  load1: number | null
+  procs: number | null
+  rx: number | null
+  tx: number | null
+}
+
 export interface VmInfo {
   name: string
   uuid: string | null
@@ -671,11 +1015,23 @@ export interface VmInfo {
   state: string
   running: boolean
   /**
+   * True when `state` is one a machine can only reach by failing (aborted,
+   * baddimage, unavailable). Decided server-side by vms.crashed() so the status
+   * chip and the log parser cannot disagree about what counts as a crash.
+   */
+  crashed?: boolean
+  /**
    * Guest address. Null when the machine is off, or running without Guest
    * Additions reporting one - both mean there is nothing to connect to, and
    * both are more useful shown than defaulted to 0.0.0.0.
    */
   ip: string | null
+  /**
+   * IPv6 as the guest reported it. Kept apart from `ip` because a dual-stack
+   * sandbox has both, and showing one while implying that is the only address
+   * is a claim about the machine that is simply false.
+   */
+  ip6?: string | null
   mac: string | null
   adapter: string | null
   /** Megabytes, as VirtualBox reports it. */
@@ -689,14 +1045,439 @@ export interface VmInfo {
   detail: string
   /** Bounded tail of the VM's latest VirtualBox VBox.log run log. */
   run_log?: string
+  /** Null when the panel holds no SSH credentials for this machine. */
+  metrics?: VmMetrics | null
   /** Set when showvminfo failed for this one machine. */
   error?: string
+  /**
+   * What the guest itself reports about itself, via `VBoxManage guestproperty
+   * enumerate`.
+   *
+   * Partial because the backend sends `{}` - an empty object, not a record of
+   * null fields - when a machine has no Guest Additions or is powered off.
+   * `{}` is a meaningful answer ("the guest said nothing") and is distinct from
+   * an absent `guest` ("we did not ask"), so this has to admit that most of
+   * its fields may be missing. Reading `guest.net` unguarded is what took the
+   * card down once already.
+   */
+  guest?: Partial<VmGuestInfo>
+  /**
+   * The address `qiling_dlls/vm_info.json` expects this machine to have, for
+   * the one machine it names.
+   *
+   * Deliberately NOT merged into `ip`. This is where the project's tooling
+   * thinks the machine is; `ip` is where the guest says it is. They normally
+   * agree, and the times they do not - a re-IP'd sandbox, a config left
+   * pointing at a rebuilt machine - are exactly when the difference matters.
+   */
+  configured?: VmConfiguredEndpoint
+}
+
+/** The project's configured SSH endpoint for a machine, from vm_info.json. */
+export interface VmConfiguredEndpoint {
+  ip: string
+  port: number
+  source: string
+}
+
+// --- build ------------------------------------------------------------------
+//
+// Two reports, because they answer different questions and a build is only half
+// of what can go wrong:
+//
+//   toolchain - can this project COMPILE. Every entry is a CMake declaration.
+//   stack     - what the analyzer shells out to at analysis time: MalAPI, capa,
+//               the rule packs, the ML scorer. A build can succeed perfectly
+//               while capa.exe is missing, and then every analysis silently
+//               comes back with no capa section and no error.
+
+export interface BuildTool {
+  name: string
+  found: boolean
+  path: string | null
+  why: string
+}
+
+/** How an entry was declared, which decides how it was resolved. */
+export type DepKind =
+  // toolchain
+  | 'tool' | 'package' | 'archive' | 'library' | 'header' | 'pkg-config' | 'vendored'
+  // analysis stack
+  | 'program' | 'rules' | 'source' | 'data' | 'venv' | 'service' | 'manifest'
+
+export interface BuildDependency {
+  name: string
+  /** How CMakeLists.txt declares it, or what sort of stack entry it is. */
+  kind: DepKind
+  /**
+   * True when the declaration is REQUIRED - so a miss stops the build rather
+   * than warning. Optional entries are shown dimmed and do not block.
+   *
+   * Only the toolchain report gates the Build button. A missing analysis
+   * dependency does not stop a compile, so a stack miss is reported without
+   * disabling anything.
+   */
+  required: boolean
+  found: boolean
+  /** The exact artefact that satisfied it, or null. */
+  path: string | null
+  note: string
+}
+
+export interface DepCounts {
+  total: number
+  found: number
+  missing: number
+}
+
+export interface ToolchainReport {
+  available: boolean
+  reason: string | null
+  sysroot: string
+  sysroot_found: boolean
+  tools: BuildTool[]
+  dependencies: BuildDependency[]
+  /** How many REQUIRED entries are absent - the number that decides a build. */
+  missing_required: number
+  counts: DepCounts
+}
+
+export interface StackReport {
+  available: boolean
+  /** generate_sbom.py, the manifest the vendored and venv rows come from. */
+  manifest: string
+  /** False when that manifest could not be read; those rows are then unverified. */
+  manifest_loaded: boolean
+  dependencies: BuildDependency[]
+  missing_required: number
+  counts: DepCounts
+}
+
+export type DepReport = ToolchainReport | StackReport
+
+export interface BuildArtifact {
+  name: string
+  path: string
+  relative: string
+  bytes: number
+  modified: number
+  /** True for the analyzer specifically, and only when it actually linked. */
+  ready: boolean
+}
+
+/** What the built binary says about itself, and what the working tree says. */
+export interface BuildGitIdentity {
+  available: boolean
+  reason?: string
+  commit?: string
+  short?: string
+  branch?: string
+  subject?: string
+  author_date?: string
+  dirty?: boolean
+  dirty_count?: number
+}
+
+export interface BuildBakedIdentity {
+  available: boolean
+  reason?: string
+  version?: string
+  commit?: string | null
+  raw?: string
+}
+
+export interface BuildProvenance {
+  git: BuildGitIdentity
+  baked: BuildBakedIdentity
+  /** null when a comparison is not possible; false means they DISAGREE. */
+  agrees: boolean | null
+  note: string
+}
+
+export interface BuildFreshness {
+  available: boolean
+  reason?: string
+  stale: boolean | null
+  exe_path?: string
+  exe_mtime?: number
+  exe_bytes?: number
+  newest_source?: string | null
+  newest_source_mtime?: number | null
+  lag_seconds?: number
+  newer_sources?: { path: string; mtime: number }[]
+  note: string
+}
+
+export interface BuildCheck {
+  id: string
+  label: string
+  /** null = could not determine, which is not the same as failing. */
+  ok: boolean | null
+  detail: string
+}
+
+export interface BuildValidation {
+  checks: BuildCheck[]
+  verdict: 'pass' | 'fail' | 'unknown'
+  ran_at: number
+}
+
+export interface BuildConfiguration {
+  available: boolean
+  reason?: string
+  options: Record<string, string>
+  generator?: string
+  build_type?: string
+  compiler?: string
+  cache_path?: string
+}
+
+export interface BuildInspect {
+  provenance: BuildProvenance
+  freshness: BuildFreshness
+  validation: BuildValidation
+  configuration: BuildConfiguration
+}
+
+/** One selectable test. `effects` is what it TOUCHES, not what it checks. */
+export interface BuildTestEntry {
+  id: string
+  label: string
+  kind: 'smoke' | 'integration' | 'pytest'
+  description: string
+  effects: string[]
+  available: boolean
+  unavailable_reason: string | null
+  timeout: number
+}
+
+export interface BuildTestCatalogue {
+  entries: BuildTestEntry[]
+  quick: string[]
+  pytest_available: boolean
+  sample: string | null
+}
+
+export interface BuildTestResult {
+  id: string
+  label: string
+  state: 'pending' | 'running' | 'passed' | 'failed' | 'skipped'
+  detail: string | null
+  duration: number | null
+  code?: number | null
+}
+
+// --- Utils ---------------------------------------------------------------
+
+export interface SbomState {
+  available: boolean
+  reason?: string
+  stale: boolean | null
+  script_present: boolean
+  generated_at?: string | null
+  age_days?: number | null
+  tool?: string
+  format?: string
+  spec_version?: string
+  project?: string
+  total_components?: number
+  by_type?: Record<string, number>
+  by_origin?: Record<string, number>
+  by_language?: Record<string, number>
+  unresolved?: string[]
+  cyclonedx_bytes?: number
+  cyclonedx_present?: boolean
+  last_commit?: string | null
+  behind_last_commit?: boolean | null
+  note?: string
+}
+
+export interface MalapiState {
+  available: boolean
+  reason?: string | null
+  path?: string
+  remote?: string | null
+  branch?: string | null
+  commit?: string | null
+  short?: string
+  commit_date?: string | null
+  dirty?: boolean
+  dirty_count?: number
+  ahead?: number | null
+  behind?: number | null
+  up_to_date?: boolean
+  can_update?: boolean
+  note?: string
+}
+
+export interface YaraCollection {
+  name: string
+  rules: number
+  bytes: number
+}
+
+export interface YaraState {
+  available: boolean
+  reason?: string
+  collections: YaraCollection[]
+  total: number
+  bytes: number
+  largest?: { bytes: number; path: string }[]
+  is_git_checkout?: boolean
+  can_update?: boolean
+  update_reason?: string
+  compiler?: string | null
+  yara_version?: string | null
+  note?: string
+}
+
+export interface YargenCheck {
+  id: string
+  label: string
+  ok: boolean
+  detail: string
+  fix?: string | null
+}
+
+export interface YargenState {
+  available: boolean
+  reason?: string
+  checks: YargenCheck[]
+  ok?: boolean
+  commit?: string | null
+  remote?: string | null
+  update_script?: boolean
+  update_script_path?: string | null
+  faults?: string[]
+  note?: string
+}
+
+export interface UtilEntry {
+  id: string
+  label: string
+  utility: 'sbom' | 'malapi' | 'yara' | 'yargen'
+  description: string
+  effects: string[]
+  available: boolean
+  unavailable_reason: string | null
+  timeout: number
+}
+
+export interface UtilsOverview {
+  entries: UtilEntry[]
+  sbom: SbomState
+  malapi: MalapiState
+  yara: YaraState
+  yargen: YargenState
+}
+
+export interface BuildArtifacts {
+  artifacts: BuildArtifact[]
+  analyzer: BuildArtifact | null
+  analyzer_ready: boolean
+  build_dir: string
+  build_dir_exists: boolean
+}
+
+export type AnalyzerBuildState =
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'error'
+  /** Test runs report 'passed' when every selected test passed. Distinct from
+   *  'done' so the UI can say what actually happened rather than showing a
+   *  compile-style completion for a run of tests. */
+  | 'passed'
+
+/**
+ * One `build.ps1` compile of the analyzer.
+ *
+ * Named AnalyzerBuildJob rather than BuildJob: `BuildJob` is already the
+ * container image build, and two jobs with the same shape-ish name and
+ * different meanings is how a poll starts reading the wrong payload.
+ *
+ * `state` has an extra member over the container build's - `failed` - because
+ * build.ps1 distinguishes "the compiler rejected the code" from "the script
+ * itself could not run", and an operator debugging the difference needs to be
+ * able to tell them apart.
+ */
+export interface AnalyzerBuildJob {
+  id: string
+  state: AnalyzerBuildState
+  clean: boolean
+  started_at: number | null
+  finished_at: number | null
+  exit_code: number | null
+  error: string | null
+  command: string
+  log_line_count: number
+  artifact: string | null
+  /** Present on a full fetch; omitted from the job list, which is 10 rows. */
+  log?: string[]
+  /** How many lines were dropped from the head, when the log outgrew its cap. */
+  log_truncated?: number
+  /** 'tests' for a test run; absent for a build. The page shows the job log
+   *  for both, and this is what tells them apart. */
+  kind?: 'build' | 'tests'
+  /** Per-test verdicts. Present only on a test run. */
+  results?: BuildTestResult[]
+  /** Which tests were chosen, echoed back so the log header can name them. */
+  selected?: string[]
+  summary?: string
+}
+
+export interface BuildJobsState {
+  running: string | null
+  jobs: Omit<AnalyzerBuildJob, 'log'>[]
+  script: string
+  script_found: boolean
+}
+
+export interface BuildOverview {
+  toolchain: ToolchainReport
+  stack: StackReport
+  artifacts: BuildArtifacts
+  jobs: BuildJobsState
+}
+
+/** The half of the overview a "Check dependencies" refresh returns. */
+export interface DepRefresh {
+  toolchain: ToolchainReport
+  stack: StackReport
+}
+
+/** One adapter as the guest reports it: v4 and v6 are the SAME NIC. */
+export interface VmGuestNic {
+  index: number
+  v4: string | null
+  /** Prefix length, not a dotted mask. 24 means /24. */
+  v4_prefix: number | null
+  v6: string | null
+}
+
+export interface VmGuestInfo {
+  /** Guest Additions version, the extended string when there is one. */
+  additions: string | null
+  additions_core: string | null
+  product: string | null
+  release: string | null
+  version: string | null
+  service_pack: string | null
+  hostname: string | null
+  logged_on_users: string[] | null
+  net: VmGuestNic[]
 }
 
 export interface VmList {
   generated_at: number | null
   vms: VmInfo[]
-  counts: { total: number; running: number }
+  counts: { total: number; running: number; duplicates: number }
+  /**
+   * Registrations the server collapsed away. Reported rather than silently
+   * dropped - a machine vanishing from the fleet with no explanation reads as
+   * a VirtualBox fault.
+   */
+  duplicate_names: string[]
   /** False when VirtualBox itself is missing or unreadable. */
   available: boolean
   error: string | null
@@ -707,6 +1488,8 @@ export interface VmActionResult {
   detail: string
   name?: string
   action?: string
+  /** Echoed back for `start` so the confirmation can name the mode used. */
+  headless?: boolean
 }
 
 export type HypervisorId = 'virtualbox' | 'qemu' | 'vmware' | 'hyperv'
