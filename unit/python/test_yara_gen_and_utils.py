@@ -113,9 +113,12 @@ class TestLlmUsability:
         # with it.
         config_file.write_text(OLLAMA_CONFIG, encoding="utf-8")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        # The endpoint is stubbed shut. It used to rely on nothing happening to
+        # be listening on 11434, which is an assumption about the machine rather
+        # than about the code - and it failed on any workstation that had Ollama
+        # running, which is exactly the machine most likely to run this.
+        monkeypatch.setattr(yara_gen, "_port_open", lambda url, timeout=1.0: False)
         ok, why = yara_gen._llm_usable()
-        # Nothing is listening in CI, so this reports the endpoint - which is the
-        # actionable half and the whole point of the distinction.
         assert ok is False
         assert "ollama" in why and "11434" in why
 
@@ -198,21 +201,145 @@ class TestYaraInventory:
 
 
 class TestMalapiState:
-    def test_a_missing_checkout_is_reported(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(utils, "MALT_DIR", tmp_path / "absent")
-        state = utils.malapi()
-        assert state["available"] is False
-        assert state["can_update"] is False
+    """MalAPI rules are a scraped mirror, not a git checkout.
 
-    def test_a_non_git_directory_cannot_be_updated(self, monkeypatch, tmp_path):
-        # Being present is not enough: `git pull` needs a checkout, and the page
-        # has to say so rather than offering a button that fails.
-        plain = tmp_path / "malt"
-        plain.mkdir()
-        monkeypatch.setattr(utils, "MALT_DIR", plain)
+    These replace tests that asserted the old behaviour - that a missing `malt/`
+    made the rules unavailable - which described a repository that has nothing to
+    do with the rules.
+    """
+
+    def test_a_missing_mirror_is_reported(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(utils, "MALAPI_SITE", tmp_path / "absent")
+        monkeypatch.setattr(utils, "MALAPI_YAML", tmp_path / "absent")
         state = utils.malapi()
         assert state["available"] is False
-        assert "not a git checkout" in state["reason"]
+        assert "never been mirrored" in state["reason"]
+
+    def test_a_missing_generated_api_is_reported(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(utils, "MALAPI_SITE", tmp_path)
+        monkeypatch.setattr(utils, "MALAPI_YAML", tmp_path)
+        monkeypatch.setattr(utils, "MALAPI_SERVER", tmp_path / "absent.py")
+        state = utils.malapi()
+        assert state["available"] is False
+        assert "nothing to query" in state["reason"]
+
+    def test_an_api_older_than_its_mirror_is_flagged(self, monkeypatch, tmp_path):
+        # The combination that silently serves old rules: the site was
+        # re-mirrored but python/api/server.py was never regenerated from it.
+        site = tmp_path / "site"
+        yaml = tmp_path / "yaml"
+        site.mkdir()
+        yaml.mkdir()
+        (site / "new.html").write_text("x", encoding="utf-8")
+        (yaml / "a.yaml").write_text("x", encoding="utf-8")
+        # Mirror is the newer of the two.
+        import os, time
+        old = time.time() - 86400
+        os.utime(yaml / "a.yaml", (old, old))
+        monkeypatch.setattr(utils, "MALAPI_SITE", site)
+        monkeypatch.setattr(utils, "MALAPI_YAML", yaml)
+        monkeypatch.setattr(utils, "MALAPI_SERVER", yaml / "server.py")
+        monkeypatch.setattr(utils, "MALAPI_LOCK", tmp_path / "nope.lock")
+        state = utils.malapi()
+        assert state["generated_stale"] is True
+        assert "no longer match the site" in state["reason"]
+
+    def test_a_stale_httrack_lock_blocks_and_says_so(self, monkeypatch, tmp_path):
+        # httrack refuses to start while this file exists, so a lock left by a
+        # killed mirror makes every later refresh fail silently at best.
+        site = tmp_path / "site"
+        yaml = tmp_path / "yaml"
+        site.mkdir()
+        yaml.mkdir()
+        (site / "a.html").write_text("x", encoding="utf-8")
+        (yaml / "a.yaml").write_text("x", encoding="utf-8")
+        lock = tmp_path / "hts-in_progress.lock"
+        lock.write_text("Mirror in progress", encoding="utf-8")
+        import os, time
+        stale = time.time() - 3 * 86400
+        os.utime(lock, (stale, stale))
+        monkeypatch.setattr(utils, "MALAPI_SITE", site)
+        monkeypatch.setattr(utils, "MALAPI_YAML", yaml)
+        monkeypatch.setattr(utils, "MALAPI_SERVER", yaml / "server.py")
+        monkeypatch.setattr(utils, "MALAPI_LOCK", lock)
+        monkeypatch.setattr(utils, "_httrack_available", lambda: (True, None))
+        state = utils.malapi()
+        assert state["blocked"] is True
+        assert state["lock"]["stale"] is True
+        assert state["lock"]["age_days"] == 3
+        assert "httrack" in state["blocked_reason"].lower()
+
+    def test_a_fresh_lock_is_not_treated_as_stale(self, monkeypatch, tmp_path):
+        # Under a day could be a real mirror running. Reporting that as stale
+        # would have the panel deleting a live mirror's lock.
+        site = tmp_path / "site"
+        yaml = tmp_path / "yaml"
+        site.mkdir()
+        yaml.mkdir()
+        (site / "a.html").write_text("x", encoding="utf-8")
+        (yaml / "a.yaml").write_text("x", encoding="utf-8")
+        lock = tmp_path / "hts-in_progress.lock"
+        lock.write_text("Mirror in progress", encoding="utf-8")
+        monkeypatch.setattr(utils, "MALAPI_SITE", site)
+        monkeypatch.setattr(utils, "MALAPI_YAML", yaml)
+        monkeypatch.setattr(utils, "MALAPI_SERVER", yaml / "server.py")
+        monkeypatch.setattr(utils, "MALAPI_LOCK", lock)
+        monkeypatch.setattr(utils, "_httrack_available", lambda: (True, None))
+        assert utils.malapi()["lock"]["stale"] is False
+
+    def test_a_missing_httrack_blocks(self, monkeypatch, tmp_path):
+        site = tmp_path / "site"
+        yaml = tmp_path / "yaml"
+        site.mkdir()
+        yaml.mkdir()
+        (site / "a.html").write_text("x", encoding="utf-8")
+        (yaml / "a.yaml").write_text("x", encoding="utf-8")
+        monkeypatch.setattr(utils, "MALAPI_SITE", site)
+        monkeypatch.setattr(utils, "MALAPI_YAML", yaml)
+        monkeypatch.setattr(utils, "MALAPI_SERVER", yaml / "server.py")
+        monkeypatch.setattr(utils, "MALAPI_LOCK", tmp_path / "nope.lock")
+        monkeypatch.setattr(utils, "_httrack_available",
+                            lambda: (False, "httrack is not installed in WSL"))
+        state = utils.malapi()
+        assert state["blocked"] is True
+        assert "httrack" in state["blocked_reason"].lower()
+
+    def test_the_state_does_not_claim_to_be_up_to_date(self, monkeypatch, tmp_path):
+        # malapi.io publishes no version to pull against, so "up to date" is not
+        # a state this can honestly report. The field the old card rendered is
+        # gone rather than repopulated with a guess.
+        state = utils.malapi()
+        assert "up_to_date" not in state
+        assert "behind" not in state
+        assert "ahead" not in state
+
+    def test_the_malt_tool_is_reported_as_not_the_rules(self, monkeypatch, tmp_path):
+        tool = tmp_path / "malt"
+        (tool / ".git").mkdir(parents=True)
+        monkeypatch.setattr(utils, "MALT_DIR", tool)
+        state = utils.malapi()
+        assert state["malt_tool"]["used_by_analyzer"] is False
+        assert "not the rules" in state["malt_tool"]["note"]
+
+
+class TestMalapiUpdateRunsTheRules:
+    """The button has to update the rules, not a repository that has none."""
+
+    def test_the_command_mirrors_the_site_and_regenerates(self):
+        argv = utils._argv("malapi")
+        joined = " ".join(argv)
+        assert "malapi_pipeline.py" in joined, joined
+        assert "--with-scrape" in joined, joined
+        # The thing it used to do instead, which changed nothing about the rules.
+        assert "pull" not in joined, joined
+        assert "malt" not in joined.lower(), joined
+
+    def test_the_effects_say_what_it_rewrites(self):
+        entry = {e["id"]: e for e in utils.catalogue()["entries"]}["malapi-update"]
+        joined = " ".join(entry["effects"]).lower()
+        assert "network" in joined
+        assert "python/yaml/malapi/" in joined
+        assert "python/api/server.py" in joined
 
 
 class TestCatalogueSafety:
@@ -229,10 +356,12 @@ class TestCatalogueSafety:
             joined = " ".join(by_id[util]["effects"])
             assert "network" in joined.lower(), f"{util} hides that it uses the network"
 
-    def test_the_pull_is_fast_forward_only(self):
-        # Checked in the runner's argv rather than trusted: a merge commit
-        # created by a browser button is not a thing anyone wants to unpick.
+    def test_git_actions_cannot_prompt_or_pull(self):
+        # The MalAPI update is no longer a git operation, so what matters is
+        # that nothing in this module can create history or hang on a credential
+        # prompt if a git path is reintroduced. Checked in the source rather than
+        # trusted: _git() is used for the reported tool checkout.
         from pathlib import Path as _Path
         source = _Path(utils.__file__).read_text(encoding="utf-8")
-        assert '"--ff-only"' in source
         assert "GIT_TERMINAL_PROMPT" in source
+        assert '"pull"' not in source, "a git pull came back; that is not the rules"

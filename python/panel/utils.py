@@ -13,12 +13,31 @@ files, so "what is true now" has to be answerable without doing either.
 
 Three details that are not obvious from the outside:
 
-`malt/` is the MalAPI rules. MalAPI itself is not vendored - the analyzer
-talks to a generated local API (`python/api/server.py`, 544 routes) built from
-the rules, so "update MalAPI" means updating the rule source underneath it.
-It is a git checkout of memtt/malt, and the pull is `--ff-only` with terminal
-prompts disabled, because a merge commit created by a browser button is not a
-thing anyone wants to unpick.
+MalAPI rules are an HTTrack mirror of malapi.io, not a git repository. The
+chain is:
+
+    https://malapi.io/  --httrack-->  python/malapi/     (scraped HTML)
+                             |
+                      _map_to_yaml.py
+                             v
+                     python/yaml/malapi/                 (API definitions)
+                             |
+                       _create_api.py
+                             v
+                    python/api/server.py                 (what the analyzer
+                                                          actually queries)
+
+So "update MalAPI" means re-mirroring malapi.io and regenerating the API. The
+mirror runs under WSL, where `httrack` lives; `_extract_files.py` drives it and
+installs it if it is missing.
+
+What this used to do, and why it was wrong: the button ran `git pull --ff-only`
+on `malt/`, believing it to be the rules. `malt/` is memtt/malt, the MalAPI
+*tool*, and nothing the analyzer runs uses it - it is referenced by this panel
+and nothing else. That repository changes rarely, so the button reported
+"Already up to date" essentially always, while the rules it claimed to update
+stayed exactly where they were. The checkout is still reported, under its real
+name, because deleting someone's clone is not this panel's decision.
 
 `yara-rules/` is NOT a git checkout. It is five unpacked collections with no
 upstream recorded anywhere, so there is no "update" to offer - only a way to
@@ -52,6 +71,19 @@ SBOM_SCRIPT = config.REPO / "generate_sbom.py"
 SBOM_JSON = config.REPO / "sbom.json"
 SBOM_SUMMARY = config.REPO / "sbom_summary.json"
 
+# MalAPI rules: scraped HTML, the generated API definitions, and the
+# server the analyzer actually queries. See the header for why `malt/` is
+# not one of these.
+MALAPI_MIRROR = config.REPO / "python" / "malapi"
+MALAPI_SITE = MALAPI_MIRROR / "malapi.io"
+MALAPI_YAML = config.REPO / "python" / "yaml" / "malapi"
+MALAPI_SERVER = config.REPO / "python" / "api" / "server.py"
+MALAPI_SCRAPE = config.REPO / "python" / "_extract_files.py"
+MALAPI_PIPELINE = config.REPO / "python" / "malapi_pipeline.py"
+MALAPI_LOCK = MALAPI_MIRROR / "hts-in_progress.lock"
+
+# memtt/malt - the MalAPI *tool*. Reported under its real name; nothing the
+# analyzer runs links it.
 MALT_DIR = config.REPO / "malt"
 YARA_RULES = config.REPO / "yara-rules"
 YARGEN_DIR = config.REPO / "yarGen-Go"
@@ -69,7 +101,10 @@ CHECK_TIMEOUT = 30.0
 # not instant. Bounded regardless, because a job with no ceiling is a job that
 # reports "running" forever.
 SBOM_TIMEOUT = 900.0
-PULL_TIMEOUT = 300.0
+# A pull was seconds. Re-mirroring malapi.io at depth 3 and regenerating
+# 500-odd API routes is minutes, and the mirror is the part that has to be
+# given room or it gets killed halfway and leaves a stale lock behind.
+PULL_TIMEOUT = 1800.0
 YARA_TIMEOUT = 600.0
 
 _jobs = build._jobs
@@ -207,58 +242,148 @@ def sbom() -> dict:
 # MalAPI rules (malt/)
 # ---------------------------------------------------------------------------
 
-def malapi() -> dict:
-    """State of the MalAPI rule source.
+def _mirror_age_days(directory: Path) -> int | None:
+    """How stale a mirror is, by the newest file in it.
 
-    "Update MalAPI" is updating memtt/malt. The analyzer does not link it; the
-    local API in python/api/server.py is generated from it, which is why the
-    panel reports the rule checkout rather than a service.
+    Newest rather than oldest: a mirror that picked up three new pages last week
+    is fresher than one that is uniformly a year old, and for "is this worth
+    refreshing" the newest page is the relevant answer.
     """
-    if not MALT_DIR.is_dir():
-        return {"available": False, "reason": "malt/ is not present in this checkout",
-                "can_update": False}
+    newest = 0.0
+    for path in directory.rglob("*"):
+        try:
+            if path.is_file():
+                newest = max(newest, path.stat().st_mtime)
+        except OSError:
+            continue
+    if newest <= 0:
+        return None
+    return max(0, int((time.time() - newest) // 86400))
 
-    if not (MALT_DIR / ".git").is_dir():
-        return {"available": False, "reason": "malt/ is not a git checkout, so it cannot be updated from here",
-                "can_update": False}
 
-    head = _git(MALT_DIR, "rev-parse", "HEAD")
-    branch = _git(MALT_DIR, "rev-parse", "--abbrev-ref", "HEAD")
-    remote = _git(MALT_DIR, "config", "--get", "remote.origin.url")
-    dirty_lines = _git(MALT_DIR, "status", "--porcelain")
-    dirty = [ln for ln in dirty_lines["stdout"].splitlines() if ln.strip()]
+def _httrack_available() -> tuple[bool, str | None]:
+    """Is the mirroring tool reachable? The mirror runs under WSL.
 
-    # Left/right counts against the tracked upstream. Reported but NOT fetched:
-    # asking the network is a side effect and belongs in the explicit update.
-    counts = _git(MALT_DIR, "rev-list", "--left-right", "--count",
-                  "HEAD...@{upstream}")
-    behind = ahead = None
-    if counts["ok"] and counts["stdout"]:
-        parts = counts["stdout"].split()
-        if len(parts) == 2 and all(p.isdigit() for p in parts):
-            ahead, behind = int(parts[0]), int(parts[1])
+    Checked here rather than discovered as a failed job: _extract_files.py will
+    try to apt-get install httrack when it is missing, which is a slow thing to
+    discover from a spinner.
+    """
+    try:
+        out = subprocess.run(
+            ["wsl", "bash", "-lc", "command -v httrack || echo MISSING"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=20, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"could not probe WSL: {exc}"
+    text = (out.stdout or "").strip()
+    if not text or text == "MISSING" or "not installed" in text:
+        return False, "httrack is not installed in WSL"
+    return True, None
+
+
+def malapi() -> dict:
+    """State of the MalAPI rules, which are a scraped mirror and not a git repo.
+
+    Reports the two halves that can independently be stale - the mirror of
+    malapi.io, and the generated API built from it - because a fresh mirror with
+    a stale `python/api/server.py` is the combination that silently serves old
+    rules, and neither age says anything about the other on its own.
+
+    The memtt/malt checkout is reported alongside, under its real name. It is the
+    MalAPI *tool*; nothing the analyzer runs links it, and this panel's own
+    update does not touch it.
+    """
+    have_mirror = MALAPI_SITE.is_dir()
+    have_yaml = MALAPI_YAML.is_dir()
+    have_server = MALAPI_SERVER.is_file()
+
+    mirror_age = _mirror_age_days(MALAPI_SITE) if have_mirror else None
+    yaml_age = _mirror_age_days(MALAPI_YAML) if have_yaml else None
+
+    # A lock older than a day is not a mirror in progress; it is a mirror that
+    # died. httrack refuses to start while this file exists, so leaving it is
+    # what turns one interrupted run into every later run failing.
+    lock = None
+    if MALAPI_LOCK.is_file():
+        try:
+            lock_age_s = time.time() - MALAPI_LOCK.stat().st_mtime
+            lock = {
+                "path": _rel(MALAPI_LOCK),
+                "age_days": max(0, int(lock_age_s // 86400)),
+                # Under a day could be a genuine run. Older than that cannot be.
+                "stale": lock_age_s > 86400,
+            }
+        except OSError:
+            lock = None
+
+    htr, htr_reason = _httrack_available()
+
+    # Generated after the mirror it was built from: the API is fresh if it is at
+    # least as new as the newest page it came from.
+    generated_stale = (
+        mirror_age is not None and yaml_age is not None and yaml_age > mirror_age
+    ) or (
+        mirror_age is not None and have_server and not have_yaml
+    )
+
+    reasons = []
+    if not have_mirror:
+        reasons.append("python/malapi/malapi.io/ is missing - the site has never been mirrored")
+    if not have_yaml:
+        reasons.append("python/yaml/malapi/ is missing - the API definitions have not been generated")
+    if not have_server:
+        reasons.append("python/api/server.py is missing - the analyzer has nothing to query")
+    if lock and lock["stale"]:
+        reasons.append(
+            f"a stale httrack lock is present ({lock['age_days']} days old); "
+            f"httrack will refuse to start until it is removed"
+        )
+    if generated_stale:
+        reasons.append(
+            "the generated API is older than the mirror it was built from - "
+            "the analyzer is serving rules that no longer match the site"
+        )
+
+    # Reported because it was what this panel used to call "the rules", and an
+    # operator who knows the directory exists deserves to be told what it is.
+    malt = None
+    if MALT_DIR.is_dir() and (MALT_DIR / ".git").is_dir():
+        head = _git(MALT_DIR, "rev-parse", "HEAD")
+        malt = {
+            "path": _rel(MALT_DIR),
+            "commit": head["stdout"] or None,
+            "short": (head["stdout"] or "")[:9],
+            "remote": _git(MALT_DIR, "config", "--get", "remote.origin.url")["stdout"] or None,
+            "used_by_analyzer": False,
+            "note": "memtt/malt is the MalAPI tool, not the rules. Nothing the "
+                    "analyzer runs links it and updating the rules does not touch it.",
+        }
 
     return {
-        "available": head["ok"],
-        "reason": head["error"] or head["stderr"] or None,
-        "path": _rel(MALT_DIR),
-        "remote": remote["stdout"] or None,
-        "branch": branch["stdout"] or None,
-        "commit": head["stdout"] or None,
-        "short": (head["stdout"] or "")[:9],
-        "commit_date": _head_commit_date(MALT_DIR),
-        "dirty": len(dirty) > 0,
-        "dirty_count": len(dirty),
-        "ahead": ahead,
-        "behind": behind,
-        "up_to_date": behind == 0 and ahead == 0,
-        # A pull onto a dirty tree is refused by the runner, and the reason is
-        # shown here rather than discovered as a failed job.
-        "can_update": not dirty,
-        "note": ("local changes would be overwritten - commit or stash first"
-                 if dirty else
-                 "up to date with upstream" if behind == 0 and ahead == 0
-                 else f"{behind} commit(s) behind upstream"),
+        "available": have_mirror and have_yaml and have_server,
+        "reason": "; ".join(reasons) or None,
+        "blocked": not htr or bool(lock and lock["stale"]),
+        "blocked_reason": (
+            htr_reason
+            or (f"remove {lock['path']} first - it is a stale httrack lock" if lock and lock["stale"] else None)
+        ),
+        "source": "https://malapi.io/ (mirrored with httrack under WSL)",
+        "mirror_path": _rel(MALAPI_SITE),
+        "mirror_age_days": mirror_age,
+        "yaml_path": _rel(MALAPI_YAML),
+        "yaml_count": len(list(MALAPI_YAML.glob("*.yaml"))) if have_yaml else 0,
+        "yaml_age_days": yaml_age,
+        "server_path": _rel(MALAPI_SERVER),
+        "generated_stale": generated_stale,
+        "httrack": htr,
+        "lock": lock,
+        "malt_tool": malt,
+        "note": (
+            "Nothing to compare against: malapi.io publishes no version to pull "
+            "against, so 'up to date' is not a state this can report. Re-running "
+            "the mirror and regenerating is the only way to know."
+        ),
     }
 
 
@@ -435,9 +560,13 @@ _UTIL_SPEC = [
      "effects": ["rewrites sbom.json", "rewrites sbom_summary.json",
                  "reads every venv in the tree"], "timeout": SBOM_TIMEOUT},
     {"id": "malapi-update", "label": "Update MalAPI rules", "utility": "malapi",
-     "description": "Fetch memtt/malt and fast-forward the rule checkout. "
-                    "Refuses outright if the tree has local changes.",
-     "effects": ["reaches the network", "advances the malt/ checkout"],
+     "description": "Re-mirror malapi.io with httrack, then regenerate the API "
+                    "definitions and the server the analyzer queries, and boot "
+                    "the result to prove it answers. This is the rules "
+                    "themselves, not the MalAPI tool checkout.",
+     "effects": ["reaches the network", "rewrites python/malapi/",
+                 "rewrites python/yaml/malapi/", "rewrites python/api/server.py",
+                 "removes a stale httrack lock"],
      "timeout": PULL_TIMEOUT},
     {"id": "yara-check", "label": "Compile YARA rules", "utility": "yara",
      "description": "Run yarac over each rule collection so a syntax error is "
@@ -498,10 +627,14 @@ def _argv(utility: str) -> list[str]:
     if utility == "sbom":
         return [_python(), str(SBOM_SCRIPT)]
     if utility == "malapi":
-        # --ff-only: a pull that cannot fast-forward fails instead of leaving a
-        # merge commit behind. Combined with GIT_TERMINAL_PROMPT=0 this action
-        # cannot create history or hang on a credential prompt.
-        return ["git", "-C", str(MALT_DIR), "pull", "--ff-only"]
+        # Two stages, so this is no longer a single argv. It used to be a git
+        # pull on malt/, which was the wrong repository: the rules are a mirror
+        # of malapi.io, and nothing the analyzer runs links malt/ at all.
+        #
+        # Stage 1 mirrors the site (long, network). Stage 2 regenerates the API
+        # from the mirror and then boots it to prove the routes answer, which is
+        # what makes "updated" mean "the analyzer will actually see them".
+        return [_python(), str(MALAPI_PIPELINE), "--with-scrape"]
     if utility == "yargen":
         return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-File", str(YARGEN_UPDATE)]

@@ -173,6 +173,36 @@ def run_stage(name: str, script: Path, report: Report, *extra: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def stage_scrape(report: Report) -> bool:
+    """Re-mirror malapi.io with httrack.
+
+    The mirror is the only stage that reaches the network, and it is the only
+    one that can leave the tree in a state the next run cannot recover from: if
+    it is killed partway, HTTrack leaves hts-in_progress.lock behind and
+    refuses to start again until that file is removed. So a lock older than a
+    day is cleared here, before mirroring, and the removal is reported - a lock
+    younger than that is left alone, because that one might be a real run.
+    """
+    lock = HERE / "malapi" / "hts-in_progress.lock"
+    if lock.is_file():
+        age_s = time.time() - lock.stat().st_mtime
+        if age_s > 86400:
+            lock.unlink(missing_ok=True)
+            # info() rather than a report row: this is an action taken on
+            # the way in, not a finding about the result, and the stage itself
+            # is about to report its own outcome.
+            info(f"removed a stale httrack lock ({int(age_s // 86400)} days old)")
+        else:
+            report.fail(
+                "scrape malapi.io",
+                f"{lock.name} is {int(age_s // 60)} minutes old. HTTrack "
+                f"refuses to start while it exists, and it is too young to be "
+                f"stale. If no mirror is actually running, delete it and retry.")
+            return False
+
+    return run_stage("scrape malapi.io", HERE / "_extract_files.py", report)
+
+
 def stage_preflight(report: Report) -> bool:
     section("preflight")
 
@@ -366,6 +396,11 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--quick", action="store_true",
                     help="verify the existing output without regenerating it")
+    ap.add_argument("--with-scrape", action="store_true",
+                    help="re-mirror malapi.io before regenerating. This is the "
+                         "long, network-bound stage; without it the pipeline "
+                         "only rebuilds from whatever HTML is already on disk, "
+                         "which is not the same thing as updating the rules")
     ap.add_argument("--skip-map", action="store_true",
                     help="skip the html -> yaml stage (it is the slow one)")
     ap.add_argument("--skip-verify", action="store_true",
@@ -383,9 +418,18 @@ def main() -> int:
         return 1
 
     if args.quick:
+        report.skip("scrape malapi.io", "--quick")
         report.skip("map html -> yaml", "--quick")
         report.skip("yaml -> api", "--quick")
     else:
+        if args.with_scrape:
+            if not stage_scrape(report):
+                print(report.render())
+                print("\nscrape failed; regenerating from a partial mirror "
+                      "would replace good rules with fewer")
+                return 1
+        else:
+            report.skip("scrape malapi.io", "pass --with-scrape to re-mirror")
         if args.skip_map:
             report.skip("map html -> yaml", "--skip-map")
         elif not stage_map(report, force=False):
