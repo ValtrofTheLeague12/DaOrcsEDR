@@ -194,12 +194,9 @@ The checkpoint lives at `logs/resume/<stem>.json`.
 #   Windows widens the minidump in logs\crash\ to the whole address space
 .\build-ucrt\static_analyzer.exe --allow-core-dump .\sample.exe
 
-# Carry on after SIGTERM / SIGHUP / SIGUSR1 / SIGUSR2.
+# Ctrl+C no longer stops the run: the first interrupt re-runs the phase it
+# landed on and carries on. Only a second Ctrl+C stops it.
 .\build-ucrt\static_analyzer.exe --continue-on-signal .\sample.exe
-
-# Prove the above actually continues. Requires --continue-on-signal.
-# POSIX only; prints "not applicable" and exits 1 on a Windows build.
-.\build-ucrt\static_analyzer.exe --continue-on-signal --signal-selftest .\sample.exe
 ```
 
 Both flags are also settable from a pipeline's `environment:` block, which is
@@ -212,11 +209,11 @@ $env:IA_CONTINUE_ON_SIGNAL = "1"
 
 Outputs land in `%APPDATA%\IAProject\logs\crash\`.
 
-**Fault signals always terminate**, whatever `--continue-on-signal` is set to.
-`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL` and `SIGABRT` re-execute the faulting
-instruction if their handler returns, so continuing them faults again
-immediately. `--continue-on-signal` is POSIX-only and says so on a Windows
-build.
+The re-run is the point, not a skip-forward: an interrupted phase can leave
+partial output behind, and the next phase reading that is how a report ends up
+quietly wrong. In the default plan `sections` is phase 2, so an interrupt there
+re-runs `sections` and the run continues to the end. There is one rewind per
+run, so a second Ctrl+C stops rather than walking the plan backwards.
 
 ---
 
@@ -291,7 +288,7 @@ Set in the shell, or in a pipeline's `environment:` block, or in `.env`.
 | --- | --- |
 | `IA_ARTIFACT_UPLOAD` | `0` forces evidence upload off. Set this before any test run. |
 | `IA_ALLOW_CORE_DUMP` | `1` keeps a dump when the process dies. |
-| `IA_CONTINUE_ON_SIGNAL` | `1` carries on after a continuable signal. POSIX only. |
+| `IA_CONTINUE_ON_SIGNAL` | `1` makes Ctrl+C re-run the interrupted phase and continue. |
 | `ML_SKIP` | `1` skips ML scoring; the phase still appears and reports itself skipped. |
 | `ML_EXPLAIN` | `1` requests SHAP. Default on. |
 | `ML_THRESHOLD` | ML decision threshold, `0.0`–`1.0`. Default `0.5`. |
@@ -309,31 +306,6 @@ The full list with the source line that reads each one is in
 [docs/admin-console/analysis-config.md](docs/admin-console/analysis-config.md).
 
 ---
-
-## Signals: verifying the continuation design
-
-The POSIX claims behind `--continue-on-signal` can be checked under WSL, since
-the Windows build cannot exercise them. This compiles a standalone program that
-reproduces the same `sigaction` setup — it does **not** link the analyzer, so it
-proves the design rather than the integrated binary.
-
-```powershell
-wsl bash -c "cd /mnt/c/Users/The4thReich/Desktop/IAProject/unit/signals && gcc -std=gnu11 -O0 -g -o /tmp/sc signal_claims.c && /tmp/sc"
-```
-
-Expected output:
-
-```text
-  PASS  handler ran once and execution continued past it
-  PASS  a second SIGUSR1 is also survivable (no SA_RESETHAND)
-  PASS  the fault re-executed and killed the process anyway (SIGSEGV re-raised)
-        -> continuing a fault signal is an infinite loop, not a recovery
-  PASS  SIGTERM/SIGHUP/SIGUSR1/SIGUSR2 continuable; SIGSEGV/SIGBUS/SIGFPE/SIGILL/SIGABRT are not
-ALL CLAIMS HOLD
-```
-
-`-std=gnu11` rather than `-std=c11`: strict ISO mode hides the POSIX signal
-declarations. Note this applies to any POSIX build of the analyzer too.
 
 ---
 
@@ -384,9 +356,22 @@ supply it. Set `KNOWN_PE_HASHES_FILE` or drop the file in place.
 
 ## First-time clone
 
-A clone builds once the vendored trees are present. `spdlog/`, `cpp-dump/` and
-`os-libzstd/lib/` are required by `CMakeLists.txt` and are currently **not**
-tracked in git, so a fresh clone fails at configure with
-`add_subdirectory(spdlog)` missing. Restore them before building — see
-[VENDOR.md](VENDOR.md) once it exists; until then, copy them from a working
-tree.
+A clone builds once the vendored trees are present. `spdlog/` and `cpp-dump/`
+are required unconditionally by `CMakeLists.txt` — `add_subdirectory(spdlog)` at
+line 174, and a `FATAL_ERROR` if `cpp-dump/cpp-dump.hpp` is absent — and both
+are currently **not** tracked, so a fresh clone fails at configure.
+`os-libzstd/` is needed too, but only with
+`-DSTATIC_ANALYZER_USE_VENDORED_ZSTD=ON`, which is off by default.
+
+Copy the three directories in from a machine that already has them, then
+configure. The versions they came from:
+
+| Tree | Upstream | Commit |
+| --- | --- | --- |
+| `spdlog/` | https://github.com/gabime/spdlog | `57cb5fb7` (v1.17.0-44) |
+| `cpp-dump/` | https://github.com/sassan-dev/cpp-dump | `aabd98dd` (v0.7.0-35) |
+| `os-libzstd/` | https://github.com/pexip/os-libzstd | `033868ce` |
+
+Tracking them in git is the obvious fix and has not been done — about 6 MB of
+vendored source, and it should be a deliberate decision rather than a side
+effect of a build failing.

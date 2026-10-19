@@ -72,7 +72,7 @@ with the source line that reads it: `CTI_SKIP` (`phase_cti.cpp:36`), `ML_SKIP`
 (`main.cpp:291`), `ML_EXPLAIN` and `ML_THRESHOLD` and `ML_TOP_K`
 (`phase_ml.cpp:96-98`), `CTI_CONFIG` (`phase_cti.cpp:176`),
 `STATIC_ANALYZER_CURSES` (`main.cpp:219`), `IA_ALLOW_CORE_DUMP`
-(`main.cpp:343`), `IA_CONTINUE_ON_SIGNAL` (`main.cpp:345`) and `TRACE_FILE`
+(`resume.cpp:246`), `IA_CONTINUE_ON_SIGNAL` (`resume.cpp:246`) and `TRACE_FILE`
 (`trace.cpp:21`).
 That reference is rendered under each control on purpose: the panel is making a
 claim on the operator's behalf, so the claim should be checkable rather than
@@ -88,13 +88,16 @@ appears nowhere under `src/` or `include/`, if a `honoured_by` reference points
 at a line that does not exist, or if a control is offered for a key the binary
 ignores. Adding a checkbox therefore cannot outrun the code that reads it.
 
-The last two are the fault-related flags and are the only two that are not read
-by a phase — they are consumed once, in `main.cpp`, in the narrow window after
+The last two are read once in `main.cpp`, in the narrow window after
 `apply_environment()` has put the pipeline's `environment:` block into the
-process and before `crash::install()` puts the handlers in place. Both are off
-by default; `IA_CONTINUE_ON_SIGNAL` deliberately does **not** make fault
-signals survivable, and
-[failure handling](../failure-and-recovery.md#two-flags-for-faults) explains why.
+process and before the handlers are installed. Both are off by default.
+
+`IA_ALLOW_CORE_DUMP` goes to `crash::install()` and widens the dump written when
+the process dies. `IA_CONTINUE_ON_SIGNAL` goes to `resume::install()`'s module
+instead, because it is about the pipeline rather than about a fault: with it set,
+the first Ctrl+C is absorbed and the run carries on to the next phase, and only
+a second one stops it. [Failure handling](../failure-and-recovery.md#carrying-on-when-the-run-is-interrupted)
+explains both, and why the second interrupt is still honoured.
 
 A name that looks like a credential is refused outright, even before the
 allowlist: the vault and `.env` are where those belong, and a browser form is

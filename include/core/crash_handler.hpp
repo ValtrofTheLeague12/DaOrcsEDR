@@ -39,22 +39,6 @@ struct options {
   // Off by default because a full dump is a large file per crash.
   bool allow_core_dump = false;
 
-  // Catch-and-continue for signals that can be continued.
-  //
-  // Applies to SIGTERM, SIGHUP, SIGUSR1 and SIGUSR2 - signals that mean
-  // "something happened, react or carry on". With this on, the handler writes
-  // the crash report and then RETURNS, so the interrupted work resumes instead
-  // of the process dying.
-  //
-  // It deliberately does NOT apply to SIGSEGV, SIGBUS, SIGFPE, SIGILL or
-  // SIGABRT, with or without this flag on. Those are not notifications, they
-  // are reports that the process is already in an unrecoverable state, and
-  // returning from their handler re-executes the very instruction that faulted
-  // - which does not resume the work, it faults again immediately, now from
-  // inside the handler. A fault that "continued" this way is an infinite loop
-  // with a report file, not a recovery. When one of those arrives the report is
-  // still written and says plainly that continuation is not possible.
-  bool continue_after_signal = false;
 };
 
 // Registers the handlers. logs_root is where the crash/ directory is created
@@ -83,17 +67,5 @@ std::string state_line();
 // exercises it deliberately.
 void demo();
 
-// Proves options::continue_after_signal actually continues, and says so.
-//
-// Raises one continuable signal and checks whether execution reached the far
-// side of the handler. Returns true if the handler ran and returned, false if
-// it did not - or if this build cannot run the test at all, which is the case on
-// Windows: the continuable-signal handling is POSIX-only, so the test reports
-// "not applicable" rather than passing vacuously.
-//
-// Exists because self_test() covers the other direction. It proves the process
-// dies and a report is written; this proves the opposite, that a polite signal
-// no longer kills it. Neither is checkable by reading the code.
-bool signal_selftest();
 
 }  // namespace crash

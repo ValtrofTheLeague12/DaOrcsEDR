@@ -114,6 +114,14 @@ void begin(std::string_view, std::string_view, std::string_view, std::string_vie
 
 void phase_completed(std::string_view) {}
 
+// run_phases() calls these two on the interrupt path, which is what
+// --continue-on-signal switches on. The planner tests never raise a signal, so
+// the values here only have to be consistent with each other: report "not
+// continuing" and there is nothing for clear_interrupt() to clear.
+void clear_interrupt() {}
+
+bool continues_on_interrupt() { return false; }
+
 // False, not true: if these stubs were ever reached, "stop requested" would
 // mean "yes, give up". Reporting the opposite is the safe direction to fail.
 bool stop_requested() { return false; }

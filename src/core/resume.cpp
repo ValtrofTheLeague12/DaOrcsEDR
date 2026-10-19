@@ -31,6 +31,10 @@ std::atomic<bool> g_installed{false};
 // has stopped asking nicely.
 std::atomic<int> g_interrupts{0};
 
+// When set, the first interrupt is absorbed and the run carries on. Read by
+// stop_requested() and by the handler, which picks its notice from it.
+std::atomic<bool> g_continue_on_interrupt{false};
+
 // Everything below is published from the run thread and read by the handler
 // thread, so it is behind a mutex. The handler's critical section is a copy of
 // one string and it never blocks on anything the run itself holds for long:
@@ -60,6 +64,13 @@ std::filesystem::path g_dir;
 const char* const k_interrupt_notice =
     "\n\x1b[33m[interrupt]\x1b[0m Ctrl+C received - stopping after this phase.\n"
     "\x1b[90m[interrupt]\x1b[0m press Ctrl+C again to stop immediately.\n";
+
+// Printed instead when the run is going to continue rather than stop. Cyan
+// rather than amber, because amber means "this is stopping" everywhere else in
+// this file and a warning that turns out to be nothing is worse than none.
+const char* const k_interrupt_continue_notice =
+    "\n\x1b[36m[interrupt]\x1b[0m Ctrl+C received - continuing with the next phase.\n"
+    "\x1b[90m[interrupt]\x1b[0m press Ctrl+C again to stop the run.\n";
 
 void write_line(std::FILE* out, const char* text) {
   std::fputs(text, out);
@@ -130,7 +141,8 @@ BOOL WINAPI on_console_event(DWORD type) {
       return FALSE;  // let the default handler deal with close/logoff/shutdown
   }
   const int n = g_interrupts.fetch_add(1) + 1;
-  write_line(stderr, k_interrupt_notice);
+  const bool absorbing = g_continue_on_interrupt.load(std::memory_order_acquire) && n < 2;
+  write_line(stderr, absorbing ? k_interrupt_continue_notice : k_interrupt_notice);
   if (n >= 2) {
     write_line(stderr,
                "\x1b[31m[interrupt]\x1b[0m second interrupt - exiting now. The "
@@ -144,7 +156,11 @@ BOOL WINAPI on_console_event(DWORD type) {
 #else
 extern "C" void on_sigint(int) {
   const int n = g_interrupts.fetch_add(1) + 1;
-  write_line(stderr, k_interrupt_notice);
+  // Which notice depends on whether this interrupt is going to be absorbed.
+  // With continue-on-interrupt the first one carries on, so the second is the
+  // one that has to sound like a warning.
+  const bool absorbing = g_continue_on_interrupt.load(std::memory_order_acquire) && n < 2;
+  write_line(stderr, absorbing ? k_interrupt_continue_notice : k_interrupt_notice);
   if (n >= 2) {
     std::signal(SIGINT, SIG_DFL);
     std::raise(SIGINT);
@@ -168,6 +184,14 @@ void install() {
                          // EINTR so the loop can notice the flag.
   sigaction(SIGINT, &action, nullptr);
 #endif
+}
+
+void set_continue_on_interrupt(bool enabled) {
+  g_continue_on_interrupt.store(enabled, std::memory_order_release);
+}
+
+bool continues_on_interrupt() {
+  return g_continue_on_interrupt.load(std::memory_order_acquire);
 }
 
 void set_logs_root(const std::filesystem::path& logs_root) {
@@ -215,7 +239,15 @@ void phase_completed(std::string_view name) {
 }
 
 bool stop_requested() {
+  // Plain "has an interrupt arrived". Whether one interrupt stops the run or
+  // is absorbed is the run loop's decision, not this function's: the loop has
+  // to see the first one in order to rewind, so raising the threshold here
+  // instead would hide it from the only code that can act on it.
   return g_interrupts.load(std::memory_order_acquire) > 0;
+}
+
+void clear_interrupt() {
+  g_interrupts.store(0, std::memory_order_release);
 }
 
 int interrupts() {

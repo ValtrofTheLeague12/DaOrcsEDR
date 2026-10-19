@@ -44,6 +44,25 @@ namespace resume {
 // crash handlers, and it never touches those.
 void install();
 
+// When true, an interrupt does not stop the run.
+//
+// The default is the opposite and is the right default: Ctrl+C means "stop",
+// and a run that ignored it would be a run nobody could end. With this on, the
+// FIRST interrupt is consumed by the run loop, which re-runs the phase it
+// landed on and carries on with the plan; only a SECOND interrupt stops it, at
+// the usual next-phase boundary.
+//
+// Re-running rather than skipping forward is the point. A phase that was
+// interrupted may have left partial output behind - a half-written JSON, a
+// truncated artifact - and running the next phase over that is how a report
+// ends up quietly wrong. Starting the interrupted phase again produces a clean
+// result, and costs one phase of work.
+//
+// One rewind per run, not one per interrupt. Without that, a second Ctrl+C
+// would rewind again and walk the pipeline backwards to the start.
+void set_continue_on_interrupt(bool enabled);
+bool continues_on_interrupt();
+
 // Where checkpoints live; the same root crash::install() gets. Set once from
 // main, because the checkpoint path is derived from a stem the planner only
 // learns after the prologue has hashed the sample.
@@ -63,6 +82,14 @@ bool stop_requested();
 // How many interrupts have arrived. 2 or more means the user gave up on the
 // graceful stop.
 int interrupts();
+
+// Forget the interrupts recorded so far.
+//
+// Only for the continue-on-interrupt rewind: the run loop consumes one
+// interrupt by re-running the phase it landed on, and must not see the same
+// count again at the next boundary or it would rewind on every remaining
+// phase. Clearing rather than decrementing keeps it a single call.
+void clear_interrupt();
 
 // Drop the checkpoint: a run that finished has nothing to resume, and leaving
 // the file behind would invite a pointless second run.

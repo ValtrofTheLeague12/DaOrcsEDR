@@ -88,17 +88,13 @@ void print_usage(std::ostream& os) {
         "                           whole address space. Off by default: dumps are\n"
         "                           large files. Same setting from a pipeline:\n"
         "                           IA_ALLOW_CORE_DUMP=1\n"
-        "      --continue-on-signal report SIGTERM/SIGHUP/SIGUSR1/SIGUSR2 and\n"
-        "                           carry on instead of dying. Fault signals\n"
-        "                           (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT) still\n"
-        "                           terminate: returning from one re-executes the\n"
-        "                           instruction that faulted. Same setting from a\n"
-        "                           pipeline: IA_CONTINUE_ON_SIGNAL=1\n"
-        "      --signal-selftest      prove --continue-on-signal: raise a signal that\n"
-        "                           should be survivable, then check that execution\n"
-        "                           reached the far side of the handler. Requires\n"
-        "                           --continue-on-signal. POSIX only; reports\n"
-        "                           \"not applicable\" on a Windows build.\n"
+        "      --continue-on-signal keep going when the run is interrupted. The\n"
+        "                           first Ctrl+C is acknowledged and absorbed - the\n"
+        "                           phase in flight finishes and the run moves on to\n"
+        "                           the next one - and only a second Ctrl+C stops it.\n"
+        "                           For unattended runs where a stray interrupt\n"
+        "                           should not throw away the analysis. Same setting\n"
+        "                           from a pipeline: IA_CONTINUE_ON_SIGNAL=1\n"
         "  artifact actions      configured in config/artifacts.yaml (bundling\n"
         "                           and remote upload are disabled by default).\n"
         "                           IA_ARTIFACT_UPLOAD=0 forces uploading off and\n"
@@ -155,7 +151,6 @@ int main(int argc, char** argv) {
   bool crash_demo = false;
   bool allow_core_dump = false;
   bool continue_on_signal = false;
-  bool signal_selftest = false;
   bool no_curses = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -209,8 +204,6 @@ int main(int argc, char** argv) {
       allow_core_dump = true;
     } else if (arg == "--continue-on-signal") {
       continue_on_signal = true;
-    } else if (arg == "--signal-selftest") {
-      signal_selftest = true;
     } else if (arg == "--no-curses") {
       no_curses = true;
     } else if (arg.size() > 1 && arg[0] == '-') {
@@ -349,9 +342,11 @@ int main(int argc, char** argv) {
     crash::options crash_opts;
     crash_opts.allow_core_dump =
         allow_core_dump || env_flag("IA_ALLOW_CORE_DUMP", false);
-    crash_opts.continue_after_signal =
-        continue_on_signal || env_flag("IA_CONTINUE_ON_SIGNAL", false);
     crash::install(logs_root, logging::current_run_id(), crash_opts);
+    // The interrupt side of the same question, and it lives in resume rather
+    // than crash because it is about the pipeline, not about a fault.
+    resume::set_continue_on_interrupt(
+        continue_on_signal || env_flag("IA_CONTINUE_ON_SIGNAL", false));
   }
   // Ctrl+C stops the run at the next phase boundary and records where it got
   // to. Installed next to the crash handlers and independent of them: a signal
@@ -372,23 +367,6 @@ int main(int argc, char** argv) {
     crash::set_state("crash-demo", input_path.empty() ? "a.exe" : input_path);
     crash::demo();
     return 0;
-  }
-  if (signal_selftest) {
-    // Same shape as --crash-selftest, opposite direction: that one proves the
-    // process dies and a report lands, this one proves a polite signal no
-    // longer kills it. Also runs after install(), because the handler it raises
-    // a signal at is the one install() put there.
-    return crash::signal_selftest() ? 0 : 1;
-  }
-  if (continue_on_signal) {
-    // Said out loud rather than accepted in silence. The continuable-signal
-    // handling is POSIX-only, so on a Windows build the flag parses, appears in
-    // --help, and is offered by the admin console - and does nothing. An
-    // operator who set it should not have to read the source to find out.
-#if defined(_WIN32)
-    std::cerr << "note: --continue-on-signal has no effect in this build; the "
-                 "continuable-signal handling is POSIX-only.\n";
-#endif
   }
 
   // Lazy service ownership follows the plan: only what the selected phases use

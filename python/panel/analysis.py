@@ -143,14 +143,15 @@ ENV_OPTIONS = [
           "space. Off by default: a full dump is a large file per crash, and "
           "most crashes are explained by the text report next to it.",
           "src/main.cpp:343"),
-    _flag("IA_CONTINUE_ON_SIGNAL", "Carry on after a signal",
-          "Report SIGTERM, SIGHUP, SIGUSR1 and SIGUSR2 and keep working instead "
-          "of dying. Fault signals (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT) "
-          "still terminate whatever this is set to - returning from one of those "
-          "re-executes the instruction that faulted, so continuing would fault "
-          "again immediately. Use this when something in the run environment "
-          "sends polite signals and killing the analysis is the wrong answer.",
-          "src/main.cpp:345"),
+    _flag("IA_CONTINUE_ON_SIGNAL", "Continue when interrupted",
+          "Ctrl+C no longer stops the run. The first one is consumed by the run "
+          "loop, which re-runs the phase it landed on and carries on with the "
+          "plan; only a second Ctrl+C stops it, at the usual phase boundary. "
+          "Re-running rather than skipping past matters: an interrupted phase "
+          "can leave partial output behind, and the next phase reading that is "
+          "how a report ends up quietly wrong. For unattended runs, where a "
+          "stray interrupt should not throw away an hour of analysis.",
+          "src/core/resume.cpp:246"),
     _text("TRACE_FILE", "Trace diagnostics file",
            "Writes symbol/offset diagnostics here. Empty means the trace layer "
            "writes nothing.",

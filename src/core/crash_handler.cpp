@@ -538,17 +538,6 @@ void build_report(const char* reason, const char* detail, const void* arch) {
   std::fflush(stderr);
 }
 
-// Published from install() and read from the signal handler, which is on
-// another thread by the time it matters. Relaxed is enough: the only ordering
-// requirement is that a signal arriving after install() returns sees the value
-// install() stored.
-std::atomic<bool> g_continue_after_signal{false};
-
-// Bumped by the handler on the path where it returns instead of exiting. This is
-// the only way to observe that continuation actually happened, rather than
-// inferring it from the process still being alive.
-std::atomic<int> g_signal_continuations{0};
-
 // Single entry point: guards against recursion and writes the report once.
 void report_once(const char* reason, const char* detail, const void* arch) {
   if (g_handling.exchange(true)) return;
@@ -619,12 +608,6 @@ LONG WINAPI on_unhandled_exception(EXCEPTION_POINTERS* ep) {
 
 #else
 
-// Signals that mean "something happened" rather than "the process is broken".
-// Returning from these is safe: the interrupted instruction runs again.
-bool is_continuable(int sig) {
-  return sig == SIGTERM || sig == SIGHUP || sig == SIGUSR1 || sig == SIGUSR2;
-}
-
 void on_signal(int sig) {
   if (g_handling.load(std::memory_order_acquire)) {
     // Recursion (e.g. a second fatal signal while the report was being
@@ -635,26 +618,6 @@ void on_signal(int sig) {
     ::_exit(128 + sig);
   }
   report_once(signal_text(sig), "fatal signal received", nullptr);
-
-  if (g_continue_after_signal.load(std::memory_order_acquire) && is_continuable(sig)) {
-    // Return, and the interrupted work resumes. The report has been written;
-    // the run carries on and the fault is in the record rather than at the
-    // end of it.
-    g_signal_continuations.fetch_add(1, std::memory_order_relaxed);
-    return;
-  }
-  if (g_continue_after_signal.load(std::memory_order_acquire) && !is_continuable(sig)) {
-    // The operator asked to continue, but this is one of the four that cannot
-    // be continued - returning would re-execute the faulting instruction. Say
-    // so in the record rather than exiting silently against an explicit
-    // request, because the obvious next question is "why did my flag not work".
-    std::fprintf(stderr,
-                 "[crash] catch-and-continue was requested but %s is a fault "
-                 "signal: returning from its handler re-executes the faulting "
-                 "instruction, so the process is terminating. Continuable "
-                 "signals are SIGTERM, SIGHUP, SIGUSR1 and SIGUSR2.\n",
-                 signal_text(sig).c_str());
-  }
   ::_exit(128 + sig);
 }
 
@@ -702,9 +665,6 @@ void install(const std::filesystem::path& logs_root, std::string_view run_id,
 
   std::set_terminate(&on_terminate);
 
-  g_continue_after_signal.store(opts.continue_after_signal,
-                                std::memory_order_relaxed);
-
 #if defined(_WIN32)
   SetUnhandledExceptionFilter(&on_unhandled_exception);
 #else
@@ -718,17 +678,6 @@ void install(const std::filesystem::path& logs_root, std::string_view run_id,
   action.sa_flags = SA_RESETHAND;
   const int signals[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT};
   for (const int sig : signals) sigaction(sig, &action, nullptr);
-
-  if (g_continue_after_signal.load(std::memory_order_acquire)) {
-    // Separate disposition for the continuable set: no SA_RESETHAND, because
-    // these are expected to arrive repeatedly and each one has to be reported.
-    struct sigaction soft{};
-    soft.sa_handler = &on_signal;
-    sigemptyset(&soft.sa_mask);
-    soft.sa_flags = 0;
-    const int continuable[] = {SIGTERM, SIGHUP, SIGUSR1, SIGUSR2};
-    for (const int sig : continuable) sigaction(sig, &soft, nullptr);
-  }
 #endif
 
   enable_core_dump(opts.allow_core_dump);
@@ -751,50 +700,6 @@ void install(const std::filesystem::path& logs_root, std::string_view run_id,
   std::fprintf(stderr, "[crash-selftest] SURVIVED - the handler did not run\n");
   std::fflush(stderr);
   std::abort();
-}
-
-bool signal_selftest() {
-#if defined(_WIN32)
-  // Not a gap in the test, a gap in the platform. Windows has no SIGUSR1 and no
-  // SIGTERM the analyzer can catch from the OS; the things that actually stop a
-  // process here are console control events, and CTRL_CLOSE/CTRL_LOGOFF/
-  // CTRL_SHUTDOWN give a process about five seconds before Windows kills it, so
-  // "carry on after the signal" has no meaning there.
-  //
-  // Reporting false rather than true is the point. A selftest that passed on a
-  // build where the feature is absent would be worse than no selftest.
-  std::fprintf(stderr,
-               "[signal-selftest] not applicable on Windows: the continuable-signal\n"
-               "[signal-selftest] handling is POSIX-only. --continue-on-signal has\n"
-               "[signal-selftest] no effect in this build. Verified on a Linux build.\n");
-  std::fflush(stderr);
-  return false;
-#else
-  if (!g_continue_after_signal.load(std::memory_order_relaxed)) {
-    std::fprintf(stderr,
-                 "[signal-selftest] --continue-on-signal (or IA_CONTINUE_ON_SIGNAL=1)\n"
-                 "[signal-selftest] is not set, so the signal would be fatal. Nothing\n"
-                 "[signal-selftest] was raised.\n");
-    std::fflush(stderr);
-    return false;
-  }
-
-  const int before = g_signal_continuations.load(std::memory_order_relaxed);
-  std::fprintf(stderr, "[signal-selftest] raising SIGUSR1; if the handler did not\n"
-                       "[signal-selftest] return, this process would die here.\n");
-  std::fflush(stderr);
-  ::raise(SIGUSR1);
-
-  const int after = g_signal_continuations.load(std::memory_order_relaxed);
-  const bool continued = after > before;
-  std::fprintf(stderr, continued
-      ? "[signal-selftest] PASS - the handler caught SIGUSR1, wrote its report\n"
-        "[signal-selftest] and returned; execution reached this line.\n"
-      : "[signal-selftest] FAIL - execution reached this line but the handler\n"
-        "[signal-selftest] never recorded a continuation.\n");
-  std::fflush(stderr);
-  return continued;
-#endif
 }
 
 void demo() {

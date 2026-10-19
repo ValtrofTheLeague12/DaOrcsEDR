@@ -945,13 +945,34 @@ void run_phases(context& ctx, const pipeline_config& cfg) {
     }
   }
 
-  for (phase_id p : cfg.phases) {
+  // Index-based rather than a range-for: with --continue-on-signal an
+  // interrupt rewinds one step so the phase that was interrupted runs again,
+  // which a range-for has no way to express.
+  std::size_t step = 0;
+  // At most one rewind per run. The first interrupt means "redo the phase I was
+  // on"; anything after that means "stop". Without this guard a second Ctrl+C
+  // would rewind again and walk the run backwards to the start.
+  bool redone = false;
+  while (step < cfg.phases.size()) {
+    phase_id p = cfg.phases[step];
     const std::string phase_name = to_name(p);
 
     // Ctrl+C is honoured between phases, never inside one: a phase can be part
     // way through writing its artifacts, and abandoning it there is how a run
     // leaves a half-written JSON that the next run reads as truth.
     if (resume::stop_requested()) {
+      if (resume::continues_on_interrupt() && !redone) {
+        redone = true;
+        resume::clear_interrupt();
+        if (step > 0) {
+          --step;   // back to the phase that was interrupted, so it runs again
+          console::info("interrupted during '" + to_name(cfg.phases[step]) +
+                        "'; re-running it and continuing with the plan");
+        } else {
+          console::info("interrupted before the first phase; continuing");
+        }
+        continue;
+      }
       ctx.interrupted = true;
       console::info("stopping before '" + phase_name +
                     "' at the operator's request; resume this run with --resume");
@@ -964,6 +985,7 @@ void run_phases(context& ctx, const pipeline_config& cfg) {
       // because that list is built from what this run actually executed.
       ctx.ran_mask |= bit(p);
       console::info("skipping '" + phase_name + "' (completed in an earlier run)");
+      ++step;
       continue;
     }
 
@@ -1010,6 +1032,7 @@ void run_phases(context& ctx, const pipeline_config& cfg) {
     // it is also correct when the process dies the ungraceful way. One small
     // file per phase, next to work that takes seconds.
     resume::phase_completed(phase_name);
+    ++step;
   }
 }
 

@@ -111,13 +111,20 @@ class TestSignalAndDumpOptions:
     def test_continue_on_signal_is_off_by_default(self):
         assert ENV_BY_KEY["IA_CONTINUE_ON_SIGNAL"]["default"] is False
 
-    def test_continue_option_explains_why_fault_signals_still_die(self):
-        # The distinction is the whole point of the option, and it is the thing
-        # an operator would otherwise file a bug about. If this text is ever
-        # trimmed down, this test is why it cannot be.
+    def test_continue_option_explains_the_rerun_not_a_skip(self):
+        # The re-run is the part an operator would otherwise misread. "Continue"
+        # reads as "carry on from the next phase"; what it actually does is run
+        # the interrupted phase again, and that difference is the whole reason
+        # the option exists. If this text is ever trimmed down, this test is why
+        # it cannot be.
         detail = ENV_BY_KEY["IA_CONTINUE_ON_SIGNAL"]["detail"]
-        assert "SIGSEGV" in detail
-        assert "re-executes" in detail
+        assert "re-runs" in detail
+        assert "partial output" in detail
+
+    def test_continue_option_says_a_second_interrupt_still_stops(self):
+        # Absorbing every interrupt would leave no way to stop a run.
+        detail = ENV_BY_KEY["IA_CONTINUE_ON_SIGNAL"]["detail"]
+        assert "second" in detail.lower()
 
     def test_both_are_flags_not_text_fields(self):
         for key in ("IA_ALLOW_CORE_DUMP", "IA_CONTINUE_ON_SIGNAL"):
