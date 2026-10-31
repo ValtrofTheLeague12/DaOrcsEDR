@@ -64,14 +64,8 @@ result run(const options& config) {
     out.error = "remote_root must not be empty";
     return out;
   }
-  // A bad recipient name would otherwise reach the uploader as a free-form
+  // A botched argv would otherwise reach the uploader as a free-form
   // string and be rejected there, after the bundle was already built.
-  if (config.encrypt && config.encryption_recipient != "user" &&
-      config.encryption_recipient != "admin") {
-    out.error = "encryption_recipient must be 'user' or 'admin', got '" +
-                config.encryption_recipient + "'";
-    return out;
-  }
   if (!std::filesystem::is_directory(config.source_directory)) {
     out.error = "analysis export directory not found: " + config.source_directory;
     return out;
@@ -90,16 +84,17 @@ result run(const options& config) {
       "--timeout", std::to_string(config.timeout_seconds),
   };
   if (!config.upload) args.emplace_back("--no-upload");
-  // Encryption is stated explicitly rather than left to the uploader's default:
+  // Protection is stated explicitly rather than left to the uploader's default:
   // the config value is the operator's decision and must not depend on whether
   // this particular code path remembered to pass it.
   args.emplace_back(config.encrypt ? "--encrypt" : "--no-encrypt");
-  args.emplace_back("--recipient");
-  args.emplace_back(config.encryption_recipient.empty() ? "user"
-                                                        : config.encryption_recipient);
-  if (!config.admin_public_key.empty()) {
-    args.emplace_back("--admin-key");
-    args.emplace_back(config.admin_public_key);
+  // The password file is only forwarded when the config names one; empty means
+  // the uploader's default operator password file outside the repo, which is
+  // the one the admin console manages. The password itself never crosses a
+  // process boundary here - both sides read the same file by path.
+  if (!config.password_file.empty()) {
+    args.emplace_back("--password-file");
+    args.emplace_back(config.password_file);
   }
 
   proc::run_options process;

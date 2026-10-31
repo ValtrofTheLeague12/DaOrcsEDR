@@ -32,7 +32,11 @@ function latencyTone(p: Probe): SparkTone {
 // Copy-to-clipboard with inline confirmation. navigator.clipboard is unavailable
 // on a non-secure origin and this panel is plain HTTP on loopback, so the
 // textarea fallback is the path that actually runs - not a defensive afterthought.
-function CopyButton({ value, label }: { value: string; label: string }) {
+//
+// Exported because the Containers panel shows the same fact about the same
+// services, and two copy buttons that drift apart is one more thing to keep in
+// sync.
+export function CopyButton({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false)
 
   const copy = async () => {
@@ -103,7 +107,7 @@ export function ServiceCard({ probe }: { probe: Probe }) {
 
   return (
     <Card
-      className={`w-full transition-colors ${open ? 'border-accent/30' : ''}`}
+      className={`service-card tone-${chipTone} w-full transition-colors ${open ? 'border-accent/30' : ''}`}
       onClick={() => hasMore && setOpen((o) => !o)}
     >
       <Card.Header className="flex items-start justify-between gap-3">

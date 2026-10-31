@@ -1,4 +1,4 @@
-# Evidence bundles, encryption and output
+# Evidence bundles, protection and output
 
 What gets written, where, and what happens to it before it leaves.
 
@@ -8,16 +8,17 @@ What gets written, where, and what happens to it before it leaves.
 
 The analyzer always writes its normal report files to
 `exports/<sample>_analysis/`. Optional packaging and MEGA upload are controlled
-separately in `config/artifacts.yaml` (also copied beside the built executable):
+in `config/artifacts.yaml` (also copied beside the built executable), with the
+transfer half (`upload_artifacts`, `remote_root`, `timeout_seconds`) now living
+as MEGA_* settings in `config/analysis.yaml`, which wins wherever both files
+define one:
 
 ```yaml
 store_artifact: false
-upload_artifacts: false
-remote_root: /
+upload_artifacts: false   # set as MEGA_UPLOAD in analysis.yaml now
+remote_root: /            # set as MEGA_REMOTE_ROOT in analysis.yaml now
 encrypt_artifacts: false
-encryption_recipient: user
-admin_public_key: ""
-timeout_seconds: 900
+timeout_seconds: 900      # set as MEGA_TIMEOUT in analysis.yaml now
 ```
 
 Set `store_artifact: true` to create
@@ -31,70 +32,77 @@ failure is reported and causes the analyzer to exit unsuccessfully; the run
 manifest records the options, resulting bundle paths, and any error. Missing
 configuration uses safe defaults (no packaging or upload).
 
-### Bundle encryption
+### Bundle protection
 
-`encrypt_artifacts: true` seals the archive to a public key **before** anything
-is uploaded, so the copy that lands on a third-party account is not readable by
-the provider, a leaked session, or anyone who finds a shared link.
+`encrypt_artifacts: true` (or `MEGA_SEAL: true` in analysis.yaml) wraps the
+archive in a **password-protected zip** before anything is uploaded, so the
+copy that lands on a third-party account is not readable by the provider, a
+leaked session, or anyone who finds a shared link.
 
 ```yaml
 encrypt_artifacts: true
-encryption_recipient: user     # or: admin
-admin_public_key: ""           # only for recipient: admin
 ```
 
-The scheme is a standard hybrid envelope, implemented with the Python
-[`cryptography`](https://cryptography.io) library **in-process** — no `gpg`, no
-`openssl`, no shelling out for the cryptography:
+The password itself is NOT a config value anywhere. It lives in the operator
+password file outside the repo:
+
+```text
+%APPDATA%\IAProject\bundle-keys\upload.password     (or IA_BUNDLE_PASSWORD_FILE)
+```
+
+The admin console's Analysis Configuration page manages that file: show its
+state, set a password you choose, generate one (the value is returned exactly
+once, and the page shows it with a copy button — never again), or clear it. The
+minimum is 8 bytes; what is stored is exactly what you gave, with at most one
+trailing newline tolerated and stripped on the way out, because editors always
+add one and the password must round-trip byte-exact.
+
+The scheme (implemented with the Python `pyzipper` library **in-process** — no
+`gpg`, no `openssl`, no shell):
 
 | part | construction |
 |---|---|
-| content | AES-256-GCM over the archive, in 1 MiB chunks |
-| content key | 32 random bytes, fresh per bundle |
-| key wrap | AES-256-GCM over the content key |
-| wrapping key | HKDF-SHA256 over an X25519 ECDH |
+| container | one ZIP member — the deterministic archive |
+| encryption | WinZip AES-256 (`WZ_AES`), the ZIP standard's AES extension — not legacy ZipCrypto |
+| per-entry | random salt (256-bit), password-verification value, HMAC over the entry, per 64 KiB block salted updates |
 
-Each chunk gets its own nonce (base nonce XOR chunk index, so a
-(key, nonce) pair can never repeat) and binds the header plus its own index and
-length as associated data, so chunks cannot be swapped, dropped or replayed. The
-header is bound into every operation, so the recipient, algorithm and chunk size
-cannot be edited either. A wrong key, an altered file, a truncated file or a
-re-ordered one all fail loudly instead of producing garbage.
+Every entry has an HMAC and a password-verification value stored in the AES
+extra field, so a wrong password, an altered file or a truncated one fails
+closed instead of producing garbage. A lost password means the bundle is
+unrecoverable — there is deliberately no recovery path. Generating the password
+and copying its only showing is how that risk is managed.
 
-**Two recipients**, chosen per export:
+**Where the password beats the keypair it replaced:** no key generation, no
+private half that every consumer of the bundle must fetch from this machine,
+and no second key class ("admin") whose public file had to be sourced from the
+lab. Whoever should open the remote bundle gets the password; everyone else,
+including the MEGA account itself, gets ciphertext.
 
-- **`user`** — a keypair generated on this machine. `python mega/seal.py keygen user`
-  writes it to `%APPDATA%\IAProject\bundle-keys\` (override with
-  `IA_BUNDLE_KEYS_DIR`), outside the repo tree, with the file ACL stripped to
-  your account on Windows. A lost private key means the bundle is unrecoverable —
-  there is deliberately no recovery path.
-- **`admin`** — the lab's public key, so evidence is sealed to whoever owns it.
-  Only the **public** half is needed to encrypt, so the admin private key never
-  has to exist on the machine producing evidence. Give it as base64 or PEM at
-  `admin_public_key`, at `%APPDATA%\IAProject\bundle-keys\admin.pub`, or via
-  `IA_BUNDLE_ADMIN_PUBKEY`.
+When protection is on:
 
-When sealing is on:
-
-- the plaintext archive stays on local disk; only the sealed file is uploaded,
+- the plaintext archive stays on local disk; only the `.zip` is uploaded,
   staged into a temporary folder so a plain `put <folder>` cannot sweep the
   plaintext up alongside the ciphertext;
-- if sealing **fails, the upload is aborted** (exit 4) rather than falling back
-  to plaintext — a broken key cannot silently downgrade the bundle;
-- the manifest and README record the algorithm, the recipient and its key id,
-  and the SHA-256 of the sealed bytes, so a copy of the bundle says what it is
-  and who can open it;
-- `run_summary.json` gains `artifact_bundle.encrypted`, and the Artifacts page's
-  **Export** button reads **Export to MEGA** when sealing is on and **Export
-  unencrypted** when it is not.
+- if protection **fails, the upload is aborted** (exit 4) rather than falling
+  back to plaintext — a missing password file cannot silently downgrade the
+  bundle;
+- the manifest and README record the algorithm, format and library, and the
+  SHA-256 of the protected bytes (never the password, never the local password
+  file's path — the manifest itself travels to remote storage);
+- `run_summary.json` gains `artifact_bundle.encrypted`, and the Artifacts
+  page's **Export** button reads **Export to MEGA** when protection is on and
+  **Export unprotected** when it is not.
 
-To open a bundle:
+To open a protected bundle, on any machine that has the PASSWORD:
 
 ```powershell
-python mega/seal.py inspect quick_test_evidence.tar.gz.enc   # header, no key needed
-python mega/seal.py decrypt  quick_test_evidence.tar.gz.enc   # needs the private key
-python mega/seal.py whoami                                   # this machine's key id
+python mega/protect.py status                            # whether a password is set (no echo)
+python mega/protect.py unzip quick_test_evidence.zip --out-dir .   # needs the password
+python mega/protect.py zip quick_test_evidence.tar.gz --out quick_custom.zip    # re-protect
 ```
+
+The legacy `python mega/seal.py` keypair tooling still decrypts `.enc` bundles
+made by older checkouts, but nothing produces them any more.
 
 ## Output layout
 
@@ -110,7 +118,7 @@ knows they have found all of it:
                  checkpoints, trace.txt, YARA rule caches
   cache/         provider and tool caches (capa, CTI knowledge, ...)
   panel-cache/   the admin panel's own cache
-  bundle-keys/   evidence-bundle encryption keys
+  bundle-keys/   the bundle password file and the legacy keypairs
   mega-secrets/  sealed MEGA credentials
 ```
 

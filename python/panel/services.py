@@ -21,6 +21,7 @@ import urllib.request
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
+from typing import NamedTuple
 
 from . import config, netinfo
 
@@ -153,6 +154,8 @@ def _specs() -> list[Spec]:
 
 
 def _vm_spec() -> Spec:
+    """The analysis VM's Spec, or an unconfigured placeholder when there is no
+    vm_info.json yet."""
     info = config.vm_info()
     if not info:
         return Spec(
@@ -170,6 +173,84 @@ def _vm_spec() -> Spec:
                     "the clamd scanner; reached over SSH from here.",
         host=info["ip"], port=info["port"], scheme="tcp", kind="tcp",
     )
+
+
+# ---------------------------------------------------------------------------
+# Endpoint lookup, for surfaces that know a container but not a Spec.
+#
+# The Containers panel reads docker and never touches a Spec, so it cannot call
+# spec.endpoint - but a card that cannot say where to open a service is a card
+# that sends the reader to the compose file. This is the join between the two
+# worlds: docker says "I published 127.0.0.1:60001->3000", the Spec says "the
+# CyberChef API answers on http://127.0.0.1:60001/health", and the card needs
+# the second fact.
+#
+# The host port is the join key because it is the one thing that cannot drift:
+# it is what docker actually bound. A name match would be reading .env and
+# hoping it still describes reality.
+# ---------------------------------------------------------------------------
+
+class EndpointIndex(NamedTuple):
+    """Lookup tables for `resolve()`, built once per snapshot by the caller."""
+
+    by_port: dict[int, dict]
+    by_name: dict[str, dict]
+
+
+def endpoint_index() -> EndpointIndex:
+    """Every watched service's entrypoint, indexed by host port and by name.
+
+    Built fresh per call for the same reason as _specs(): config reads .env, and
+    the moment someone edits a port is the moment they want the next card to
+    show it. The caller builds this once per snapshot rather than per container,
+    because config has no cache of its own and a ten-card page would otherwise
+    re-read .env twenty times for one render.
+    """
+    by_port: dict[int, dict] = {}
+    by_name: dict[str, dict] = {}
+    for spec in _specs():
+        if spec.optional and not spec.host:
+            # Not configured. Listed as "not set up" by services.py already, and
+            # it has no address to hand a container card, so it is not indexed.
+            continue
+        record = {
+            "key": spec.key,
+            "service": spec.name,
+            "url": spec.endpoint,
+            "kind": spec.kind,
+            "ui_url": (spec.base + spec.ui_path) if spec.ui_path else None,
+        }
+        # First spec wins a contested port: two services bound to the same port
+        # is a misconfiguration, and picking the earlier one at least keeps the
+        # page deterministic between polls.
+        by_port.setdefault(spec.port, record)
+        by_name.setdefault(spec.key, record)
+        if spec.name != spec.key:
+            by_name.setdefault(spec.name.lower().replace(" ", "-"), record)
+    return EndpointIndex(by_port=by_port, by_name=by_name)
+
+
+def resolve(index: EndpointIndex, *, ports=(), service: str | None = None) -> dict | None:
+    """The entrypoint record for a container, or None when nothing matches.
+
+    Two lookups, in this order:
+
+    1. a published HOST port - what docker bound, so it cannot be stale.
+    2. the compose service name - which is how a container that does not exist
+       yet ("Not created", no ports row) still gets its endpoint, and how a
+       service published only to another interface is still recognised. This
+       one can drift with .env, which is exactly why it is second.
+
+    A container the panel has no Spec for - a one-off `podman run`, an image
+    nobody wrote a Spec for - returns None rather than a guess.
+    """
+    for port in sorted({int(p) for p in ports or () if p}):
+        hit = index.by_port.get(port)
+        if hit:
+            return hit
+    if service:
+        return index.by_name.get(service)
+    return None
 
 
 # Latency trend per service. Same shape of idea as system.py's ring buffer:

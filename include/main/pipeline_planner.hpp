@@ -104,13 +104,15 @@ struct artifact_options {
   bool upload_artifacts = false;
   std::string remote_root = "/";
   int timeout_seconds = 900;
-  // Seal the bundle to a public key before upload. Off by default so an
-  // existing deployment keeps producing byte-identical bundles until the
-  // operator opts in; when it is on, a failed seal aborts the upload rather
-  // than falling back to plaintext.
+  // Wrap the archive in a password-protected zip before upload. Off by default
+  // so an existing deployment keeps producing byte-identical bundles until the
+  // operator opts in; when it is on, a failed protection aborts the upload
+  // rather than falling back to plaintext.
   bool encrypt_artifacts = false;
-  std::string encryption_recipient = "user";   // "user" | "admin"
-  std::string admin_public_key;                // empty = the default location
+  // The password file the zip reads. empty = the uploader's default operator
+  // password file outside the repo (the one the admin console manages); the
+  // password bytes themselves never enter this process.
+  std::string password_file;                   // empty = the default location
   std::string source;
   std::string uploader_script;
 };

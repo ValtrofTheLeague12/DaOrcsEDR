@@ -47,11 +47,21 @@ bool stdout_is_terminal() {
 #endif
 }
 
+bool env_flag_enabled(const char* name) {
+  const char* value = std::getenv(name);
+  if (value == nullptr || *value == '\0') return false;
+  const std::string mode(value);
+  return mode == "1" || mode == "true" || mode == "yes" || mode == "on";
+}
+
 bool terminal_available() {
+  // An explicit value is accepted in the same vocabulary every other reader
+  // uses (main.cpp's env_flag: 1/true/yes/on). A reader that knows only "1"
+  // and "0" turns an operator's STATIC_ANALYZER_CURSES=false into "on a real
+  // terminal anyway", which is the failure the setting exists to prevent.
   const char* mode = std::getenv("STATIC_ANALYZER_CURSES");
-  if (mode != nullptr && std::string(mode) == "1") return true;
-  if (mode != nullptr && std::string(mode) == "0") return false;
-  return stdout_is_terminal();
+  if (mode == nullptr || *mode == '\0') return stdout_is_terminal();
+  return env_flag_enabled("STATIC_ANALYZER_CURSES");
 }
 
 std::string strip_ansi(std::string text) {
@@ -439,9 +449,12 @@ logo_t load_logo() {
 }
 
 void print_logo_banner() {
-  // A redirected run is not looking at a terminal, and 76 lines of art in a
-  // captured report is noise rather than a banner.
-  if (!stdout_is_terminal()) return;
+  // A redirected run is not looking at a terminal, and 32 lines of art in a
+  // captured report is noise rather than a banner. The admin panel opts in
+  // with STATIC_ANALYZER_FORCE_LOGO=1 because its Build output and pipeline
+  // logs are exactly where an operator expects to see daorcs.logo.
+  const bool redirected = !stdout_is_terminal();
+  if (redirected && !env_flag_enabled("STATIC_ANALYZER_FORCE_LOGO")) return;
 
   const logo_t logo = load_logo();
   if (logo.lines.empty()) return;

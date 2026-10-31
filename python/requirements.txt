@@ -1,5 +1,6 @@
 requests
 colorama
+ifaddr
 pywebcopy
 loguru
 flask
@@ -9,3 +10,4 @@ stix2
 mitreattack-python
 cyclonedx-bom==7.5.0
 jinja2
+pyzipper>=0.3.0

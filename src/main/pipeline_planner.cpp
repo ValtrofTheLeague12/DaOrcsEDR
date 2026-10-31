@@ -680,7 +680,7 @@ artifact_options load_artifact_options() {
 
   const std::set<std::string> allowed{
       "store_artifact", "upload_artifacts", "remote_root", "timeout_seconds",
-      "encrypt_artifacts", "encryption_recipient", "admin_public_key"};
+      "encrypt_artifacts"};
   for (const auto& entry : root) {
     if (!entry.first.IsScalar()) {
       throw std::runtime_error(path.string() + ": artifact config keys must be strings");
@@ -696,8 +696,6 @@ artifact_options load_artifact_options() {
     if (root["remote_root"]) options.remote_root = root["remote_root"].as<std::string>();
     if (root["timeout_seconds"]) options.timeout_seconds = root["timeout_seconds"].as<int>();
     if (root["encrypt_artifacts"]) options.encrypt_artifacts = root["encrypt_artifacts"].as<bool>();
-    if (root["encryption_recipient"]) options.encryption_recipient = root["encryption_recipient"].as<std::string>();
-    if (root["admin_public_key"]) options.admin_public_key = root["admin_public_key"].as<std::string>();
   } catch (const YAML::Exception& e) {
     throw std::runtime_error(path.string() + ": invalid artifact option value: " + e.what());
   }
@@ -706,9 +704,6 @@ artifact_options load_artifact_options() {
   }
   if (options.timeout_seconds < 1 || options.timeout_seconds > 86400) {
     throw std::runtime_error(path.string() + ": 'timeout_seconds' must be between 1 and 86400");
-  }
-  if (options.encryption_recipient != "user" && options.encryption_recipient != "admin") {
-    throw std::runtime_error(path.string() + ": 'encryption_recipient' must be 'user' or 'admin'");
   }
   // IA_ARTIFACT_UPLOAD=0 is the escape hatch for anything that must not put
   // evidence on a third-party account: CI, and the panel's test runner, which
@@ -723,13 +718,59 @@ artifact_options load_artifact_options() {
     }
     options.upload_artifacts = false;
   }
-  // Naming the admin key without turning encryption on is almost always a
-  // mistake: it looks configured but does nothing. Said out loud rather than
-  // rejected, because it is not wrong on its own.
-  if (!options.admin_public_key.empty() && !options.encrypt_artifacts) {
-    LOG_WARN("artifacts: 'admin_public_key' is set but 'encrypt_artifacts' is false, "
-             "so the bundle will NOT be sealed");
+  // The console's home for the MEGA upload-and-seal settings is
+  // config/analysis.yaml now - they are applied as ordinary analysis settings
+  // at startup and arrive here as environment variables, so the Analysis
+  // Configuration page can hold them as one section. artifacts.yaml keeps
+  // working so an existing checkout keeps its behaviour, but where the env
+  // var is set the file's line loses, and both sides are named in the log:
+  // a value with two possible homes is exactly the state nobody can diagnose
+  // from the YAML. store_artifact stays file-only - building a local bundle
+  // is not a question anyone asks per machine-level configuration.
+  bool mega_applied = false;
+  const auto env_truthy = [&](const char* name, bool& target) {
+    const char* v = std::getenv(name);
+    if (v == nullptr || *v == '\0') return false;
+    const std::string s = lower(trim(v));
+    if (s == "1" || s == "true" || s == "yes" || s == "on") target = true;
+    else if (s == "0" || s == "false" || s == "no" || s == "off") target = false;
+    else {
+      LOG_WARN("artifacts: {} for '{}' is not a flag value; the file's value stands",
+               name, v);
+      return false;
+    }
+    mega_applied = true;
+    return true;
+  };
+  env_truthy("MEGA_UPLOAD", options.upload_artifacts);
+  env_truthy("MEGA_SEAL", options.encrypt_artifacts);
+  if (const char* v = std::getenv("MEGA_REMOTE_ROOT"); v != nullptr && *v != '\0') {
+    options.remote_root = v;
+    mega_applied = true;
   }
+  if (const char* v = std::getenv("MEGA_TIMEOUT"); v != nullptr && *v != '\0') {
+    try {
+      const int seconds = std::stoi(v);
+      if (seconds >= 1 && seconds <= 86400) {
+        options.timeout_seconds = seconds;
+        mega_applied = true;
+      } else {
+        LOG_WARN("artifacts: MEGA_TIMEOUT={} is outside 1..86400; the file's value stands", v);
+      }
+    } catch (const std::exception&) {
+      LOG_WARN("artifacts: MEGA_TIMEOUT={} is not a number; the file's value stands", v);
+    }
+  }
+  if (mega_applied) {
+    LOG_INFO("artifacts: MEGA_* from the analysis settings decided the upload "
+             "configuration, overriding '{}' where both are set", path.string());
+  }
+  // MEGA_SEAL only decides WHETHER the bundle is protected. The password is
+  // never a configuration value here: it lives in the operator password file
+  // outside the repo, managed on the Analysis Configuration page, and the
+  // uploader (mega/protect.py) reads it from there. A password in a repo-read
+  // YAML would put evidence protection one `cat` away from anything that can
+  // read the checkout.
   std::vector<std::filesystem::path> script_candidates{
       path.parent_path().parent_path() / "mega" / "upload.py",
       std::filesystem::current_path() / "mega" / "upload.py"};
@@ -979,6 +1020,12 @@ void run_phases(context& ctx, const pipeline_config& cfg) {
       break;
     }
 
+    if (!ctx.stop_reason.empty()) {
+      console::info("stopping before '" + phase_name + "' (" +
+                    ctx.stop_reason + "); the completed phases stay resumable");
+      break;
+    }
+
     if (std::find(skipped.begin(), skipped.end(), p) != skipped.end()) {
       // Marked in ran_mask so a phase gated on "did radare2 run?" behaves the
       // way it would after a real run - `ran` in run_summary.json stays honest
@@ -1079,7 +1126,6 @@ void write_run_summary(const context& ctx, const pipeline_config& cfg,
                         {"remote_root", cfg.artifacts.remote_root},
                         {"timeout_seconds", cfg.artifacts.timeout_seconds},
                         {"encrypt_artifacts", cfg.artifacts.encrypt_artifacts},
-                        {"encryption_recipient", cfg.artifacts.encryption_recipient},
                     }}}},
       {"input", ctx.path},
       {"stem", ctx.stem},
@@ -1096,11 +1142,18 @@ void write_run_summary(const context& ctx, const pipeline_config& cfg,
           {"error", ctx.artifact_action_error},
       }},
       {"result", ctx.interrupted ? "interrupted"
-                             : (exit_code == 0 ? "success" : "failed")},
+             : !ctx.stop_reason.empty()
+                 ? ("stopped:" + ctx.stop_reason)
+                 : (exit_code == 0 ? "success" : "failed")},
       {"exit_code", exit_code},
       {"failed", ctx.failed},
       {"duration_ms", duration_ms},
   };
+  if (!ctx.stop_reason.empty()) {
+    // Interrupted runs say WHY in resume; a policy stop says why here, so the
+    // manifest explains itself to a script that only reads the JSON.
+    j["stop_reason"] = ctx.stop_reason;
+  }
   if (ctx.interrupted || ctx.resumed_phases) {
     // Why this manifest is partial, and how to make it whole. The point file is
     // named so the next step does not have to be guessed at.

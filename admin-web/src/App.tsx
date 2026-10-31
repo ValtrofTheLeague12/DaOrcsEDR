@@ -33,20 +33,23 @@ const System = lazy(() => import('./panels/System'))
 const Network = lazy(() => import('./panels/Network'))
 const Logs = lazy(() => import('./panels/Logs'))
 const Artifacts = lazy(() => import('./panels/Artifacts'))
-const AnalysisConfig = lazy(() => import('./panels/AnalysisConfig'))
-const AnalysisSettings = lazy(() => import('./panels/AnalysisSettings'))
 const Containers = lazy(() => import('./panels/Containers'))
 const Build = lazy(() => import('./panels/Build'))
 const Utils = lazy(() => import('./panels/Utils'))
 const Clamd = lazy(() => import('./panels/Clamd'))
 const VM = lazy(() => import('./panels/VM'))
 const QilingVM = lazy(() => import('./panels/QilingVM'))
+const PipelinesConfig = lazy(() => import('./panels/PipelinesConfig'))
+const AnalysisConfig = lazy(() => import('./panels/AnalysisConfig'))
+const DynamicAnalysisConfig = lazy(() => import('./panels/DynamicAnalysisConfig'))
 
-type PanelId =
+// Exported so panels can accept an `onNavigate` prop without importing the
+// whole App module graph - the type is all they need.
+export type PanelId =
   | 'overview' | 'docs' | 'stats' | 'system' | 'network' | 'logs' | 'artifacts'
-  | 'analyze' | 'build' | 'model' | 'utils' | 'settings'
+  | 'pipelines' | 'analysis' | 'build' | 'model' | 'utils'
   | 'containers'
-  | 'vm' | 'qiling-vm' | 'cape-vm' | 'clamd' | 'qiling'
+  | 'dynamic-analysis' | 'vm' | 'qiling-vm' | 'cape-vm' | 'clamd' | 'qiling'
 
 interface NavEntry {
   id: PanelId
@@ -58,16 +61,22 @@ interface NavEntry {
 // The virtual-machine section is generated from lib/vms.ts, so bringing a new
 // sandbox online is an entry in that registry rather than an edit here. That
 // is the whole point: this section keeps gaining machines.
-const VM_NAV: NavEntry[] = VM_TARGETS.map((t) => ({
-  id: t.id as PanelId,
-  label: t.label,
-  icon: t.icon,
-  slice: t.slice,
-}))
+//
+// Only the MACHINES are listed there. ClamAV and the Qiling harness are guests
+// on the Qiling VM, and they used to be appended to the same group - which
+// put "Qiling VM" and "Qiling" one row apart, both opening the same panel, and
+// left the guest Qiling entry with no route at all. They now sit under Dynamic
+// Analysis, next to the policy that governs them, and this group is machines
+// only.
+const MACHINE_NAV: NavEntry[] = VM_TARGETS
+  .filter((t) => !t.hostedOn)
+  .map((t) => ({ id: t.id as PanelId, label: t.label, icon: t.icon, slice: t.slice }))
 
-// Grouped so each concern has a home. ClamAV and Qiling sit under Virtual
-// Machines rather than at the top level because they are guests on the Qiling
-// VM, not things that run on this host.
+const GUEST_NAV: NavEntry[] = VM_TARGETS
+  .filter((t) => t.hostedOn)
+  .map((t) => ({ id: t.id as PanelId, label: t.label, icon: t.icon, slice: t.slice }))
+
+// Grouped so each concern has a home.
 const NAV: { group: string; items: NavEntry[] }[] = [
   {
     group: '',
@@ -82,16 +91,31 @@ const NAV: { group: string; items: NavEntry[] }[] = [
   {
     group: 'Analysis',
     items: [
-      { id: 'analyze', label: 'Analysis Configuration', icon: 'analyze' },
-      // Its own entry rather than another tab inside Analysis Configuration,
-      // because it is a different kind of thing: that page edits what ONE
-      // pipeline does, this one edits what EVERY run does. Same settings,
-      // opposite scope, and the precedence between them is the confusing part -
-      // so they should not look like the same control twice.
-      { id: 'settings', label: 'Analysis settings', icon: 'model' },
+      // Two pages, two levels, and the names say which is which:
+      //
+      //   Analysis Configuration   config/analysis.yaml - what EVERY run does
+      //   Pipelines Configuration  pipelines/*.yaml     - what ONE kind of run does
+      //
+      // They were once one page called "Analysis Configuration" with a second
+      // page called "Analysis settings", which is the same word twice for two
+      // different scopes - so the pipeline page was named after the whole
+      // category it did not own. They stay separate because the precedence
+      // between them (.env < pipeline < analysis.yaml) is the confusing part,
+      // and it should not look like the same control twice.
+      { id: 'analysis', label: 'Analysis Configuration', icon: 'model' },
+      { id: 'pipelines', label: 'Pipelines Configuration', icon: 'analyze' },
       { id: 'artifacts', label: 'Artifacts', icon: 'artifacts' },
       { id: 'build', label: 'Build', icon: 'build' },
       { id: 'model', label: 'Model', icon: 'model', slice: 'slice 6' },
+    ],
+  },
+  {
+    // The dynamic side: one policy, then the two things it governs. They are
+    // not machines, so they are not in the fleet group above.
+    group: 'Dynamic Analysis',
+    items: [
+      { id: 'dynamic-analysis', label: 'Configuration', icon: 'build' },
+      ...GUEST_NAV,
     ],
   },
   {
@@ -110,7 +134,7 @@ const NAV: { group: string; items: NavEntry[] }[] = [
       { id: 'containers', label: 'Containers', icon: 'containers' },
     ],
   },
-  { group: 'Virtual Machines', items: VM_NAV },
+  { group: 'Virtual Machines', items: MACHINE_NAV },
   { group: 'Diagnostics', items: [{ id: 'logs', label: 'Logs', icon: 'logs' }] },
 ]
 
@@ -120,8 +144,9 @@ const TITLES: Record<PanelId, string> = Object.fromEntries(
 ) as Record<PanelId, string>
 
 const BUILT: PanelId[] = [
-  'stats', 'overview', 'docs', 'system', 'network', 'artifacts', 'analyze',
-  'build', 'utils', 'containers', 'logs', 'vm', 'qiling-vm', 'clamd',
+  'stats', 'overview', 'docs', 'system', 'network', 'artifacts', 'pipelines',
+  'analysis', 'dynamic-analysis', 'build', 'utils', 'containers', 'logs', 'vm',
+  'qiling-vm', 'qiling', 'clamd',
 ]
 
 // Shown while a panel's chunk is in flight.
@@ -140,7 +165,7 @@ function PanelFallback({ label }: { label: string }) {
     >
       <div className="h-7 w-7 animate-pulse rounded-full border-2 border-accent/30 border-t-accent" />
       <p className="font-mono text-[10px] text-default-400">
-        Loading {label.toLowerCase()}â€¦
+        Loading {label.toLowerCase()}…
       </p>
     </div>
   )
@@ -188,22 +213,22 @@ export default function App() {
       <div className="app-shell relative z-10 grid h-full grid-cols-[236px_1fr]">
         <aside className="sidebar-glass flex flex-col">
           <div className="flex items-center gap-2.5 border-b border-default-200/60 px-4 py-4">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent">
+            <span className="brand-mark">
               <Icon name="stats" size={15} />
             </span>
             <div className="min-w-0">
-              <h1 className="text-[13px] font-semibold leading-tight tracking-tight">
+              <h1 className="brand-title leading-tight tracking-tight">
                 Admin Console
               </h1>
               <p className="metric truncate font-mono text-[10px] text-default-400">
-                {cfg.data ? `${cfg.data.panel.host}:${cfg.data.panel.port}` : 'connectingâ€¦'}
+                {cfg.data ? `${cfg.data.panel.host}:${cfg.data.panel.port}` : 'connecting…'}
               </p>
             </div>
           </div>
 
           <nav className="nav-scroll flex-1 space-y-4 px-3 py-4">
             {NAV.map((g) => (
-              <div key={g.group}>
+              <div key={g.group} className="nav-group" data-group={g.group}>
                 {g.group && <p className="section-label mb-1.5 px-2">{g.group}</p>}
                 <div className="flex flex-col gap-0.5">
                   {g.items.map((it) => (
@@ -211,7 +236,7 @@ export default function App() {
                       key={it.id}
                       onClick={() => setPanel(it.id)}
                       className={`nav-item ${panel === it.id ? 'active' : ''}`}
-                      title={it.slice ? `${it.label} â€” planned for ${it.slice}` : it.label}
+                      title={it.slice ? `${it.label} — planned for ${it.slice}` : it.label}
                     >
                       <Icon name={it.icon} size={15} />
                       <span className="flex-1 truncate">{it.label}</span>
@@ -260,14 +285,15 @@ export default function App() {
             {panel === 'network' && <Network />}
             {panel === 'logs' && <Logs />}
             {panel === 'artifacts' && <Artifacts />}
-            {panel === 'analyze' && <AnalysisConfig />}
-      {panel === 'settings' && <AnalysisSettings />}
-            {panel === 'build' && <Build />}
+            {panel === 'analysis' && <AnalysisConfig />}
+            {panel === 'dynamic-analysis' && <DynamicAnalysisConfig />}
+            {panel === 'pipelines' && <PipelinesConfig />}
+            {panel === 'build' && <Build onNavigate={setPanel} />}
             {panel === 'utils' && <Utils />}
             {panel === 'containers' && <Containers />}
             {panel === 'vm' && <VM />}
-            {panel === 'qiling-vm' && <QilingVM />}
-            {panel === 'clamd' && <Clamd />}
+            {(panel === 'qiling-vm' || panel === 'qiling') && <QilingVM />}
+            {panel === 'clamd' && <Clamd onNavigate={setPanel} />}
             {!BUILT.includes(panel) && (
               <>
                 <div className="mb-6 flex items-baseline justify-between gap-4">

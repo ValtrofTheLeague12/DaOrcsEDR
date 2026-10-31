@@ -57,6 +57,21 @@ python predict.py --model model.txt --file sample.exe \
 the downloader refuses to continue on a truncated zip rather than training on
 half a corpus.
 
+### The corpus lives on D:, not in the repo
+
+`data/` in the repo root is a Windows junction to `D:\IAProject\data`, so every
+command above reads and writes through `data/...` with no changed arguments
+while the actual bytes - the zips, the extracted pickles, the vectors, and the
+`known_pe_hashes.jsonl` roster the analyzer looks up at run time - sit on the
+larger disk. The only ML file that stays in the tree is `ml/model.txt`, which
+`serve.py` loads from its own directory at scoring time. Recreating the junction
+after a fresh clone is one command:
+
+```powershell
+New-Item -ItemType Directory -Path "D:\IAProject\data" -Force
+New-Item -ItemType Junction -Path data -Target "D:\IAProject\data"
+```
+
 Scoring always needs the executable: `thrember` extracts the complete 2,568
 features from its bytes. `--analysis` additionally loads the analyzer's
 `ember_histogram` and `ember_byteentropy`, verifies the report size and available

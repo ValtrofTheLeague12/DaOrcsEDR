@@ -18,18 +18,41 @@
 # An unknown key is a hard error, not a warning. Silently ignoring one would
 # leave an operator who mistyped ML_SKP believing they had skipped the model.
 #
-# Only the keys the analyzer actually reads are accepted:
+# Only the keys the analyzer actually reads are accepted - the same list as
+# known_analysis_keys() in src/main/analysis_config.cpp, which the console's
+# ENV_OPTIONS mirrors; a drift between the two fails the parity tests:
 #   ML_SKIP  ML_EXPLAIN  ML_THRESHOLD  ML_TOP_K
 #   CTI_SKIP  CTI_CONFIG
 #   STATIC_ANALYZER_CURSES
 #   IA_ALLOW_CORE_DUMP  IA_CONTINUE_ON_SIGNAL
-#   TRACE_FILE
+#   TRACE_FILE  ENABLE_TRACING
+#   IA_INTERRUPT_IF_PACKED  IA_INTERRUPT_ENTROPY
+#   MEGA_UPLOAD  MEGA_REMOTE_ROOT  MEGA_SEAL  MEGA_TIMEOUT
 #
 # Remove a line to fall back to the binary's built-in default. Do not add one
 # for a credential: those belong in .env or the vault, and the analyzer redacts
-# rather than reads this file for them.
+# rather than reads this file for them. The bundle password in particular is
+# NOT an analysis setting at all - it lives in the operator password file
+# outside the repo (see mega/protect.py), and the Analysis Configuration page
+# manages it as a file, not as a value here.
 
 # The default pipeline has always skipped both of these, so the shipped default
 # is unchanged. Uncomment to run them.
 #CTI_SKIP: "1"
 #ML_SKIP: "1"
+
+# --- set from the admin console ---
+IA_CONTINUE_ON_SIGNAL: false
+CTI_SKIP: true
+ML_SKIP: true
+STATIC_ANALYZER_CURSES: false
+ML_EXPLAIN: true
+IA_ALLOW_CORE_DUMP: false
+ENABLE_TRACING: true
+ML_THRESHOLD: "0.5"
+IA_INTERRUPT_IF_PACKED: false
+IA_INTERRUPT_ENTROPY: "7"
+ML_TOP_K: "10"
+MEGA_UPLOAD: true
+MEGA_REMOTE_ROOT: "evidence"
+MEGA_TIMEOUT: "5000"

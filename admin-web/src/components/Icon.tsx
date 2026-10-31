@@ -13,6 +13,7 @@ export type IconName =
   | 'image' | 'network' | 'database' | 'link' | 'git-merge' | 'rotate-cw'
   | 'terminal' | 'play' | 'folder' | 'user' | 'activity' | 'rocket' | 'tag' | 'server'
   | 'variable' | 'filter' | 'check' | 'plus' | 'wrench' | 'grip'
+  | 'code' | 'plug' | 'wifi'
 
 const PATHS: Record<IconName, string> = {
   // heartbeat / pulse
@@ -106,6 +107,15 @@ const PATHS: Record<IconName, string> = {
   // because a grip says "this whole row moves" where chevrons say "these two
   // buttons move it".
   grip: 'M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01',
+  // code - a module that gets imported, which is not a file on disk and not a
+  // command that runs. The last three exist for the ClamAV connection test,
+  // where each step is a different kind of thing and one grey tick for all of
+  // them hides that.
+  code: 'M16 18l6-6-6-6M8 6l-6 6 6 6',
+  // plug - a live socket, as opposed to a host that merely resolves
+  plug: 'M9 2v6M15 2v6M6 8h12v3a6 6 0 0 1-12 0z M12 17v5',
+  // wifi - an address that has to answer before anything can connect
+  wifi: 'M2 9a16 16 0 0 1 20 0 M5 12.5a11 11 0 0 1 14 0 M8.5 16a6 6 0 0 1 7 0 M12 20h.01',
 }
 
 export default function Icon({

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <iomanip>
 #include <set>
 #include <sstream>
@@ -222,11 +223,70 @@ void run_got(context& ctx) {
 // ---------------------------------------------------------------------------
 // Phase 7: byte histogram
 // ---------------------------------------------------------------------------
+
+namespace {
+
+// IA_INTERRUPT_IF_PACKED. Whole-file entropy is the cheapest packed signal the
+// analyzer measures, and the histogram phase is where it is measured - so the
+// gate lives here, right after the number exists. A sample at or above the
+// threshold stops the run before the phases that would spend hours on a packed
+// artifact nothing from them will be believed about; the message names both
+// numbers, because "packed" without them is an accusation rather than a fact.
+//
+// --resume pushes through: the histogram is checkpointed like every completed
+// phase, and a resumed run skips it rather than re-checking, so the operator
+// has a documented way past their own tripwire without editing the config.
+constexpr double k_default_packed_entropy = 7.5;
+
+bool env_flag(const char* name) {
+  const char* v = std::getenv(name);
+  if (v == nullptr) return false;
+  const std::string s(v);
+  return s == "1" || s == "true" || s == "yes" || s == "on";
+}
+
+}  // namespace
+
+void interrupt_if_packed(context& ctx, double entropy) {
+  if (!env_flag("IA_INTERRUPT_IF_PACKED")) return;
+  double threshold = k_default_packed_entropy;
+  if (const char* v = std::getenv("IA_INTERRUPT_ENTROPY");
+      v != nullptr && *v != '\0') {
+    try {
+      const double parsed = std::stod(v);
+      if (parsed > 0.0 && parsed <= 8.0) {
+        threshold = parsed;
+      } else {
+        LOG_WARN("IA_INTERRUPT_ENTROPY={} is outside 0..8 bits/byte; "
+                 "using the default {}",
+                 v, k_default_packed_entropy);
+      }
+    } catch (const std::exception&) {
+      LOG_WARN("IA_INTERRUPT_ENTROPY={} is not a number; using the default {}",
+               v, k_default_packed_entropy);
+    }
+  }
+  if (entropy < threshold) return;
+
+  std::ostringstream entropy_os;
+  entropy_os << std::fixed << std::setprecision(4) << entropy;
+  std::ostringstream threshold_os;
+  threshold_os << std::setprecision(2) << std::defaultfloat << threshold;
+  console::error("analysis stopped: the executable is packed");
+  console::error("  whole-file entropy " + entropy_os.str() +
+                 " bits/byte is at or above the " + threshold_os.str() +
+                 " threshold (IA_INTERRUPT_ENTROPY).");
+  console::error("  the phases after 'histogram' did not run; completed ones "
+                 "stay resumable with --resume.");
+  ctx.stop_reason = "packed";
+}
+
 void run_byte_histogram(context& ctx) {
   phase(ctx, true, "byte histogram");
   const auto started = report_clock::now();
   extractor::byte_histogram_t result{};
   if (extractor::extract_byte_histogram(result, ctx.info)) {
+    interrupt_if_packed(ctx, result.entropy);
     std::ostringstream entropy_os;
     entropy_os << std::fixed << std::setprecision(4) << result.entropy << " bits/byte";
     print_kv("Entropy", entropy_os.str());

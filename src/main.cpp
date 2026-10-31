@@ -246,7 +246,6 @@ int main(int argc, char** argv) {
   pipeline::planner::pipeline_config cfg;
   try {
     cfg = pipeline::planner::load(pipeline_spec);
-    cfg.artifacts = pipeline::planner::load_artifact_options();
   } catch (const std::exception& e) {
     std::cerr << "pipeline error: " << e.what() << "\n";
     return 2;
@@ -273,6 +272,21 @@ int main(int argc, char** argv) {
     return 2;
   }
   pipeline::apply_analysis_settings(analysis);
+
+  // Artifact options are resolved this late on purpose. load_artifact_options()
+  // reads MEGA_* from the process environment as overrides for artifacts.yaml,
+  // and at this point the environment finally carries everything that can set
+  // them: the pipeline's `environment:` block landed above, and the global
+  // analysis settings in the line before this one. They used to be resolved
+  // straight after load(), before either block was exported - the console's
+  // upload controls wrote into files the artifact options never saw, and the
+  // overrides were lies told by an ordering accident.
+  try {
+    cfg.artifacts = pipeline::planner::load_artifact_options();
+  } catch (const std::exception& e) {
+    std::cerr << "artifact config error: " << e.what() << "\n";
+    return 2;
+  }
 
   // -------- Debug stack ------------------------------------------------------
   // Seeded a second time because apply_environment() may have put new
@@ -590,6 +604,14 @@ int main(int argc, char** argv) {
               << point.string() << "\ncontinue with:\n  static_analyzer "
               << ctx.path << " --resume\n\n";
     rc = 130;
+  } else if (!ctx.stop_reason.empty()) {
+    // 3 is its own answer on purpose: a wrapper script can tell "the run
+    // stopped itself on a policy flag" from both an analysis failure and an
+    // operator interrupt without parsing text. The detail is in the phase's
+    // message - entropy and threshold, not vibes.
+    print_kv_colored("Result", std::string("stopped: ") + ctx.stop_reason,
+                     console::yellow);
+    rc = 3;
   } else if (ctx.failed) {
     print_kv_colored("Result", "FAILED", console::red);
     rc = EXIT_FAILURE;
@@ -630,8 +652,7 @@ int main(int argc, char** argv) {
     upload_options.timeout_seconds = cfg.artifacts.timeout_seconds;
     upload_options.upload = cfg.artifacts.upload_artifacts;
     upload_options.encrypt = cfg.artifacts.encrypt_artifacts;
-    upload_options.encryption_recipient = cfg.artifacts.encryption_recipient;
-    upload_options.admin_public_key = cfg.artifacts.admin_public_key;
+    upload_options.password_file = cfg.artifacts.password_file;
 
     LOG_INFO("artifacts: {} evidence bundle for '{}'",
              upload_options.upload ? "building and uploading" : "building local",
@@ -639,9 +660,8 @@ int main(int argc, char** argv) {
     if (upload_options.encrypt) {
       // Stated before it happens. After the fact the operator learns it from a
       // manifest on someone else's server.
-      LOG_INFO("artifacts: the bundle will be SEALED to the '{}' public key "
-               "before upload (X25519 + AES-256-GCM, in-process)",
-               upload_options.encryption_recipient);
+      LOG_INFO("artifacts: the bundle will be PASSWORD-PROTECTED zip "
+               "(WinZip AES-256, in-process) before anything is uploaded");
     }
     const mega_runner::result upload = mega_runner::run(upload_options);
     if (!upload.standard_output.empty()) std::cout << upload.standard_output;

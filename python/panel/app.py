@@ -22,8 +22,10 @@ import yaml
 from flask import Flask, jsonify, make_response, request, send_file
 
 from . import (analysis, analysis_settings, artifacts, auth, build,
-               build_checks, clamd, config, containers, docs, logs, netmap,
-               qiling, services, stats, system, trace, utils, vms, vmmetrics)
+               build_checks, clamd, config, containers, docs, dynamic_analysis,
+               hardening, logs, netmap, pipeline_run, qiling, sample_factory,
+               sample_resources, samples, services, stats, system, trace, utils,
+               vms, vmmetrics)
 from .yamlview import jsonable as _jsonable, spans as _yaml_spans
 
 try:
@@ -562,6 +564,116 @@ def create_app() -> Flask:
             return _bad(exc, 500)
         return jsonify(ok=True, artifacts=options)
 
+    # --- the bundle-password resource ----------------------------------------
+    #
+    # The password lives in ONE file outside the repo (%APPDATA%\IAProject\
+    # bundle-keys\upload.password, or IA_BUNDLE_PASSWORD_FILE), and these routes
+    # manage that file: report on it, set an operator-chosen value, generate one
+    # (value returned exactly once), or clear it. None of them accepts or
+    # returns the value through any config write, and none will echo it again
+    # after its one showing - a generated password that comes back on every
+    # poll is not a secret, it is a page decoration.
+
+    @app.get("/api/artifacts/bundle-password")
+    def bundle_password_status():
+        """Bundle Password Status
+        ---
+        tags: [artifacts]
+        responses:
+          200:
+            description: Whether a password file exists and where it lives
+        description: >
+          The operator password file's STATE - present, and the path - for the
+          Analysis Configuration page's status chip. The value itself is never
+          in this response: a GET here runs on every poll, and a password that
+          polls alongside the settings is not being kept.
+        """
+        return jsonify(ok=True, **analysis._bundle_password_status())
+
+    @app.post("/api/artifacts/bundle-password")
+    def bundle_password_set():
+        """Set the Bundle Password
+        ---
+        tags: [artifacts]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                password: {type: string}
+        responses:
+          200:
+            description: Stored under the operator password file
+          400:
+            description: Empty or too short (8 bytes is the floor)
+        description: >
+          Writes the operator's own password, byte-exact, into the password
+          file outside the repo. The value is accepted once and never returned;
+          the response is the same status shape the GET gives.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or "password" not in body:
+            return jsonify(ok=False, error="body must be {'password': ...}"), 400
+        result = analysis._bundle_password_set(body.get("password"))
+        if not result.get("ok"):
+            return jsonify(result), 400
+        return jsonify(result)
+
+    @app.post("/api/artifacts/bundle-password/generate")
+    def bundle_password_generate():
+        """Generate the Bundle Password
+        ---
+        tags: [artifacts]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            schema:
+              type: object
+              properties:
+                length: {type: integer, description: "12-128 chars, default 24"}
+        responses:
+          200:
+            description: The generated value, this one time
+          400:
+            description: A length outside 12..128
+        description: >
+          Generates a random URL-safe password under crypto-grade randomness,
+          stores it in the password file, and returns it EXACTLY ONCE. The page
+          shows it with a copy button while it is on screen and never again;
+          there is no second read, and no recovery if it is lost without being
+          stored somewhere real. That is the same trade every password here
+          makes, said out loud instead of hidden.
+        """
+        body = request.get_json(silent=True) or {}
+        result = analysis._bundle_password_generate(
+            body.get("length") if isinstance(body, dict) else 24)
+        if not result.get("ok"):
+            return jsonify(result), 400
+        return jsonify(result)
+
+    @app.delete("/api/artifacts/bundle-password")
+    def bundle_password_clear():
+        """Clear the Bundle Password
+        ---
+        tags: [artifacts]
+        responses:
+          200:
+            description: The password file is removed
+        description: >
+          Deletes the operator password file. Protection stays switchable, so
+          this is not a dangerous act by itself - but an upload with MEGA_SEAL
+          on and no password file now refuses to run, which is the fail-closed
+          outcome the console keeps choosing.
+        """
+        result = analysis._bundle_password_clear()
+        if not result.get("ok"):
+            return jsonify(result), 400
+        return jsonify(result)
+
     @app.post("/api/analysis/pipeline/environment")
     def set_pipeline_environment():
         """Set or Clear Pipeline Environment Options
@@ -614,56 +726,6 @@ def create_app() -> Flask:
             return _bad(exc, 500)
         return jsonify(ok=True, pipeline=entry)
 
-    @app.post("/api/analysis/pipeline/rush")
-    def set_pipeline_rush():
-        """Apply or Undo the Phase-Rush Triage Profile
-        ---
-        tags: [analysis]
-        consumes: [application/json]
-        parameters:
-          - in: body
-            name: body
-            required: true
-            schema:
-              type: object
-              required: [pipeline, enabled]
-              properties:
-                pipeline: {type: string}
-                enabled: {type: boolean}
-        responses:
-          200:
-            description: The pipeline entry as it now stands on disk
-          400:
-            description: Nothing to apply or restore, or the edit did not verify
-          404:
-            description: No such pipeline
-        description: >
-          Drops the phases that dominate wall clock - radare2 and its call
-          graphs, capa, cminer, hexdump, the internet CTI lookups and the ML
-          score - from every `phases: [...]` list in one pipeline, or puts them
-          back.
-
-          Applying records each original list as a `# phase-rush: [...]` comment
-          directly above the list it trimmed, which is what makes undoing it
-          exact rather than a guess, and what explains an empty stage to whoever
-          reads the YAML next. Only inline phase lists are edited; a block-style
-          pipeline is refused with an explanation instead of being rewritten
-          blind.
-        """
-        body = request.get_json(silent=True)
-        if not isinstance(body, dict):
-            return jsonify(ok=False, error="body must be a JSON object"), 400
-        enabled = body.get("enabled")
-        if not isinstance(enabled, bool):
-            return jsonify(ok=False, error="'enabled' must be true or false"), 400
-        try:
-            entry = analysis.set_rush(str(body.get("pipeline") or ""), enabled)
-        except ValueError as exc:
-            return _bad(exc)
-        except OSError as exc:
-            return _bad(exc, 500)
-        return jsonify(ok=True, pipeline=entry)
-
     @app.post("/api/analysis/pipeline/yara-gen")
     def set_pipeline_yara_gen():
         """Enable or Disable YARA Rule Generation
@@ -688,8 +750,8 @@ def create_app() -> Flask:
         description: >
           Adds or removes the `yara_gen` phase in a pipeline's phase lists.
 
-          It edits the same inline `phases: [...]` lists as the phase-rush
-          toggle, so the wizard preview, the planner and this control cannot
+          It edits the same inline `phases: [...]` lists, so the wizard
+          preview, the planner and this control cannot
           disagree about what the file says. The phase is inserted immediately
           BEFORE `export`, because a rule file written after the artifact set is
           assembled is a rule file nobody receives.
@@ -968,7 +1030,7 @@ def create_app() -> Flask:
             description: Both ends, even when MEGA is unreachable
         description: >
           `local` walks exports/ for `<artifact>_artifact/` bundles and reports
-          the sealed tarball, its recorded digest and whether re-hashing it
+          the archive, its recorded digest and whether re-hashing it
           agrees. `remote` is the same bundles read back off MEGA through
           mega/list.py, and `transfer` is the effective throughput between
           consecutive uploads.
@@ -1156,7 +1218,8 @@ def create_app() -> Flask:
           400:
             description: Invalid artifact name or MEGA root
           403:
-            description: upload_artifacts is false in config/artifacts.yaml
+            description: the effective upload toggle is off (MEGA_UPLOAD wins
+              over upload_artifacts; see the Analysis Configuration page)
           404:
             description: No local bundle with that name
         description: >
@@ -1168,9 +1231,10 @@ def create_app() -> Flask:
           it over a consumer link takes minutes, and the log is the useful part.
           Poll GET /api/artifacts/export/<job_id>.
 
-          Gated on `upload_artifacts` in config/artifacts.yaml. That option is
-          the operator saying this lab does not send evidence off the host, and a
-          button in a browser has to honour it exactly as the analyzer does.
+          Gated on the effective upload toggle: analysis.yaml's MEGA_UPLOAD
+          wins over config/artifacts.yaml's upload_artifacts. That setting is
+          the operator saying this lab does not send evidence off the host, and
+          a button in a browser has to honour it exactly as the analyzer does.
         """
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
@@ -1419,9 +1483,9 @@ def create_app() -> Flask:
           Runs the selected tests in order as one job and streams the log.
 
           Analyzer-backed entries execute with IA_ARTIFACT_UPLOAD=0. That is not
-          optional: config/artifacts.yaml ships upload_artifacts: true, so
-          without it a test started from a browser button would push an evidence
-          bundle to the operator's cloud account.
+          optional: the analysis settings say MEGA_UPLOAD: true, so without it
+          a test started from a browser button would push an evidence bundle to
+          the operator's cloud account.
         """
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
@@ -1434,6 +1498,164 @@ def create_app() -> Flask:
         return (jsonify(result) if result.get("ok")
                 else (jsonify(result), 409 if "already" in str(result.get("error"))
                        else 400))
+
+    # --- build: hardening - the settings, and what the binary actually carries --
+
+    @app.get("/api/build/hardening")
+    def build_hardening():
+        """Binary Hardening: the requested settings and the carried facts
+        ---
+        tags: [build]
+        responses:
+          200:
+            description: The four protection settings, and whether the built
+                         binary carries them
+        description: >
+          Two halves in one payload, because the card that shows them answers
+          one question - "do the settings and the binary agree?" - and a page
+          that fetched them separately could render the requested settings
+          beside a binary built before they were written.
+
+          The settings half is config/hardening.json: four Windows protections
+          (ASLR, high-entropy VA, DEP/NX, stack protector), each ON by default
+          because MinGW's linker and compiler already default them on. The
+          switches exist to turn a protection OFF deliberately, so the file
+          records the intent and a build started from the panel and one started
+          from a terminal produce the same binary.
+
+          The compliance half reads the finished executable: three PE-header
+          bits (DllCharacteristics) and the canary runtime for the stack
+          protector, which has no header bit and is therefore a weaker signal
+          - the report says how each fact was determined rather than presenting
+          the inference as a header fact.
+
+          Reading the binary streams it once; the call is made on page load and
+          after a build, not on a fast poll.
+        """
+        return jsonify({
+            "settings": hardening.snapshot(config.REPO),
+            "compliance": hardening.compliance(config.REPO, build_checks.EXE),
+        })
+
+    @app.put("/api/build/hardening")
+    def build_hardening_set():
+        """Set Binary Hardening
+        ---
+        tags: [build]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              additionalProperties:
+                type: boolean
+                description: Protection name to whether the NEXT build asks for it
+              example: {"aslr": true, "stack_protector": false}
+        responses:
+          200:
+            description: The settings as they now stand, and the compliance report
+          400:
+            description: A non-object body, an unknown key, or a non-boolean value
+        description: >
+          Rewrites only the keys present in the body; the rest keep their
+          current value. The file is rewritten whole (temp + rename) rather
+          than patched in place: it is four booleans, and a half-written
+          settings file is a worse lie than no file.
+
+          Values are validated strictly - `true`/`false` only. A stringified
+          `"false"` is refused rather than accepted, because a client that
+          stringified its payload must never silently flip a protection OFF,
+          which is the one accident this whole mechanism exists to prevent. An
+          unknown key is refused too: it means the file was written by a
+          different version of this project, and the operator's intent is not
+          being honoured.
+
+          Takes effect at the next build - build.ps1 reads the file when it
+          runs. The returned compliance report still describes the CURRENT
+          binary, so a mismatch after the write is the expected "rebuild"
+          state, not an error.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        try:
+            hardening.write(config.REPO, body)
+        except ValueError as exc:
+            return _bad(exc)
+        except OSError as exc:
+            return _bad(exc, 500)
+        return jsonify({
+            "settings": hardening.snapshot(config.REPO),
+            "compliance": hardening.compliance(config.REPO, build_checks.EXE),
+        })
+
+    @app.get("/api/dynamic-analysis/config")
+    def dynamic_analysis_config():
+        """Dynamic Analysis Configuration - one transport choice
+        ---
+        tags: [dynamic-analysis]
+        responses:
+          200:
+            description: The stored policy, the two options, and the file path
+        description: >
+          config/dynamic_analysis.json holds ONE choice for how a sample under
+          dynamic analysis is allowed to communicate:
+
+            tcp   the guest keeps a routable virtual NIC and may open sockets
+            sftp  the guest is driven over SSH/SFTP and the sample gets no raw
+                  TCP path out
+
+          A radio rather than two checkboxes because the two are not additive:
+          "network on AND SFTP" has two answers depending on which path the
+          sample took, and nobody can say which one a run used.
+
+          The file lives beside the other panel-owned JSON config rather than in
+          config/analysis.yaml: the analyzer's C++ reader treats an unknown key
+          there as a hard error, and this setting belongs to the dynamic side.
+        """
+        return jsonify(dynamic_analysis.snapshot(config.REPO))
+
+    @app.put("/api/dynamic-analysis/config")
+    def dynamic_analysis_config_set():
+        """Set the Dynamic Analysis Transport
+        ---
+        tags: [dynamic-analysis]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                communication:
+                  type: string
+                  enum: [tcp, sftp]
+                  description: The transport every dynamic analysis may use
+              example: {"communication": "sftp"}
+        responses:
+          200:
+            description: The policy as it now stands
+          400:
+            description: A non-object body, an unknown key, or an unknown id
+        description: >
+          Rewrites the file whole (temp + rename). The value is validated against
+          the two ids the page offers - an unknown string is refused, not stored,
+          because a typo in the file would otherwise silently select a transport
+          that no code path implements.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        try:
+            dynamic_analysis.write(config.REPO, body)
+        except ValueError as exc:
+            return _bad(exc)
+        except OSError as exc:
+            return _bad(exc, 500)
+        return jsonify(dynamic_analysis.snapshot(config.REPO))
 
     @app.get("/api/utils")
     def utils_overview():
@@ -1553,10 +1775,191 @@ def create_app() -> Flask:
                         "yara": {"ignore_compile_failures":
                                  yara_now.get("ignore_compile_failures")}})
 
+    # --- generator resources (value pools for the sample factory) --------------
+
+    @app.get("/api/utils/resources")
+    def utils_resources():
+        """Generator Resources
+        ---
+        tags: [utils]
+        responses:
+          200:
+            description: The pools, their sources and the factory features
+                         each one can honour
+        description: >
+          Value pools the Build page's sample factory draws from: malicious IPs,
+          domains, URLs and file hashes. Definitions live in
+          config/sample_resources.json; fetched values live in the panel's
+          cache and never in git.
+
+          These are bait literals, not detection knowledge - the factory copies
+          a sampled value into a generated C/C++ source, and nothing is dialled.
+
+          Every resource reports its last good fetch AND its last failed one.
+          A failed refresh keeps the previous values rather than emptying a pool
+          the factory depends on.
+        """
+        return jsonify(sample_resources.snapshot())
+
+    @app.post("/api/utils/resources")
+    def utils_resource_add():
+        """Add a Generator Resource
+        ---
+        tags: [utils]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required: [label, kind, url]
+              properties:
+                label: {type: string}
+                kind: {type: string, enum: [ip, domain, url, hash]}
+                url:
+                  type: string
+                  description: >
+                    Any http(s) URL. A github.com /blob/ page is rewritten to
+                    the raw URL the panel actually fetches.
+                enabled: {type: boolean, default: true}
+                note: {type: string}
+                fetch:
+                  type: boolean
+                  default: true
+                  description: Fetch the values immediately after adding.
+        responses:
+          200: description: New snapshot, plus what the first fetch found
+          400: description: Invalid field, URL, kind or duplicate id
+          503: description: The definitions file could not be written
+        description: >
+          Adding a resource does not make its values available: they appear only
+          after a successful fetch. `fetch` defaults to true so the usual case -
+          paste a URL, get a pool - is one press; a failed first fetch is
+          reported inside `refresh` and the resource stays configured with the
+          error attached.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+        body = dict(body)
+        fetch = body.pop("fetch", True)
+        if not isinstance(fetch, bool):
+            return jsonify({"ok": False, "error": "'fetch' must be a boolean"}), 400
+        try:
+            record = sample_resources.add(body)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except OSError as exc:
+            return jsonify({"ok": False,
+                            "error": f"could not write the resources file: {exc}"}), 503
+        refresh = sample_resources.refresh(record["id"]) if fetch else None
+        return jsonify({"ok": True, "added": record["id"], "refresh": refresh,
+                        **sample_resources.snapshot()})
+
+    @app.put("/api/utils/resources/<resource_id>")
+    def utils_resource_update(resource_id: str):
+        """Edit a Generator Resource
+        ---
+        tags: [utils]
+        consumes: [application/json]
+        parameters:
+          - in: path
+            name: resource_id
+            required: true
+            type: string
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                label: {type: string}
+                kind: {type: string, enum: [ip, domain, rot13, xor]}
+                url: {type: string}
+                enabled: {type: boolean}
+                note: {type: string}
+        responses:
+          200: description: New snapshot
+          400: description: Invalid field or value
+          404: description: No resource with that id
+        description: >
+          Changing the URL or kind drops the cached values: yesterday's list
+          must not answer for the new address under a new label. The resource
+          then reads as "not fetched" until it is refreshed.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+        try:
+            sample_resources.update(resource_id, body)
+        except LookupError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except OSError as exc:
+            return jsonify({"ok": False,
+                            "error": f"could not write the resources file: {exc}"}), 503
+        return jsonify({"ok": True, **sample_resources.snapshot()})
+
+    @app.delete("/api/utils/resources/<resource_id>")
+    def utils_resource_remove(resource_id: str):
+        """Remove a Generator Resource
+        ---
+        tags: [utils]
+        parameters:
+          - in: path
+            name: resource_id
+            required: true
+            type: string
+        responses:
+          200: description: New snapshot (the cache entry is deleted too)
+          404: description: No resource with that id
+        description: >
+          Removes the definition AND its cached values. A factory feature whose
+          last pool disappears stops being offered, with the reason shown on
+          both pages.
+        """
+        try:
+            sample_resources.remove(resource_id)
+        except LookupError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except OSError as exc:
+            return jsonify({"ok": False,
+                            "error": f"could not write the resources file: {exc}"}), 503
+        return jsonify({"ok": True, **sample_resources.snapshot()})
+
+    @app.post("/api/utils/resources/<resource_id>/refresh")
+    def utils_resource_refresh(resource_id: str):
+        """Fetch a Generator Resource Now
+        ---
+        tags: [utils]
+        parameters:
+          - in: path
+            name: resource_id
+            required: true
+            type: string
+        responses:
+          200:
+            description: Snapshot plus the fetch result. `ok` describes THIS
+                         fetch - a failed one still returns 200 so the page can
+                         show the error beside the last good values.
+        description: >
+          Downloads the resource's URL and validates every line for its kind.
+          A body that is not UTF-8 text, is over 16 MiB, redirects to a
+          non-http(s) scheme, or yields no usable values is refused with a
+          sentence; the previous good cache stays in place and keeps feeding
+          the factory.
+        """
+        result = sample_resources.refresh(resource_id)
+        return jsonify({"ok": result.get("ok", False),
+                        **sample_resources.snapshot(), "refresh": result})
+
     @app.post("/api/build")
     def build_start():
         """Build the Analyzer
-        ---
         tags: [build]
         consumes: [application/json]
         parameters:
@@ -1636,22 +2039,449 @@ def create_app() -> Flask:
         """
         return jsonify(build.current())
 
+    # --- pipeline runs (watch the analyzer on a chosen sample) ----------------
+
+    @app.get("/api/pipeline-run")
+    def pipeline_run_current():
+        """The Pipeline Run Watcher
+        ---
+        tags: [build]
+        responses:
+          200:
+            description: The run in progress, or the most recent one, or null
+        description: >
+          One poll for the whole feature: while a run is live this is its state
+          and log; after it finishes the same view stays readable until
+          something replaces it, which is what lets a reload land back on the
+          output instead of an empty panel.
+
+          A run that was ended by its duration limit reports
+          `state: "stopped"` with `timed_out: true`, rather than the `"failed"`
+          a non-zero exit would otherwise imply - the clock ended it, not the
+          analyzer.
+        """
+        return jsonify(pipeline_run.current())
+
+    @app.post("/api/pipeline-run")
+    def pipeline_run_start():
+        """Run a Pipeline Now
+        ---
+        tags: [build]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required: [pipeline, sample]
+              properties:
+                pipeline: {type: string}
+                sample: {type: string}
+                duration:
+                  type: integer
+                  minimum: 10
+                  maximum: 86400
+                  description: >
+                    Maximum seconds before the run is killed. Omit for no limit.
+                allow_packed:
+                  type: boolean
+                  description: >
+                    The explicit packed override. Omit (or false) and a packed
+                    sample is refused with `code: "sample-packed"`; true is a
+                    deliberate decision to run it anyway, and is logged.
+        responses:
+          200:
+            description: Run started
+          400:
+            description: Refused, with the reason and a machine-readable `code`
+          409:
+            description: A run is already in progress
+        description: >
+          Starts `static_analyzer --no-curses --pipeline <name> <sample>` as a
+          job whose output streams to the page.
+
+          `sample` is a path relative to the repo root or absolute, and is
+          validated before anything is spawned: an allowed executable
+          extension (.exe, .dll, .bin, .sys), no '..' segments, no Win32 name
+          tricks, and a resolved path inside the repo's sample roots
+          (samples/, tests/fixtures/, exports/). The pipeline must exist on
+          disk (or be the built-in `default`), and each refusal names the
+          file or rule it refused.
+
+          A packed sample (UPX markers, or whole-file entropy at the
+          analyzer's own threshold) is refused with `code: "sample-packed"`
+          before the analyzer is spawned - a run spent in unpacking loops is
+          a run whose later phases cannot be trusted. `allow_packed: true`
+          is the explicit override, and the response then carries the
+          verdict under `packed`.
+
+          `duration` bounds the run: on expiry the analyzer is terminated and
+          SIGKILLed if it does not exit, and the job is marked `stopped` with
+          `timed_out: true`. Omit it for an unbounded run, which is the default
+          - a watchdog that armed itself would kill long runs nobody asked to
+          bound. The minimum is 10s and the maximum 24h; anything else is
+          refused rather than clamped, so the number the page shows back is the
+          number that was asked for.
+
+          IA_ARTIFACT_UPLOAD=0 is forced on every child, exactly as the Tests
+          section does: a browser button must not push the evidence bundle to
+          the operator's cloud account. Artifacts upload from the Artifacts
+          page, on purpose.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+        pipeline = body.get("pipeline")
+        sample = body.get("sample")
+        if not isinstance(pipeline, str):
+            return jsonify({"ok": False, "error": "'pipeline' must be a string"}), 400
+        if not isinstance(sample, str):
+            return jsonify({"ok": False, "error": "'sample' must be a string"}), 400
+        # Passed through as-is; pipeline_run validates it and names the problem.
+        # `None` is the documented "no limit", so an absent key and an explicit
+        # null mean the same thing. The packed override is strict: only an
+        # explicit true overrides, so `1` or "yes" from a sloppy client does
+        # not silently become permission to run a packed executable.
+        result = pipeline_run.start(pipeline.strip(), sample.strip(),
+                                    body.get("duration"),
+                                    allow_packed=body.get("allow_packed") is True)
+        if result.get("ok"):
+            return jsonify(result)
+        return jsonify(result), 409 if result.get("code") == "already-running" else 400
+
+    @app.post("/api/pipeline-run/<job_id>/stop")
+    def pipeline_run_stop(job_id: str):
+        """Stop a Pipeline Run
+        ---
+        tags: [build]
+        parameters:
+          - in: path
+            name: job_id
+            required: true
+            type: string
+        responses:
+          200:
+            description: Stop requested; the run ends when the child exits
+          409:
+            description: The run is not running, or the id is unknown
+        description: >
+          terminate(), recorded in the log with who asked, and the lines the
+          analyzer already produced stay on the page. A kill button that
+          wiped the log would destroy the only part worth keeping.
+
+          If the analyzer does not exit within a short grace period it is then
+          killed outright (SIGKILL on POSIX, TerminateProcess on Windows), so a
+          wedged run cannot ignore the request. The job ends in state
+          `"stopped"` rather than `"failed"`: a person asked, and the analyzer
+          did not fail.
+        """
+        result = pipeline_run.stop(job_id)
+        if result.get("ok"):
+            return jsonify(result)
+        return jsonify(result), 409
+
+    @app.get("/api/build/samples")
+    def sample_list():
+        """List Samples
+        ---
+        tags: [build]
+        responses:
+          200:
+            description: >
+              Every analysable file directly under the repo's sample roots,
+              newest first, plus the upload size cap
+        description: >
+          The Run a pipeline picker's choices. Only files inside
+          config.SAMPLE_ROOTS (samples/, tests/fixtures/, exports/) with an
+          allowed executable extension are listed; the run gate re-validates
+          the chosen path anyway, so this listing is convenience rather than
+          authority. Metadata only - no packed verdicts, because computing one
+          reads each file whole. The selected file is inspected separately.
+        """
+        return jsonify(samples.list_samples())
+
+    @app.post("/api/build/samples/upload")
+    def sample_upload():
+        """Upload a Sample
+        ---
+        tags: [build]
+        consumes: [multipart/form-data]
+        parameters:
+          - in: formData
+            name: file
+            required: true
+            type: file
+            description: The executable to admit into samples/
+          - in: formData
+            name: allow_unscanned
+            required: false
+            type: boolean
+            description: >
+              Admit the file when clamd is unreachable. Explicit and logged;
+              omitted means an unreachable scanner refuses the upload.
+        responses:
+          200:
+            description: The file was admitted into samples/ and recorded in the manifest
+          400:
+            description: >
+              Refused with a machine-readable `code` (bad-name, bad-extension,
+              exists, scan-infected, scan-unavailable, no-file)
+          413:
+            description: The upload exceeds SAMPLE_UPLOAD_MAX_BYTES
+        description: >
+          The picker's upload route, backed by samples.save_upload(): the
+          client's file name is a NAME only, the body is streamed to staging
+          with the size cap enforced as it is written, clamd scans it, an
+          infected file is quarantined as evidence, and an existing name is
+          refused rather than overwritten. Only a file that survives every
+          step lands in samples/, where the picker offers it. The run gate
+          still validates that path before anything is spawned.
+        """
+        upload = request.files.get("file")
+        if upload is None or not (upload.filename or "").strip():
+            return jsonify({"ok": False, "code": "no-file",
+                            "error": "send multipart/form-data with a 'file' "
+                                     "field naming the executable"}), 400
+        allow_unscanned = request.form.get("allow_unscanned", "").strip().lower() \
+            in ("1", "true", "yes", "on")
+        result = samples.save_upload(upload.filename, upload.stream,
+                                     allow_unscanned=allow_unscanned)
+        if result.get("ok"):
+            return jsonify(result)
+        return jsonify(result), 413 if result.get("code") == "too-large" else 400
+
+    @app.post("/api/build/samples/inspect")
+    def sample_inspect():
+        """Inspect a Sample Path
+        ---
+        tags: [build]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: {type: string}
+        responses:
+          200:
+            description: >
+              The sample's metadata - resolved path, size, mtime - plus the
+              packed verdict and the state of the analyzer's own packed stop
+          400:
+            description: >
+              The path was refused; the reason names the rule (extension,
+              traversal, containment, existence)
+        description: >
+          Validates a typed sample path with the SAME rules the run gate
+          applies - python/panel/samples.py is the one implementation - and
+          returns what the file is: size, mtime, and a packed verdict (UPX
+          markers first, else whole-file entropy at the analyzer's own
+          threshold). The Build page calls this before enabling Run, so a
+          packed sample is stopped at selection rather than at start, and a
+          path the page shows as valid is a path the gate will accept.
+
+          The verdict is computed here, never taken from the client: the page
+          displays it, the gate re-derives it.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or not isinstance(body.get("path"), str):
+            return jsonify({"ok": False,
+                            "error": "body must be a JSON object with a "
+                                     "string 'path'"}), 400
+        result = samples.meta(body["path"].strip())
+        if result.get("ok"):
+            return jsonify(result)
+        return jsonify(result), 400
+
+    # --- test-sample factory (compose a bait sample, compile it) ---------------
+
+    @app.get("/api/build/sample/templates")
+    def sample_factory_templates():
+        """Sample Factory Templates
+        ---
+        tags: [build]
+        responses:
+          200:
+            description: Languages, checkboxes, presets and the compiler state
+        description: >
+          What the Build page's sample factory offers: the two languages (C,
+          C++), the checkbox vocabulary with one honest description of what
+          each one does to the source, the preset bundles that bundle them,
+          and whether the UCRT64 compiler the factory compiles through was
+          found. Checked once per visit, like the test catalogue.
+        """
+        return jsonify(sample_factory.templates())
+
+    @app.post("/api/build/sample/preview")
+    def sample_factory_preview():
+        """Preview a Composed Sample
+        ---
+        tags: [build]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                language: {type: string}
+                template: {type: string}
+                features: {type: array, items: {type: string}}
+                encoding: {type: string, enum: [mixed, plain, rot13, xor, base64, chained]}
+                sleep_seconds: {type: integer, minimum: 0, maximum: 3600}
+                seed: {type: integer, minimum: 0, maximum: 4294967295}
+                n_math: {type: integer, minimum: 0, maximum: 8}
+                n_vars: {type: integer, minimum: 0, maximum: 24}
+                loop_count: {type: integer, minimum: 0, maximum: 100}
+                loop_step: {type: integer, minimum: 1, maximum: 10}
+                loop_break_at: {type: integer, minimum: 0, maximum: 24}
+                instruction_count: {type: integer, minimum: 1, maximum: 12}
+                alloc_size: {type: integer, minimum: 1, maximum: 1048576}
+                n_frees: {type: integer, minimum: 2, maximum: 8}
+        responses:
+          200:
+            description: The composed source and the noise it carries
+          400:
+            description: Refused, with the reason
+        description: >
+          Returns the exact source text a press of Generate would produce -
+          the noise IP and domain are drawn HERE, not at generate time, so the
+          preview cannot differ from the artefact. The response carries the
+          32-bit seed it drew with; sending that seed back replays the same
+          sampled values and encodings. Nothing is written and nothing is
+          compiled: this is checkable text in a code block. The encoding
+          applies to the resource-backed IOCs; ROT13/XOR/BASE64 string
+          checkboxes always carry their own encoding.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+        result = sample_factory.compose(
+            body.get("language") or "",
+            body.get("template"),
+            body.get("features") if isinstance(body.get("features"), list) else [],
+            body.get("encoding"),
+            body.get("sleep_seconds"),
+            body.get("seed"),
+            body.get("n_math"),
+            body.get("n_vars"),
+            body.get("loop_count"),
+            body.get("loop_step"),
+            body.get("loop_break_at"),
+            body.get("instruction_count"),
+            body.get("alloc_size"),
+            body.get("n_frees"))
+        return (jsonify(result), 200 if result.get("ok") else 400)
+
+    @app.post("/api/build/sample")
+    def sample_factory_generate():
+        """Generate a Sample From the Factory
+        ---
+        tags: [build]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                language: {type: string}
+                template: {type: string}
+                features: {type: array, items: {type: string}}
+                name: {type: string}
+                encoding: {type: string, enum: [mixed, plain, rot13, xor, base64, chained]}
+                sleep_seconds: {type: integer, minimum: 0, maximum: 3600}
+                upx: {type: boolean}
+                virtualize: {type: boolean}
+                makefile: {type: boolean}
+                seed: {type: integer, minimum: 0, maximum: 4294967295}
+                n_math: {type: integer, minimum: 0, maximum: 8}
+                n_vars: {type: integer, minimum: 0, maximum: 24}
+                loop_count: {type: integer, minimum: 0, maximum: 100}
+                loop_step: {type: integer, minimum: 1, maximum: 10}
+                loop_break_at: {type: integer, minimum: 0, maximum: 24}
+                instruction_count: {type: integer, minimum: 1, maximum: 12}
+                alloc_size: {type: integer, minimum: 1, maximum: 1048576}
+                n_frees: {type: integer, minimum: 2, maximum: 8}
+        responses:
+          200:
+            description: Compiled - source path, exe path, size, compile log
+          400:
+            description: Refused, with the reason and the compile log
+        description: >
+          Writes the composed source to samples/ and compiles it with the
+          UCRT64 compiler the analyzer itself is built with (statically, so
+          the bait runs wherever the run card points at it, free of the
+          sysroot's DLLs). The returned paths are repo-relative. Optional
+          post-compile steps: UPX packing with the in-tree upx/upx.exe, and
+          Instruction Virtualisation through the in-tree EagleVM (virtualize).
+          The latter compiles with the stub markers, runs EagleVM.exe, copies
+          EagleVMStub.dll beside the result and returns the *_protected.exe -
+          it refuses, naming the Utils build button, when EagleVM is not built.
+          Sending the preview's seed composes the same sample
+          the code block showed. The noise feature plants a TEST-NET-3 IP and a
+          known benign domain - bait for the IOC and CTI layers that provably
+          never dials anything. `makefile` writes samples/<name>.mk beside the
+          source, before compiling, so the recipe survives a failed build.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+        result = sample_factory.generate(
+            body.get("language") or "",
+            body.get("template"),
+            body.get("features") if isinstance(body.get("features"), list) else [],
+            body.get("name") if isinstance(body.get("name"), str) else "",
+            body.get("encoding"),
+            body.get("sleep_seconds"),
+            body.get("upx", False),
+            body.get("virtualize", False),
+            body.get("seed"),
+            body.get("makefile", False),
+            body.get("n_math"),
+            body.get("n_vars"),
+            body.get("loop_count"),
+            body.get("loop_step"),
+            body.get("loop_break_at"),
+            body.get("instruction_count"),
+            body.get("alloc_size"),
+            body.get("n_frees"))
+        return (jsonify(result), 200 if result.get("ok") else 400)
+
+
     # --- clamav (guest on the Qiling VM) -------------------------------------
 
     @app.get("/api/clamd/status")
     def clamd_status():
-        """Connection-Test Checks Against the Local clamd
+        """Service Status for the Transport in config/dynamic_analysis.json
         ---
         tags: [clamav]
         responses:
           200:
-            description: Check results, even when nothing answered
+            description: >-
+              Check results for the SELECTED transport, even when nothing
+              answered. `communication.mode` is the choice, `communication.path`
+              is the file it came from, and `communication.error` is set when
+              that file could not be read.
         description: >
-          Read-only, local only: nothing here SSHes into the VM or starts a
-          scan. The daemon lives inside the analysis VM and answers over SSH,
-          so a local PING/VERSION reflects a local clamd if one exists - the
-          payload says so rather than dressing a local check up as the
-          guest's health.
+          Read-only, and transport-aware. The transport is read from
+          config/dynamic_analysis.json - the same file the Dynamic Analysis
+          page writes - and nothing here SSHes into the VM or starts a scan.
+
+          When SFTP is selected the checks are the driver files in
+          python/clamd/: scan_remote.py, clamd-python.py, vm_info.json and
+          paramiko. No SSH session is opened; a status poll must stay cheap.
+
+          When TCP is selected the checks go through
+          panel/utils/socket_validator.py, which opens the socket, and then ask
+          clamd for PING and VERSION on it. A daemon that does not answer is a
+          transport that cannot scan, which is what `ready` reports.
         """
         try:
             return jsonify(clamd.status())
@@ -1677,6 +2507,121 @@ def create_app() -> Flask:
         except Exception as exc:  # noqa: BLE001
             return jsonify({"present": False, "file_count": 0, "counts": {},
                             "files": [], "error": f"{type(exc).__name__}: {exc}"})
+
+    @app.get("/api/clamd/results/<path:name>")
+    def clamd_result_document(name):
+        """One Scan Result Document, as Written
+        ---
+        tags: [clamav]
+        parameters:
+          - in: path
+            name: name
+            required: true
+            type: string
+            description: A bare result file name ending in .json, as listed by /api/clamd/results
+        responses:
+          200:
+            description: >
+              `name`, `bytes`, `modified` and `raw` - the file's text unchanged.
+          400:
+            description: Refused with `code: bad-name` when the name is not a bare .json file name
+          404:
+            description: Refused with `code: not-found` when no such file exists
+        description: >
+          The evidence behind a verdict. The page shows the document a row was
+          read from; this endpoint returns the bytes as written and recomputes
+          nothing. Names are validated as bare `.json` file names, so a crafted
+          path cannot read outside python/clamd/results/.
+        """
+        try:
+            return jsonify(clamd.result_document(name))
+        except clamd.SubmitError as exc:
+            status = 404 if exc.code == "not-found" else 400
+            return jsonify(exc.as_dict()), status
+        except Exception as exc:  # noqa: BLE001 - a viewer must not 500
+            return jsonify({"ok": False, "code": "unreadable",
+                            "error": f"{type(exc).__name__}: {exc}"}), 500
+
+    @app.get("/api/clamd/submit")
+    def clamd_submit_current():
+        """The Scan in Progress, or the Last One
+        ---
+        tags: [clamav]
+        responses:
+          200:
+            description: >
+              A job view (kind=clamd) with the output log so far, or null when
+              nothing has been submitted since the panel started.
+        description: >
+          So a reload reattaches to a scan instead of showing an idle button
+          while scan_remote.py is still uploading.
+        """
+        try:
+            return jsonify(clamd.current_submit())
+        except Exception as exc:  # noqa: BLE001 - a status page must not 500
+            return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 200
+
+    @app.post("/api/clamd/submit")
+    def clamd_submit():
+        """Submit a Sample to ClamAV
+        ---
+        tags: [clamav]
+        consumes: [multipart/form-data]
+        parameters:
+          - in: formData
+            name: file
+            required: true
+            type: file
+            description: The sample to scan (25 MiB limit, clamd's StreamMaxLength)
+          - in: formData
+            name: mode
+            required: false
+            type: string
+            enum: [sftp, tcp]
+            description: >
+              Optional, and only to be refused when it disagrees. The transport
+              is read from config/dynamic_analysis.json, the same setting the
+              Dynamic Analysis > Configuration page writes; sending a different
+              mode is a 400 (mode-locked) rather than a silent divergence.
+        responses:
+          202:
+            description: Job handle; poll /api/build/<job_id> for the output log
+          400:
+            description: >
+              Refused with a machine-readable `code`: config-error,
+              mode-locked, bad-mode, transport-unavailable, bad-name, empty,
+              stage-failed
+          409:
+            description: A scan is already running
+          413:
+            description: The sample exceeds SUBMIT_MAX_BYTES
+        description: >
+          The one action with real side effects. The transport is whatever
+          config/dynamic_analysis.json selects, so this page cannot check one
+          path and scan through another: sftp runs python/clamd/scan_remote.py,
+          tcp opens a socket with panel/utils/socket_validator.py and sends
+          clamd's INSTREAM command. Every transport writes the same result
+          document under python/clamd/results/, so the Results tab cannot tell
+          which one produced a row. The scripts in python/clamd/ and the socket
+          client in panel/utils/ are used as-is; the panel reimplements neither.
+        """
+        upload = request.files.get("file")
+        if upload is None or not (upload.filename or "").strip():
+            return jsonify({"ok": False, "code": "no-file",
+                            "error": "send multipart/form-data with a 'file' "
+                                     "field naming the sample"}), 400
+        mode = (request.form.get("mode") or "").strip().lower() or None
+        try:
+            result = clamd.start_submit(upload.filename, upload.stream, mode)
+        except Exception as exc:  # noqa: BLE001 - report, never 500 silently
+            return jsonify({"ok": False,
+                            "error": f"{type(exc).__name__}: {exc}"}), 500
+        if result.get("ok"):
+            return jsonify(result), 202
+        if "already" in str(result.get("error")):
+            return jsonify(result), 409
+        return jsonify(result), 413 if result.get("code") == "too-large" else 400
+
 
     # --- qiling (emulation harness) ------------------------------------------
 

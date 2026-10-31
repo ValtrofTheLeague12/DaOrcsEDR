@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Card, Chip } from '@heroui/react'
 import Icon from '../components/Icon'
+import Checkbox from '../components/Checkbox'
 import type {
   BuildCheck,
   BuildConfiguration,
@@ -236,9 +237,7 @@ function TestRow({
         (selected ? 'border-accent bg-accent/5' : 'border-default-200')
       }
     >
-      <input
-        type="checkbox"
-        className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
+      <Checkbox
         checked={selected}
         disabled={!entry.available}
         onChange={onToggle}

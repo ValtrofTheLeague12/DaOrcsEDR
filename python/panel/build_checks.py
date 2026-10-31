@@ -619,11 +619,16 @@ def _run_tests(job_id: str, entries: list[dict]) -> None:
                 _append(job_id, f"    side effect: {effect}")
 
             env = dict(os.environ)
-            # The single most important line in this file. config/artifacts.yaml
-            # ships upload_artifacts: true, so without this a test started from a
+            # The single most important line in this file. The analysis settings
+            # say MEGA_UPLOAD: true, so without this a test started from a
             # browser would push an evidence bundle to the operator's cloud
             # account.
             env["IA_ARTIFACT_UPLOAD"] = "0"
+            # Test output is captured through a pipe, where the analyzer would
+            # normally suppress its startup logo. The panel is showing this log
+            # to an operator, so keep daorcs.logo in it; a crashing test still
+            # adds crash.logo through the normal handler.
+            env["STATIC_ANALYZER_FORCE_LOGO"] = "1"
             env.setdefault("IA_APPDATA_DIR",
                            str(config.appdata_root() / "test-runs"))
 

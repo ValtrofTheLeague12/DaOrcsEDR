@@ -1,38 +1,42 @@
 # Optional evidence bundle automation for static_analyzer.
 # Standard JSON reports under exports/<sample>_analysis/ are unaffected.
+#
+# THE TRANSFER SETTINGS LIVE IN config/analysis.yaml NOW. Their artifact keys
+# have been deleted from this file rather than left to quietly disagree with
+# the winners:
+#     upload_artifacts, remote_root, timeout_seconds
+# are owned by the MEGA_* analysis settings (edited on the console's Analysis
+# Configuration page), which the analyzer applies at startup; this file is no
+# longer consulted for them at all. Adding one back here would have no effect
+# while the matching analysis.yaml key exists.
+# The two lines below remain file-owned FALLBACKS that still decide while
+# their MEGA_* twins are absent:
+#     encrypt_artifacts
+# Once the same setting lives in analysis.yaml, delete its line here too.
+# store_artifact stays file-only: building the local bundle is not something
+# a per-run analysis setting asks about.
+#
+# The PROTECTION is a password-protected zip now (mega/protect.py, WinZip
+# AES-256). The password is NOT a config value anywhere - it lives in the
+# operator password file outside the repo
+#     %APPDATA%\IAProject\bundle-keys\upload.password
+# (overridable with IA_BUNDLE_PASSWORD_FILE), managed from the console's
+# Analysis Configuration page. A password in a repo-read YAML would put it one
+# `cat` away from anything that can read the checkout, and setting it here
+# would be refused with an error rather than silently honoured.
 
 # Build exports/<sample>_artifact/ with a deterministic tar.gz, SHA-256,
 # manifest, and README. This is opt-in; false leaves report exports unchanged.
-store_artifact: false
+store_artifact: true
 
-# Upload the evidence bundle using MEGAcmd. Uploading also creates/stores the
-# local bundle, so this may be enabled without setting store_artifact.
-upload_artifacts: true
-
-# MEGA destination parent. The bundle lands in <remote_root>/<sample>_artifact.
-remote_root: /
-
-# Seal the bundle to a public key before it is uploaded.
+# Wrap the bundle's archive in a password-protected zip before it is uploaded.
 #
 # Off by default. With this on, the plaintext archive stays on local disk and
-# only the sealed file goes to MEGA - and if sealing fails the upload is
-# ABORTED rather than falling back to plaintext, so a missing or broken key
-# can never quietly downgrade the bundle.
+# only the protected zip goes to MEGA - and if protection fails (no password
+# file, pyzipper missing) the upload is ABORTED rather than falling back to
+# plaintext, so a missing password can never quietly downgrade the bundle.
 #
-# Algorithm: X25519 ECDH + HKDF-SHA256 + AES-256-GCM, through the Python
-# 'cryptography' library, entirely in-process. No gpg, no openssl, no shell.
-encrypt_artifacts: true
-
-# Which key to seal to.
-#   user   the operator keypair on this machine (mega/seal.py keygen user)
-#   admin  the lab's public key - only the PUBLIC half is needed to encrypt,
-#          so the admin private key never has to exist on this machine
-encryption_recipient: user
-
-# Where the admin public key lives. Leave empty to use the default location
-# (%APPDATA%\IAProject\bundle-keys\admin.pub) or IA_BUNDLE_ADMIN_PUBKEY.
-# Accepts a base64 X25519 public key or a PEM one.
-admin_public_key: ""
-
-# Maximum upload command runtime in seconds.
-timeout_seconds: 900
+# Algorithm: WinZip AES-256 (WZ_AES) through the Python 'pyzipper' library,
+# entirely in-process. No gpg, no openssl, no shell. To open a protected zip:
+#     python mega/protect.py unzip <bundle>.zip --out-dir .
+encrypt_artifacts: false

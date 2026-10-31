@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "id": "malicious-ips",
+      "label": "Malicious IPs - romainmarcoux",
+      "kind": "ip",
+      "url": "https://raw.githubusercontent.com/romainmarcoux/malicious-ip/refs/heads/main/full-40k.txt",
+      "enabled": true,
+      "note": "Full 40k list from romainmarcoux/malicious-ip.",
+      "added_at": 1792511786.6918976
+    },
+    {
+      "id": "malicious-domains",
+      "label": "Malicious domains - romainmarcoux",
+      "kind": "domain",
+      "url": "https://raw.githubusercontent.com/romainmarcoux/malicious-domains/refs/heads/main/full-domains-aa.txt",
+      "enabled": true,
+      "note": "full-domains-aa from romainmarcoux/malicious-domains.",
+      "added_at": 1792511788.0723927
+    },
+    {
+      "id": "urls-feed",
+      "label": "urls_feed",
+      "kind": "url",
+      "url": "https://api.tweetfeed.live/v1/blocklist/urls.txt",
+      "enabled": true,
+      "note": "",
+      "added_at": 1793145845.7715356
+    },
+    {
+      "id": "sha-hashes",
+      "label": "sha-hashes",
+      "kind": "hash",
+      "url": "https://api.tweetfeed.live/v1/blocklist/sha256.txt",
+      "enabled": true,
+      "note": "",
+      "added_at": 1793146143.4046023
+    }
+  ]
+}

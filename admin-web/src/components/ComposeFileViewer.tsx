@@ -15,7 +15,7 @@ const SERVICES_PER_PAGE = 6
 // ---------------------------------------------------------------------------
 // Compose file viewer.
 //
-// The YAML tab is components/YamlView.tsx, which the analysis-configuration page
+// The YAML tab is components/YamlView.tsx, which the pipelines-configuration page
 // shares: one implementation, so the same file reads the same way wherever it
 // is opened.
 // ---------------------------------------------------------------------------
@@ -358,8 +358,8 @@ export default function ComposeFileViewer({
           <div className="flex shrink-0 items-center gap-1.5">
             {content && (
               <>
-                <Chip size="sm" variant="soft">{content.services.length} services</Chip>
-                <Chip size="sm" variant="soft">{lineCount} lines</Chip>
+                <Chip size="sm" variant="soft">{content.services.length} service{content.services.length === 1 ? '' : 's'}</Chip>
+                <Chip size="sm" variant="soft">{lineCount} line{lineCount === 1 ? '' : 's'}</Chip>
               </>
             )}
             <button

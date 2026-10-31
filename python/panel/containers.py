@@ -11,7 +11,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config
+from . import config, services
 
 _CACHE_TTL = 4.0
 _cache: dict = {"at": 0.0, "payload": None}
@@ -131,6 +131,28 @@ def _parse_ports(text) -> list[str]:
     if not text:
         return []
     return [p.strip() for p in str(text).split(",") if p.strip()]
+
+
+# `docker ps` publishes NAT mappings, not URLs:
+#   127.0.0.1:60001->3000/tcp     host 60001  ->  container 3000
+#   0.0.0.0:8081->8080/tcp        host 8081   ->  container 8080
+# The host side is what a person types, so that is the half extracted here.
+# A port that is only exposed inside the container ("3000/tcp", no "->") is
+# skipped: it says nothing about where the service can be reached from here.
+_PUBLISHED = re.compile(r":(\d+)\s*->")
+
+
+def _host_ports(ports: list[str]) -> list[int]:
+    """The host-side ports from docker's Ports column."""
+    out: list[int] = []
+    for entry in ports or []:
+        m = _PUBLISHED.search(str(entry))
+        if m:
+            try:
+                out.append(int(m.group(1)))
+            except ValueError:
+                continue
+    return out
 
 
 def _label(labels: str, key: str):
@@ -296,6 +318,10 @@ def list_containers() -> dict:
     skeleton = _projects_skeleton()
     standalone = {"label": "standalone", "compose_file": "",
                   "containers": []}
+    # Built once per snapshot, not per container: it reads .env, and ten cards
+    # would otherwise re-read it twenty times for one render. See
+    # services.endpoint_index() for why the join exists at all.
+    endpoints = services.endpoint_index()
     seen = set()
     agg_cpu = 0.0
     agg_mem = 0
@@ -385,11 +411,17 @@ def list_containers() -> dict:
             compose_file = group["compose_file"]
         else:
             compose_file = compose_rel
+        ports = _parse_ports(row.get("Ports"))
         entry = {
             "project": disp_proj, "name": disp_name,
             "container_name": name_full or None, "id": cid or None,
             "image": image, "state": state, "status": status,
-            "health": health, "ports": _parse_ports(row.get("Ports")),
+            "health": health, "ports": ports,
+            # Where a person opens this. None for a container the panel has no
+            # Spec for, rather than a URL guessed from the image name.
+            "endpoint": services.resolve(
+                endpoints, ports=_host_ports(ports),
+                service=service or disp_name),
             "compose_file": compose_file,
             "created": row.get("CreatedAt"),
             "running_for": row.get("RunningFor"),
@@ -414,6 +446,12 @@ def list_containers() -> dict:
                     "container_name": None, "id": None, "image": None,
                     "state": "missing", "status": "Not created",
                     "health": "none", "ports": [],
+                    # No ports row to join on, so this resolves by compose
+                    # service name - which is the point: the endpoint a not-yet-
+                    # created container WOULD answer on is the answer to "how do
+                    # I start using this", and it costs one dict lookup.
+                    "endpoint": services.resolve(
+                        endpoints, service=service),
                     "compose_file": proj["compose_file"],
                     "created": None, "running_for": None, "networks": None,
                     "cpu_percent": None, "mem_percent": None,

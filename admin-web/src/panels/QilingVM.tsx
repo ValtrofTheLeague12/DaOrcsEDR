@@ -5,6 +5,8 @@ import { Card } from '@heroui/react/card'
 import { Chip } from '@heroui/react/chip'
 import Loading from '../components/Loading'
 import Icon, { type IconName } from '../components/Icon'
+import Checkbox from '../components/Checkbox'
+import SubNav from '../components/SubNav'
 import { StatTile } from '../components/Stat'
 import { api, usePoll } from '../api'
 import { ago, bytes, pct, shortDuration } from '../lib/format'
@@ -84,14 +86,12 @@ function OutputView({
     <div className="overflow-hidden rounded-lg border border-default-200 bg-default-50/60">
       <div className="flex items-center justify-between gap-2 border-b border-default-200 px-3 py-1.5">
         <span className="font-mono text-[10px] text-default-400">
-          {lines.length} lines
+          {lines.length} line{lines.length === 1 ? '' : 's'}
         </span>
         <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-default-500">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={scrolling}
-            onChange={(e) => setStick(e.target.checked)}
-            className="h-3 w-3 accent-[var(--accent)]"
+            onChange={(next) => setStick(next)}
           />
           follow tail
         </label>
@@ -123,16 +123,16 @@ function OutputView({
 
 
 // ---------------------------------------------------------------------------
-// Qiling VM - one machine, four concerns.
+// Qiling VM - one machine, three concerns.
 //
 // Originally this was a single scroll: actions, rootfs, performance and the
 // ClamAV guest all stacked, so nothing had emphasis and the page read as a
-// wall. They are now tabs, split by what you are actually doing:
+// wall. ClamAV has its own panel now, and the remaining page is split by what
+// the operator is actually doing:
 //
-//   Overview   am I up, and what do I do next
-//   Performance what is the machine doing right now
-//   ClamAV     the signature scanner guest
-//   Qiling     the emulation harness and its root filesystem
+//   Overview    am I up, and what is the machine doing right now
+//   Emulation   the harness log every run appends to
+//   Runs        one bundle at a time, with its trace
 //
 // Three behaviours below are load-bearing and come from the actual scripts,
 // not from taste:
@@ -190,19 +190,25 @@ function gb(n: number | null | undefined): string {
 // meters sitting at 0%.
 function GuestCard({ metrics }: { metrics: QilingGuestMetrics }) {
   if (!metrics.available) {
+    // `collected_at` is null until the shared collector has returned a sample.
+    // That is not the same as "connected but no /proc": the guest may be fine
+    // and simply not measured yet, and saying "no /proc data" would blame it.
+    const pending = metrics.collected_at == null
     return (
       <Card className="w-full">
         <Card.Header className="flex items-center justify-between gap-3">
           <Card.Title className="text-sm font-semibold">CPU &amp; Memory</Card.Title>
-          <Chip size="sm" variant="soft" color={metrics.reachable ? 'warning' : 'default'}>
-            {metrics.reachable ? 'no /proc data' : 'VM unreachable'}
+          <Chip size="sm" variant="soft" color={pending ? 'accent' : metrics.reachable ? 'warning' : 'default'}>
+            {pending ? 'collecting…' : metrics.reachable ? 'no /proc data' : 'VM unreachable'}
           </Chip>
         </Card.Header>
         <Card.Content>
           <p className="text-[11px] leading-relaxed text-default-400">
-            {metrics.reachable
-              ? 'Connected but the guest returned no usable /proc data.'
-              : 'Start the analysis VM to read live CPU and memory. Metrics come from inside the guest over SSH, so a powered-off VM reports nothing rather than zeros.'}
+            {pending
+              ? 'The shared collector has not sampled this guest yet. It runs in the background every 15 seconds and this card fills in when the first sample lands - no SSH handshake is opened for this page.'
+              : metrics.reachable
+                ? 'Connected but the guest returned no usable /proc data.'
+                : 'Start the analysis VM to read live CPU and memory. Metrics come from inside the guest over SSH, so a powered-off VM reports nothing rather than zeros.'}
           </p>
           {metrics.error && (
             <p className="mt-1.5 font-mono text-[10px] text-default-400" title={metrics.error}>
@@ -219,7 +225,11 @@ function GuestCard({ metrics }: { metrics: QilingGuestMetrics }) {
       <Card.Header className="flex items-center justify-between gap-3">
         <Card.Title className="text-sm font-semibold">CPU &amp; Memory</Card.Title>
         <Chip size="sm" variant="soft" color="success">
-          {metrics.cores ?? '—'} cores · live over SSH
+          {metrics.cores ?? '-'} core{metrics.cores === 1 ? '' : 's'}
+          {' · '}
+          {metrics.age_seconds == null
+            ? 'live'
+            : `sampled ${shortDuration(metrics.age_seconds)} ago`}
         </Chip>
       </Card.Header>
       <Card.Content className="flex flex-col gap-4">
@@ -309,6 +319,10 @@ export default function QilingVM() {
   const [vmMetrics, setVmMetrics] = useState<QilingGuestMetrics | null>(null)
   const [rootfsJob, setRootfsJob] = useState<{ id: string; state: string; detail: string } | null>(null)
   const [rootfsBusy, setRootfsBusy] = useState(false)
+  // Three concerns, three screens. Stacked they were one long scroll where the
+  // emulation log pushed the VM health off the first screen and the run list
+  // sat under both; the header actions still apply to all three.
+  const [tab, setTab] = useState<'overview' | 'output' | 'runs'>('overview')
 
   const runs = data?.runs ?? []
   const active = runs.find((r) => r.file === selected) ?? runs[0] ?? null
@@ -341,6 +355,20 @@ export default function QilingVM() {
     void checkStatus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Once a probe has run, keep the CPU / memory card fresh while it is on
+  // screen. This is cheap now: the endpoint reads vmmetrics' background sample
+  // rather than opening its own SSH session, so a 15 s poll costs one cached
+  // JSON read instead of a handshake per tick.
+  useEffect(() => {
+    if (!status || tab !== 'overview') return
+    const id = window.setInterval(() => {
+      void api.qilingVmMetrics().then(setVmMetrics).catch(() => {
+        // A dropped poll is not a failure; the next tick tries again.
+      })
+    }, 15000)
+    return () => window.clearInterval(id)
+  }, [status, tab])
 
   if (loading && !data) {
     return (
@@ -401,39 +429,78 @@ export default function QilingVM() {
         </Alert>
       )}
 
-      {/* --- headline tiles + the output viewer ----------------------------- */}
-      {data && (
-        <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatTile
-              label="Runs"
-              value={data.file_count}
-              sub={data.present ? data.path.replace(/.*[\\/]/, '') : 'no results dir'}
-              icon={<Icon name="qiling" size={15} />}
-              trendTone="accent"
-            />
-            <StatTile
-              label="Rootfs"
-              value={bytes(data.rootfs.archive_bytes, 0)}
-              sub={data.rootfs.complete ? 'x86 + x64 complete' : 'incomplete'}
-              icon={<Icon name="analyze" size={15} />}
-              trendTone={data.rootfs.complete ? 'success' : 'warning'}
-            />
-            <StatTile
-              label="Last run"
-              value={active && active.elapsed_s ? `${active.elapsed_s.toFixed(1)}s` : '—'}
-              sub={active && active.modified ? ago(active.modified) : 'no runs'}
-              icon={<Icon name="artifacts" size={15} />}
-            />
-            <StatTile
-              label="Service log"
-              value={bytes(data.service_log.bytes, 0)}
-              sub={data.harness.service}
-              icon={<Icon name="logs" size={15} />}
-            />
-          </div>
+      <SubNav
+        tabs={[
+          { id: 'overview', label: 'Overview', icon: 'qiling' },
+          { id: 'output', label: 'Emulation output', icon: 'terminal' },
+          {
+            id: 'runs', label: 'Runs', icon: 'artifacts',
+            tone: runs.some((r) => !r.ok) ? 'warn' : undefined,
+          },
+        ]}
+        active={tab}
+        onChange={(id) => setTab(id as 'overview' | 'output' | 'runs')}
+      />
 
-          <p className="section-label mb-2 mt-6">Emulation output</p>
+      {/* --- overview: headline tiles + VM health --------------------------- */}
+      {tab === 'overview' && (
+        <>
+          {data && (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <StatTile
+                label="Runs"
+                value={data.file_count}
+                sub={data.present ? data.path.replace(/.*[\\/]/, '') : 'no results dir'}
+                icon={<Icon name="qiling" size={15} />}
+                trendTone="accent"
+              />
+              <StatTile
+                label="Rootfs"
+                value={bytes(data.rootfs.archive_bytes, 0)}
+                sub={data.rootfs.complete ? 'x86 + x64 complete' : 'incomplete'}
+                icon={<Icon name="analyze" size={15} />}
+                trendTone={data.rootfs.complete ? 'success' : 'warning'}
+              />
+              <StatTile
+                label="Last run"
+                value={active && active.elapsed_s ? `${active.elapsed_s.toFixed(1)}s` : '—'}
+                sub={active && active.modified ? ago(active.modified) : 'no runs'}
+                icon={<Icon name="artifacts" size={15} />}
+              />
+              <StatTile
+                label="Service log"
+                value={bytes(data.service_log.bytes, 0)}
+                sub={data.harness.service}
+                icon={<Icon name="logs" size={15} />}
+              />
+            </div>
+          )}
+
+          <p className="section-label mb-2 mt-6">Analysis VM</p>
+          {(status || vmMetrics) ? (
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              {status && <StatusChecks status={status} />}
+              {vmMetrics && <GuestCard metrics={vmMetrics} />}
+            </div>
+          ) : (
+            <Card className="w-full">
+              <Card.Content>
+                <p className="text-[11px] leading-relaxed text-default-400">
+                  No probe has run yet this session. <b>Check Status</b> reads
+                  the VM’s power and SSH reachability, and the CPU / memory card
+                  comes from the collector the Statistics page already runs in
+                  the background - it is served from cache, not a fresh SSH
+                  handshake.
+                </p>
+              </Card.Content>
+            </Card>
+          )}
+        </>
+      )}
+
+      {/* --- emulation output ---------------------------------------------- */}
+      {tab === 'output' && data && (
+        <>
           <OutputView
             lines={logLines}
             empty="No service log yet. The harness writes [dump] / [sweep] / [ioc] / [summary] lines here on every run."
@@ -444,136 +511,133 @@ export default function QilingVM() {
         </>
       )}
 
-      {/* --- VM status + live CPU/RAM (populated by Check Status) ------------ */}
-      {(status || vmMetrics) && (
-        <>
-          <p className="section-label mb-2 mt-6">Analysis VM</p>
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            {status && <StatusChecks status={status} />}
-            {vmMetrics && <GuestCard metrics={vmMetrics} />}
-          </div>
-        </>
-      )}
-
       {/* --- run list + per-run detail -------------------------------------- */}
-      {data && runs.length > 0 && (
-        <>
-          <p className="section-label mb-2 mt-6">Runs</p>
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[320px_1fr]">
-            <div className="flex flex-col gap-1.5">
-              {runs.map((r) => (
-                <button
-                  key={r.file}
-                  onClick={() => setSelected(r.file)}
-                  className={`flex flex-col gap-0.5 rounded-lg border px-3 py-2 text-left transition-colors ${
-                    active?.file === r.file
-                      ? 'border-accent bg-accent/5'
-                      : 'border-default-200 hover:border-default-300'
-                  }`}
-                >
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="truncate font-mono text-[11px]">{r.sample || r.stem}</span>
-                    {!r.ok && (
-                      <Chip size="sm" variant="soft" color="danger">
-                        error
-                      </Chip>
-                    )}
-                  </span>
-                  <span className="font-mono text-[10px] text-default-400">
-                    {r.arch || '?'} · {r.elapsed_s ? `${r.elapsed_s.toFixed(1)}s` : '—'} · {ago(r.modified)}
-                  </span>
-                </button>
-              ))}
-            </div>
+      {tab === 'runs' && data && runs.length > 0 && (
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[320px_1fr]">
+          <div className="flex flex-col gap-1.5">
+            {runs.map((r) => (
+              <button
+                key={r.file}
+                onClick={() => setSelected(r.file)}
+                className={`flex flex-col gap-0.5 rounded-lg border px-3 py-2 text-left transition-colors ${
+                  active?.file === r.file
+                    ? 'border-accent bg-accent/5'
+                    : 'border-default-200 hover:border-default-300'
+                }`}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-[11px]">{r.sample || r.stem}</span>
+                  {!r.ok && (
+                    <Chip size="sm" variant="soft" color="danger">
+                      error
+                    </Chip>
+                  )}
+                </span>
+                <span className="font-mono text-[10px] text-default-400">
+                  {r.arch || '?'} · {r.elapsed_s ? `${r.elapsed_s.toFixed(1)}s` : '—'} · {ago(r.modified)}
+                </span>
+              </button>
+            ))}
+          </div>
 
-            {active && (
-              <div className="flex flex-col gap-3">
-                {!active.ok ? (
-                  <Alert status="danger">
-                    <Alert.Title>Unreadable run bundle</Alert.Title>
-                    <Alert.Description>{active.detail}</Alert.Description>
-                  </Alert>
-                ) : (
-                  <>
-                    <Card className="w-full">
-                      <Card.Header className="flex items-center justify-between gap-3">
-                        <Card.Title className="truncate font-mono text-sm">
-                          {active.sample || active.stem}
-                        </Card.Title>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <Chip size="sm" variant="soft" color="accent">
-                            {active.arch || 'unknown'}
-                          </Chip>
-                          <Chip size="sm" variant="soft" color={active.end === 'completed' ? 'success' : 'warning'}>
-                            {active.end || 'unknown'}
-                          </Chip>
-                        </div>
-                      </Card.Header>
-                      <Card.Content className="grid grid-cols-2 gap-x-6 gap-y-1 md:grid-cols-4">
-                        {[
-                          ['elapsed', active.elapsed_s ? `${active.elapsed_s.toFixed(2)}s` : '—'],
-                          ['events', String(active.events)],
-                          ['api calls', String(active.api_calls)],
-                          ['dumps', String(active.dump_count)],
-                          ['iocs', String(active.ioc_count)],
-                          ['yara hits', String(active.yara_hits.length)],
-                          ['sha256', active.hashes.sha256 ? active.hashes.sha256.slice(0, 12) + '…' : '—'],
-                          ['size', bytes(active.bytes, 0)],
-                        ].map(([k, v]) => (
-                          <div key={k as string} className="flex items-baseline justify-between gap-2 border-b border-default-100 py-1.5">
-                            <span className="text-[11px] text-default-500">{k}</span>
-                            <span className="truncate font-mono text-[11px]" title={v as string}>
-                              {v}
-                            </span>
-                          </div>
-                        ))}
-                      </Card.Content>
-                    </Card>
-
-                    {Object.keys(active.attack_hints).length > 0 && (
-                      <Card className="w-full">
-                        <Card.Header>
-                          <Card.Title className="text-sm font-semibold">Behaviour</Card.Title>
-                        </Card.Header>
-                        <Card.Content>
-                          <div className="flex flex-wrap gap-1.5">
-                            {Object.entries(active.attack_hints).map(([tag, hint]) => (
-                              <span
-                                key={tag}
-                                title={String(hint)}
-                                className="rounded bg-danger/12 px-1.5 py-0.5 font-mono text-[10px] text-danger"
-                              >
-                                {tag} → {String(hint)}
-                              </span>
-                            ))}
-                          </div>
-                        </Card.Content>
-                      </Card>
-                    )}
-
-                    <Card className="w-full">
-                      <Card.Header className="flex items-center justify-between">
-                        <Card.Title className="text-sm font-semibold">
-                          Run trace
-                          <span className="ml-2 font-mono text-[10px] font-normal text-default-400">
-                            trace.log inside the bundle
+          {active && (
+            <div className="flex flex-col gap-3">
+              {!active.ok ? (
+                <Alert status="danger">
+                  <Alert.Title>Unreadable run bundle</Alert.Title>
+                  <Alert.Description>{active.detail}</Alert.Description>
+                </Alert>
+              ) : (
+                <>
+                  <Card className="w-full">
+                    <Card.Header className="flex items-center justify-between gap-3">
+                      <Card.Title className="truncate font-mono text-sm">
+                        {active.sample || active.stem}
+                      </Card.Title>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Chip size="sm" variant="soft" color="accent">
+                          {active.arch || 'unknown'}
+                        </Chip>
+                        <Chip size="sm" variant="soft" color={active.end === 'completed' ? 'success' : 'warning'}>
+                          {active.end || 'unknown'}
+                        </Chip>
+                      </div>
+                    </Card.Header>
+                    <Card.Content className="grid grid-cols-2 gap-x-6 gap-y-1 md:grid-cols-4">
+                      {[
+                        ['elapsed', active.elapsed_s ? `${active.elapsed_s.toFixed(2)}s` : '—'],
+                        ['events', String(active.events)],
+                        ['api calls', String(active.api_calls)],
+                        ['dumps', String(active.dump_count)],
+                        ['iocs', String(active.ioc_count)],
+                        ['yara hits', String(active.yara_hits.length)],
+                        ['sha256', active.hashes.sha256 ? active.hashes.sha256.slice(0, 12) + '…' : '—'],
+                        ['size', bytes(active.bytes, 0)],
+                      ].map(([k, v]) => (
+                        <div key={k as string} className="flex items-baseline justify-between gap-2 border-b border-default-100 py-1.5">
+                          <span className="text-[11px] text-default-500">{k}</span>
+                          <span className="truncate font-mono text-[11px]" title={v as string}>
+                            {v}
                           </span>
-                        </Card.Title>
+                        </div>
+                      ))}
+                    </Card.Content>
+                  </Card>
+
+                  {Object.keys(active.attack_hints).length > 0 && (
+                    <Card className="w-full">
+                      <Card.Header>
+                        <Card.Title className="text-sm font-semibold">Behaviour</Card.Title>
                       </Card.Header>
                       <Card.Content>
-                        <OutputView
-                          lines={active.trace_tail}
-                          empty="This bundle has no trace.log."
-                          height="16rem"
-                        />
+                        <div className="flex flex-wrap gap-1.5">
+                          {Object.entries(active.attack_hints).map(([tag, hint]) => (
+                            <span
+                              key={tag}
+                              title={String(hint)}
+                              className="rounded bg-danger/12 px-1.5 py-0.5 font-mono text-[10px] text-danger"
+                            >
+                              {tag} → {String(hint)}
+                            </span>
+                          ))}
+                        </div>
                       </Card.Content>
                     </Card>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </>
+                  )}
+
+                  <Card className="w-full">
+                    <Card.Header className="flex items-center justify-between">
+                      <Card.Title className="text-sm font-semibold">
+                        Run trace
+                        <span className="ml-2 font-mono text-[10px] font-normal text-default-400">
+                          trace.log inside the bundle
+                        </span>
+                      </Card.Title>
+                    </Card.Header>
+                    <Card.Content>
+                      <OutputView
+                        lines={active.trace_tail}
+                        empty="This bundle has no trace.log."
+                        height="16rem"
+                      />
+                    </Card.Content>
+                  </Card>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'runs' && data && runs.length === 0 && (
+        <Card className="w-full">
+          <Card.Content>
+            <p className="py-6 text-center text-[11px] text-default-400">
+              No run bundles yet. The harness writes one zip per sample into{' '}
+              <code className="font-mono">qiling_dlls/results</code>.
+            </p>
+          </Card.Content>
+        </Card>
       )}
     </>
   )

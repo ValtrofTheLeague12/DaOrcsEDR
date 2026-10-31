@@ -7,8 +7,9 @@
 `GET /api/artifacts` reads both ends of the `mega/` evidence pipeline, split into
 a **Local artifacts** tab and a **Remote** tab.
 
-Local walks `exports/` for `<artifact>_artifact/` bundles and reports the sealed
-`<artifact>_evidence.tar.gz`, the file count from `manifest.json`, and the
+Local walks `exports/` for `<artifact>_artifact/` bundles and reports the
+`<artifact>_evidence.tar.gz` (plus its password-protected `.zip` when the run
+protected it), the file count from `manifest.json`, and the
 SHA-256 that the manifest and the `.sha256` sidecar each recorded
 independently. The archive is re-hashed where a byte budget allows, so a bundle
 that is present but truncated reports *digest mismatch* rather than looking
@@ -49,7 +50,7 @@ the next read discards), is rebuilt rather than trusted if it is corrupt or
 wrong-shaped, and is capped at 500 bundles, keeping the newest.
 
 **Refresh rates, and why they are slow.** Nothing on this page changes on a
-timer: a bundle is sealed when an analysis run finishes, and MEGA changes when
+timer: a bundle is built when an analysis run finishes, and MEGA changes when
 someone presses upload. Both are human actions, so the panel polls every 120 s
 and the server caches the MEGA listing for 5 minutes — 12 MEGAcmd spawns an
 hour instead of 60, for a detection latency no one can perceive. `?refresh=1`
@@ -83,20 +84,27 @@ chart says so instead of drawing a zero.
 
 The page reports; it does not push. Uploading is available as an explicit
 **Export to MEGA** action per bundle on the Remote tab, and it is gated on
-`upload_artifacts` in `config/artifacts.yaml` — the same switch that decides
-whether an analyzer run uploads anything. That option is the operator saying
-"this lab does not send evidence off the host", so a button in a browser has to
-obey it exactly as the binary does; with it off the button is disabled and the
-page says where to turn it back on. Recover is never gated: pulling evidence
-down does not send it anywhere.
+the *effective* upload toggle — `MEGA_UPLOAD` from `config/analysis.yaml` wins over
+`upload_artifacts` in `config/artifacts.yaml`, the same precedence the analyzer
+applies. That setting is the operator saying "this lab does not send evidence
+off the host", so a button in a browser has to obey it exactly as the binary
+does; with it off the button is disabled and the page says where to turn it
+back on. When protection is on, the button is additionally gated on the bundle
+password existing (the same state the Analysis Configuration page's chip
+shows): a job that starts and then aborts on a missing password file is worse
+than a button that says why it cannot start. Recover is never gated: pulling
+evidence down does not send it anywhere.
 
 Export runs `mega/upload.py` as a job rather than reimplementing it, because
 that script owns the determinism guarantees (sorted members, normalised mtimes,
 the checksum taken over the finished file) and a second uploader would quietly
-be a different thing producing different bytes under the same name. Sealing a
-large bundle and pushing it over a consumer link takes minutes, so it returns a
-job handle and the page polls for the log — the same job modal a `docker compose
-build` uses, which is why that modal is a component rather than a copy. A
-successful export invalidates the five-minute MEGA listing cache; otherwise the
-button would work and the page would insist nothing had arrived.
+be a different thing producing different bytes under the same name. Protecting
+a large bundle and pushing it over a consumer link takes minutes, so it returns
+a job handle and the page polls for the log — the same job modal a `docker
+compose build` uses, which is why that modal is a component rather than a copy.
+Before the job starts, the panel pre-flights the password through the same
+`mega/protect.py` the uploader uses, so a missing password file is a 400 with a
+message instead of a job log that ends in exit 4. A successful export
+invalidates the five-minute MEGA listing cache; otherwise the button would work
+and the page would insist nothing had arrived.
 

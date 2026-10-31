@@ -23,8 +23,8 @@ function windowLabel(history: VmMetricSample[]): string | null {
   const last = history.at(-1)?.at
   if (first === undefined || last === undefined || last <= first) return null
   const mins = Math.round((last - first) / 60)
-  if (mins < 1) return 'last minute'
-  return `last ${mins} min`
+  if (mins < 1) return '1 min'
+  return `${mins} min`
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ export default function VmMetricsPanel({ metrics }: { metrics: VmMetrics | null 
           hint={
             loadPerCore !== null
               ? `load ${load1?.toFixed(2)} over ${cores} core${cores === 1 ? '' : 's'}`
-              : `${metrics.cores ?? '?'} cores`
+              : `${metrics.cores ?? '?'} core${metrics.cores === 1 ? '' : 's'}`
           }
         />
         <Gauge

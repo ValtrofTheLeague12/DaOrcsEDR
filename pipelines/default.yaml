@@ -3,6 +3,12 @@
 name: default
 description: Complete static analysis (classic 27-phase order)
 
+# The old environment block (CTI_SKIP/ML_SKIP) is not here any more.
+# config/analysis.yaml owns those switches now and is exported AFTER this
+# block, so any line pinned here was only ever outvoted - keeping it meant
+# two answers to one question, and agreeing was luck. Set these switches on
+# Analysis Configuration; per-pipeline keys stay for the run-wide options.
+
 stages:
   - name: preparation
     phases: [compression, sections, generic_sections]
@@ -21,7 +27,3 @@ stages:
 
   - name: reporting
     phases: [export, dashboard, sanity, summary]
-
-environment:
-  CTI_SKIP: 1
-  ML_SKIP: 1

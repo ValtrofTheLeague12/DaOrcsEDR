@@ -56,6 +56,37 @@ The convenience script performs the same steps and can analyze a file:
 .\build.ps1 -Clean
 ```
 
+### Binary hardening
+
+The analyzer is built with four Windows protections, all ON by default because
+MinGW's linker and compiler already default them on:
+
+| setting | what it does |
+| --- | --- |
+| `aslr` | relocates the image at load time |
+| `high_entropy_va` | relocates across the full 64-bit range |
+| `dep_nx` | marks the stack and heap non-executable |
+| `stack_protector` | checks a canary on every protected stack frame |
+
+They are configured in `config/hardening.json`, which is the same file the
+admin panel's Analysis Configuration page edits — so a build from a terminal
+and a build from the panel produce the same binary. The switches exist to turn a
+protection **off** deliberately, not to turn one on; a protection turned off and
+genuinely absent from the binary is compliance, not a failure.
+
+For a single build, override the file with the paired switches:
+
+```powershell
+.\build.ps1 -DisableStackProtector      # this build only; the file is untouched
+.\build.ps1 -DisableAslr -DisableDepNx
+```
+
+`-EnableX` and `-DisableX` for the same protection cannot both be given. The
+CMake options behind them (`STATIC_ANALYZER_HARDENING_*`) are written into
+`build-ucrt/CMakeCache.txt`, so the configured tree records the intent, and the
+panel's Analysis Configuration page compares that intent against what the
+finished PE header actually carries.
+
 The main executable is written to:
 
 ```text

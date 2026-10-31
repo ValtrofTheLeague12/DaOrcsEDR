@@ -178,9 +178,7 @@ export default function Overview() {
       <div className="mb-4 flex items-baseline justify-between gap-4">
         <h2 className="page-title">Services</h2>
         <div className="flex items-center gap-3">
-          <span className="font-mono text-[11px] text-default-400">
-            live probe of every endpoint
-          </span>
+          <span className="meta-pill">live probe of every endpoint</span>
           <Button size="sm" variant="outline" onPress={refresh}>
             Refresh
           </Button>
@@ -318,7 +316,7 @@ export default function Overview() {
                   onClick={() => setFilter('down')}
                   className="ml-2 underline decoration-dotted underline-offset-2 hover:text-danger"
                 >
-                  isolate the {downCount} down
+                  show only the {downCount} down service{downCount === 1 ? '' : 's'}
                 </button>
               )}
             </p>

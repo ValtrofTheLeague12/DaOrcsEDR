@@ -61,6 +61,40 @@ def build_extractor():
     return PEFeatureExtractor()
 
 
+def iter_pickles(src: Path):
+    """Yield (file, record) for every split record on disk.
+
+    The downloaded zip materialises weekly `*.jsonl` shards - one JSON record
+    per line - and older archives stored single whole-file pickles, so both
+    shapes are read here instead of assuming one. A record that fails to parse
+    is yielded as (file, None) so the caller counts it as skipped rather than
+    silently shortening the split.
+    """
+    for p in sorted(src.iterdir()):
+        if p.suffix.lower() in (".jsonl", ".json"):
+            with p.open("r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        yield p, json.loads(line)
+                    except json.JSONDecodeError:
+                        yield p, None
+        elif p.suffix.lower() in (".pkl", ".pickle"):
+            with p.open("rb") as f:
+                obj = pickle.load(f)
+            if isinstance(obj, (list, tuple)):
+                for r in obj:
+                    yield p, r
+            elif isinstance(obj, dict) and all(isinstance(v, dict) for v in obj.values()):
+                # keyed by sha256, the older archive shape
+                for v in obj.values():
+                    yield p, v
+            else:
+                yield p, obj
+
+
 
 
 def to_vector(obj, extractor) -> np.ndarray | None:

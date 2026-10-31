@@ -91,6 +91,55 @@
   --color-default-900: var(--foreground);
 }
 
+/* --- accent spectrum ------------------------------------------------------
+ *
+ * The console was built on a single blue accent, which is why large parts of
+ * it read as grey: every tile, card and heading resolved to the same ink. This
+ * is a small, fixed palette used ONLY for decorative tone - the semantic
+ * --success / --warning / --danger tokens still mean what they always meant.
+ *
+ * Keeping the extra hues here, as raw tokens, means a tile can borrow a colour
+ * with `--tile-tone` without inventing a new Tailwind class or hard-coding a
+ * hex in a component. Light mode gets slightly deeper values so the same
+ * opacity mixes stay legible on a pale surface.
+ * ------------------------------------------------------------------------- */
+
+:root {
+  --brand-blue: oklch(0.66 0.185 258);
+  --brand-violet: oklch(0.68 0.195 300);
+  --brand-cyan: oklch(0.76 0.13 208);
+  --brand-emerald: oklch(0.74 0.16 162);
+  --brand-amber: oklch(0.81 0.15 78);
+  --brand-rose: oklch(0.69 0.2 18);
+  --brand-gradient: linear-gradient(120deg, var(--accent), var(--brand-violet));
+  --brand-gradient-soft: linear-gradient(
+    120deg,
+    color-mix(in oklab, var(--accent) 18%, transparent),
+    color-mix(in oklab, var(--brand-violet) 12%, transparent)
+  );
+}
+
+[data-theme="light"] {
+  --brand-blue: oklch(0.56 0.2 258);
+  --brand-violet: oklch(0.55 0.22 300);
+  --brand-cyan: oklch(0.58 0.14 208);
+  --brand-emerald: oklch(0.55 0.16 162);
+  --brand-amber: oklch(0.66 0.15 70);
+  --brand-rose: oklch(0.57 0.21 18);
+}
+
+/* Decorative tone hook. Any element can pick a colour with `tone-*`, and the
+ * shared surface treatments below resolve `--tile-tone` from it. */
+.tone-accent { --tile-tone: var(--accent); }
+.tone-violet { --tile-tone: var(--brand-violet); }
+.tone-cyan { --tile-tone: var(--brand-cyan); }
+.tone-emerald { --tile-tone: var(--brand-emerald); }
+.tone-amber { --tile-tone: var(--brand-amber); }
+.tone-rose { --tile-tone: var(--brand-rose); }
+.tone-success { --tile-tone: var(--success); }
+.tone-warning { --tile-tone: var(--warning); }
+.tone-danger { --tile-tone: var(--danger); }
+
 html,
 body,
 #root {
@@ -102,6 +151,10 @@ body {
   background:
     radial-gradient(ellipse at 50% -25rem,
       color-mix(in oklab, var(--accent) 5%, transparent), transparent 62%),
+    radial-gradient(52rem 30rem at 8% -8%,
+      color-mix(in oklab, var(--brand-violet) 7%, transparent), transparent 66%),
+    radial-gradient(48rem 28rem at 92% -4%,
+      color-mix(in oklab, var(--brand-cyan) 6%, transparent), transparent 66%),
     var(--background);
   font-family: var(--font-sans);
   font-size: 0.9375rem;
@@ -124,6 +177,38 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Selection and scrollbars pick up the accent, so the chrome does not fall back
+   to the browser's grey in an otherwise colour-coded console. */
+::selection {
+  background: color-mix(in oklab, var(--accent) 38%, transparent);
+  color: var(--foreground);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 20%, transparent) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: color-mix(in oklab, var(--foreground) 20%, transparent);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+
 /* Ambient wash so large flat areas are not dead. Fixed + pointer-events-none
    so it costs nothing to scroll and never eats a click. */
 .ambient {
@@ -133,31 +218,89 @@ body {
   z-index: 0;
   background:
     radial-gradient(65rem 35rem at 50% -12rem,
-      color-mix(in oklab, var(--accent) 5%, transparent), transparent 72%);
+      color-mix(in oklab, var(--accent) 7%, transparent), transparent 72%),
+    radial-gradient(42rem 26rem at 102% 38%,
+      color-mix(in oklab, var(--brand-violet) 5%, transparent), transparent 72%),
+    radial-gradient(38rem 24rem at -4% 82%,
+      color-mix(in oklab, var(--brand-cyan) 4%, transparent), transparent 72%);
 }
 
 /* --- surfaces ------------------------------------------------------------ */
 
 /* Stat tile. Glass rather than bordered: the data should carry the emphasis,
-   not the container. */
+   not the container. Each tile borrows a `--tile-tone` (see the tone-* hooks
+   above), which tints a soft corner glow and its icon chip, so a dashboard of
+   tiles reads as a colour-coded instrument panel instead of one grey grid. */
 .stat-tile {
   position: relative;
   width: 100%;
   padding: 1rem 1.1rem;
   border-radius: 0.8rem;
-  background: var(--console-muted-surface);
+  background:
+    radial-gradient(150px 95px at 100% 0%,
+      color-mix(in oklab, var(--tile-tone, var(--accent)) 15%, transparent), transparent 72%),
+    linear-gradient(180deg,
+      color-mix(in oklab, var(--surface) 97%, transparent),
+      color-mix(in oklab, var(--surface) 89%, transparent));
   border: 1px solid var(--console-border);
   box-shadow: 0 1px 2px color-mix(in oklab, var(--foreground) 3%, transparent);
   transition:
     border-color 160ms var(--ease),
     background-color 160ms var(--ease),
-    box-shadow 160ms var(--ease);
+    box-shadow 160ms var(--ease),
+    transform 160ms var(--ease);
 }
 
 .stat-tile:hover {
-  border-color: color-mix(in oklab, var(--accent) 24%, var(--console-border));
-  box-shadow: var(--console-shadow);
-  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--tile-tone, var(--accent)) 32%, var(--console-border));
+  box-shadow:
+    0 1px 2px color-mix(in oklab, var(--foreground) 3%, transparent),
+    0 14px 34px -24px color-mix(in oklab, var(--tile-tone, var(--accent)) 70%, transparent);
+  background:
+    radial-gradient(170px 105px at 100% 0%,
+      color-mix(in oklab, var(--tile-tone, var(--accent)) 23%, transparent), transparent 72%),
+    linear-gradient(180deg,
+      color-mix(in oklab, var(--surface) 98%, transparent),
+      color-mix(in oklab, var(--surface) 92%, transparent));
+}
+
+/* A hairline of the tile's own colour along the top edge. It is the cheapest
+   way to tell five stacked cards apart at a glance, and it survives the light
+   theme because it is mixed from the tone, not from a fixed white. */
+.stat-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0 1.1rem auto;
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--tile-tone, var(--accent)) 55%, transparent),
+    transparent
+  );
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* The icon well used by the stat tiles and the dashboard breakdown cards. */
+.stat-tile-icon {
+  display: inline-flex;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in oklab, var(--tile-tone, var(--accent)) 28%, transparent);
+  border-radius: 0.6rem;
+  background: linear-gradient(
+    140deg,
+    color-mix(in oklab, var(--tile-tone, var(--accent)) 22%, transparent),
+    color-mix(in oklab, var(--tile-tone, var(--accent)) 8%, transparent)
+  );
+  color: var(--tile-tone, var(--accent));
+  box-shadow: 0 6px 16px -12px color-mix(in oklab, var(--tile-tone, var(--accent)) 80%, transparent);
 }
 
 /* Clickable tiles get a focus ring rather than relying on hover alone. */
@@ -167,11 +310,51 @@ button.stat-tile:focus-visible {
   box-shadow: var(--glow);
 }
 
-/* Sidebar reads as a distinct plane rather than a flat column. */
+/* Sidebar reads as a distinct plane rather than a flat column. The faint
+   vertical gradient plus the accent bleed at the top give the shell depth
+   without turning the navigation into a second content area. */
 .sidebar-glass {
   min-height: 0;
-  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  background:
+    linear-gradient(180deg,
+      color-mix(in oklab, var(--surface) 98%, transparent),
+      color-mix(in oklab, var(--background) 92%, transparent)),
+    radial-gradient(18rem 12rem at 0% 0%,
+      color-mix(in oklab, var(--accent) 8%, transparent), transparent 70%);
   border-right: 1px solid var(--console-border);
+  backdrop-filter: blur(16px);
+}
+
+/* Brand lockup. A gradient mark is the one place the product gets to be loud;
+   everything under it is an operator tool and stays quiet. */
+.brand-mark {
+  display: inline-flex;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.62rem;
+  background: var(--brand-gradient);
+  color: white;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, #fff 30%, transparent),
+    0 8px 20px -10px color-mix(in oklab, var(--accent) 85%, transparent);
+}
+
+.brand-title {
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-weight: 660;
+  letter-spacing: -0.018em;
+  background: linear-gradient(
+    100deg,
+    var(--foreground) 35%,
+    color-mix(in oklab, var(--accent) 75%, var(--foreground))
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
 }
 
 .nav-scroll {
@@ -203,17 +386,37 @@ button.stat-tile:focus-visible {
   cursor: pointer;
   transition:
     color 160ms var(--ease),
-    background-color 160ms var(--ease);
+    background-color 160ms var(--ease),
+    box-shadow 160ms var(--ease);
+}
+
+.nav-item svg {
+  color: color-mix(in oklab, var(--nav-tone, var(--accent)) 62%, var(--muted));
+  transition: color 160ms var(--ease), filter 160ms var(--ease);
 }
 
 .nav-item:hover {
   color: var(--foreground);
-  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  background: color-mix(in oklab, var(--nav-tone, var(--accent)) 8%, transparent);
+}
+
+.nav-item:hover svg {
+  color: var(--nav-tone, var(--accent));
 }
 
 .nav-item.active {
-  color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 9%, var(--surface));
+  color: var(--foreground);
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--nav-tone, var(--accent)) 20%, var(--surface)),
+    color-mix(in oklab, var(--nav-tone, var(--accent)) 8%, var(--surface))
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--nav-tone, var(--accent)) 24%, transparent);
+}
+
+.nav-item.active svg {
+  color: var(--nav-tone, var(--accent));
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--nav-tone, var(--accent)) 55%, transparent));
 }
 
 .nav-item.active::before {
@@ -225,8 +428,37 @@ button.stat-tile:focus-visible {
   width: 3px;
   height: 1.1rem;
   border-radius: 999px;
-  background: var(--accent);
-  box-shadow: none;
+  background: linear-gradient(
+    180deg,
+    var(--nav-tone, var(--accent)),
+    color-mix(in oklab, var(--nav-tone, var(--accent)) 45%, var(--brand-violet))
+  );
+  box-shadow: 0 0 10px color-mix(in oklab, var(--nav-tone, var(--accent)) 55%, transparent);
+}
+
+/* Each navigation group owns a hue, so "where am I" is answerable from colour
+   alone before the label is read. The tone feeds both the label and every item
+   in the group, which is why the sidebar no longer reads as one grey column. */
+.nav-group[data-group="Analysis"] { --nav-tone: var(--brand-violet); }
+.nav-group[data-group="Maintenance"] { --nav-tone: var(--brand-amber); }
+.nav-group[data-group="Infrastructure"] { --nav-tone: var(--brand-cyan); }
+.nav-group[data-group="Virtual Machines"] { --nav-tone: var(--brand-emerald); }
+.nav-group[data-group="Diagnostics"] { --nav-tone: var(--brand-rose); }
+
+.nav-group[data-group="Analysis"] .section-label {
+  color: color-mix(in oklab, var(--brand-violet) 72%, var(--foreground));
+}
+.nav-group[data-group="Maintenance"] .section-label {
+  color: color-mix(in oklab, var(--brand-amber) 78%, var(--foreground));
+}
+.nav-group[data-group="Infrastructure"] .section-label {
+  color: color-mix(in oklab, var(--brand-cyan) 78%, var(--foreground));
+}
+.nav-group[data-group="Virtual Machines"] .section-label {
+  color: color-mix(in oklab, var(--brand-emerald) 72%, var(--foreground));
+}
+.nav-group[data-group="Diagnostics"] .section-label {
+  color: color-mix(in oklab, var(--brand-rose) 74%, var(--foreground));
 }
 
 /* --- typography helpers -------------------------------------------------- */
@@ -256,12 +488,36 @@ html {
  * that happens to be bigger. The Display optical size is used here because this
  * is the one place the app renders text large enough for it to matter. */
 .page-title {
+  position: relative;
+  padding-left: 0.9rem;
   font-family: var(--font-display);
   font-size: clamp(1.55rem, 2.2vw, 1.9rem);
   font-weight: 640;
   letter-spacing: -0.024em;
   line-height: 1.15;
-  color: var(--foreground);
+  background: linear-gradient(
+    100deg,
+    var(--foreground) 8%,
+    color-mix(in oklab, var(--accent) 72%, var(--foreground))
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+/* A gradient rule beside the page title. It is the one structural accent every
+   panel shares, so a page switch still reads as the same console even when the
+   content underneath changes completely. */
+.page-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.16em;
+  bottom: 0.16em;
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--accent), var(--brand-violet));
+  box-shadow: 0 0 12px color-mix(in oklab, var(--accent) 45%, transparent);
 }
 
 .app-shell {
@@ -271,7 +527,10 @@ html {
 
 .app-main {
   min-width: 0;
-  background: color-mix(in oklab, var(--background) 70%, transparent);
+  background:
+    radial-gradient(46rem 22rem at 50% -14rem,
+      color-mix(in oklab, var(--accent) 5%, transparent), transparent 72%),
+    color-mix(in oklab, var(--background) 70%, transparent);
   scrollbar-gutter: stable;
 }
 
@@ -302,7 +561,12 @@ html {
 [data-slot="card"] {
   border-color: var(--console-border);
   border-radius: 0.85rem;
-  background: var(--console-muted-surface);
+  background:
+    radial-gradient(22rem 10rem at 100% 0%,
+      color-mix(in oklab, var(--tile-tone, var(--accent)) 7%, transparent), transparent 70%),
+    linear-gradient(180deg,
+      color-mix(in oklab, var(--surface) 97%, transparent),
+      color-mix(in oklab, var(--surface) 91%, transparent));
   box-shadow: 0 1px 2px color-mix(in oklab, var(--foreground) 3%, transparent);
 }
 
@@ -313,6 +577,34 @@ html {
 
 [data-slot="card-content"] {
   padding: 0.75rem 1.05rem 1.05rem;
+}
+
+/* Service cards carry their health on the frame: a slim gradient edge in the
+   status colour, plus the shared tone glow in the corner. The chip says the
+   same thing in words, so colour is reinforcement rather than the only cue. */
+.service-card {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.service-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--tile-tone, var(--accent)) 90%, transparent),
+    color-mix(in oklab, var(--tile-tone, var(--accent)) 12%, transparent)
+  );
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.service-card:hover {
+  border-color: color-mix(in oklab, var(--tile-tone, var(--accent)) 32%, var(--console-border));
+  box-shadow: 0 16px 36px -28px color-mix(in oklab, var(--tile-tone, var(--accent)) 80%, transparent);
 }
 
 /* Numbers. Tabular figures are not cosmetic here - the tiles, the tables and the
@@ -347,6 +639,43 @@ html {
   text-transform: uppercase;
   color: var(--muted);
   line-height: 1.3;
+}
+
+/* A small live-status pill for page headers. The dot is what makes it read as
+   "this page is polling" rather than as decorative metadata. */
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.28rem 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 20%, var(--console-border));
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 7%, transparent);
+  color: color-mix(in oklab, var(--muted) 70%, var(--foreground));
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.meta-pill::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 14%, transparent);
+  animation: meta-pill-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes meta-pill-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meta-pill::before { animation: none; }
 }
 
 /* --- controls ------------------------------------------------------------ */
@@ -398,8 +727,8 @@ select.field {
   cursor: pointer;
 }
 
-/* The one filled button in the app. Solid accent with a matching glow, so the
-   primary action is findable without a visual tour. */
+/* The one filled button in the app. A blue-to-violet gradient with a matching
+   glow, so the primary action is findable without a visual tour. */
 .btn-primary {
   display: inline-flex;
   align-items: center;
@@ -408,18 +737,27 @@ select.field {
   min-height: 2.35rem;
   border-radius: 0.6rem;
   border: 1px solid transparent;
-  background: var(--accent);
+  background: linear-gradient(
+    120deg,
+    var(--accent),
+    color-mix(in oklab, var(--brand-violet) 65%, var(--accent))
+  );
   color: var(--accent-foreground, white);
   font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
   transition: filter 160ms var(--ease), background-color 160ms var(--ease),
-    opacity 160ms var(--ease);
-  box-shadow: none;
+    opacity 160ms var(--ease), box-shadow 160ms var(--ease);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, #fff 22%, transparent),
+    0 8px 22px -14px color-mix(in oklab, var(--accent) 90%, transparent);
 }
 
 .btn-primary:hover:not(:disabled) {
-  filter: brightness(1.06);
+  filter: brightness(1.08);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, #fff 26%, transparent),
+    0 10px 28px -12px color-mix(in oklab, var(--accent) 95%, transparent);
 }
 
 .btn-primary:disabled {
@@ -1776,6 +2114,53 @@ select.field {
   gap: 0.6rem;
 }
 
+.container-endpoint {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 20%, transparent);
+  border-radius: 0.45rem;
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+}
+
+/* The label row needs its own item so the copy button is pushed to the end of
+   the row rather than sitting against the URL, which is the part being read. */
+.container-endpoint .container-image-line > span {
+  width: 4.2rem;
+}
+
+.container-endpoint code {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.container-endpoint a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.container-endpoint a:hover {
+  text-decoration: underline;
+}
+
+.container-endpoint-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-left: 4.7rem;
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
+.container-endpoint-meta a {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .container-ports {
   display: flex;
   flex-wrap: wrap;
@@ -2965,6 +3350,20 @@ select.field {
 
 .build-btn.is-secondary:hover:not(:disabled) { color: var(--foreground); }
 
+/* The packed-run stop path: the one button on the page that means "this run
+   should not have started - end it", so it reads red before it reads as a
+   button. */
+.build-btn.is-danger {
+  border-color: color-mix(in oklab, var(--danger) 40%, transparent);
+  background: color-mix(in oklab, var(--danger) 12%, var(--surface));
+  color: var(--danger);
+}
+
+.build-btn.is-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: color-mix(in oklab, var(--danger) 20%, var(--surface));
+}
+
 .build-link {
   color: var(--muted);
   font-size: 0.62rem;
@@ -2980,6 +3379,393 @@ select.field {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0.6rem;
 }
+
+/* ---------------------------------------------------------------------------
+   Page sectioning. The Build page is one work order read top to bottom, so
+   each block is numbered and named like a step rather than just stacked.
+   The hairline + number badge make "where am I" a glance instead of a scroll.
+   ------------------------------------------------------------------------- */
+.build-section {
+  margin-top: 1.25rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+/* The step rule and the number share one line: the hairline runs out of the
+   badge so the section reads as "step N" rather than a badge that happens to sit
+   above a divider. align-items is overridden per-child below because the number
+   sits on the rule while the title hangs under it. */
+.build-section-header {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.7rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+
+.build-section-n {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.3rem;
+  border-radius: 0.45rem;
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  /* A ring the same ink at low alpha: the badge is a step marker on a divider,
+     and without the edge it floats free of the hairline it belongs to. */
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 22%, transparent);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  /* Cancel the header's baseline alignment so the badge's optical centre lands
+     on the title's cap height rather than sinking below it. */
+  align-self: flex-start;
+}
+
+.build-section-title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.build-section-hint {
+  margin-top: 0.15rem;
+  max-width: 46rem;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.build-section-body .build-card { overflow: hidden; }
+
+/* The tab strip pinned under the page header. `.app-main` is the scroll
+   container, so this sticks against it and keeps "where am I, what is next"
+   visible while reading a tall section. The tint and blur are what stop the
+   content passing underneath from making the labels unreadable; the negative
+   margin lets the blurred pane bleed to the page's padding edge so text does
+   not appear to slide out from behind a floating box. */
+.build-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin-top: -0.25rem;
+  padding-top: 0.25rem;
+  background: color-mix(in oklab, var(--background) 82%, transparent);
+  backdrop-filter: blur(8px);
+  border-radius: 0.85rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Sample factory (section 4). Numbered panels inside one card: base sample,
+   features, options, source, build, and the compile's output when it exists.
+   ------------------------------------------------------------------------- */
+.factory-step-label {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.factory-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid color-mix(in oklab, var(--accent) 18%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--accent) 4%, transparent);
+}
+
+.factory-intro p {
+  margin: 0;
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.factory-intro-hint {
+  font-size: 0.62rem !important;
+  color: var(--muted);
+}
+
+.factory-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.7rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in oklab, var(--foreground) 2%, transparent);
+}
+
+.factory-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.factory-panel-head .factory-step-label {
+  margin-bottom: 0;
+}
+
+.factory-panel-note {
+  font-size: 0.6rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.factory-panel-note code {
+  font-size: 0.58rem;
+}
+
+.factory-identity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: end;
+}
+
+@media (min-width: 720px) {
+  .factory-identity {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+.factory-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.factory-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.factory-name-row .field {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.factory-name-row .field.is-invalid {
+  border-color: var(--danger);
+}
+
+.factory-name-row .build-btn {
+  flex: none;
+}
+
+.factory-field-note {
+  font-size: 0.6rem;
+  line-height: 1.4;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.factory-field-note.is-bad {
+  color: var(--danger);
+}
+
+.factory-segment {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.factory-segment .build-btn {
+  justify-content: center;
+}
+
+.factory-subhead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.05rem;
+}
+
+.factory-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
+  gap: 0.5rem;
+}
+
+.factory-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0.45rem;
+}
+
+.factory-pools {
+  margin: 0;
+  font-size: 0.6rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.factory-pools code {
+  font-size: 0.58rem;
+}
+
+.factory-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 0.5rem;
+}
+
+.factory-build-hint {
+  margin: 0;
+  font-size: 0.6rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.factory-template {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.factory-template:hover { border-color: color-mix(in oklab, var(--accent) 40%, transparent); }
+
+.factory-template.is-active {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 9%, transparent);
+}
+
+.factory-template-name {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.factory-template-desc {
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+
+/* The feature row, the drawn checkbox and the checked-row state now live in
+   the "drawn checkboxes" block at the foot of this file, together so that the
+   row and the box cannot be restyled apart. */
+
+.factory-code {
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+  padding: 0.6rem 0.75rem;
+  max-height: 21rem;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.factory-compile-log {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.45rem;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  max-height: 10rem;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+/* Step 5's output panel. It exists before the first press (the empty state
+   names what will appear), so a compile's paths and log have a fixed home
+   instead of appearing inside a transient alert. */
+.factory-output {
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  border-radius: 0.55rem;
+  padding: 0.6rem 0.7rem;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+}
+
+.factory-output.is-ok {
+  border-color: color-mix(in oklab, var(--success) 45%, transparent);
+}
+
+.factory-output.is-bad {
+  border-color: color-mix(in oklab, var(--danger) 45%, transparent);
+}
+
+.factory-output-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.factory-output-text {
+  font-size: 0.7rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.factory-output-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-top: 0.5rem;
+}
+
+.factory-output-paths > div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.factory-output-paths dt {
+  flex: none;
+  width: 4.2rem;
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.factory-output-paths dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.factory-output-paths code {
+  font-size: 0.6rem;
+}
+
+.factory-output-label {
+  margin-top: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.factory-output-noise {
+  margin-top: 0.4rem;
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+
 
 /* The executables card is short next to two long checklists, so it spans both
    columns rather than stretching one narrow column to fill a tall row. */
@@ -3148,6 +3934,76 @@ select.field {
   gap: 0.35rem 0.5rem;
 }
 
+/* The argv the Run button spawns. Before a run it is a preview built from the
+   two selectors; after start it is the server's exact job.command, with the
+   absolute executable and the resolved sample path. One line, scrollable
+   rather than wrapped: a command that wraps is harder to compare with a
+   terminal, and it should never force the card wider. */
+.build-command {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  min-width: 0;
+  margin-bottom: 0.55rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+}
+
+.build-command-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.build-command code {
+  min-width: 0;
+  overflow-x: auto;
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  white-space: pre;
+}
+
+/* --- the duration limit --------------------------------------------------- */
+
+/* A compact label + number + unit. The input is deliberately narrow: it holds a
+   seconds count, and a wide box would invite a duration the analyzer can never
+   use. Sitting beside the Cursor switch keeps both run preferences together. */
+.build-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+.build-duration-label {
+  color: var(--muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.build-duration-unit {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+
+/* The invalid state is a border and nothing louder: the reason is printed in the
+   hint below, so colouring the text as well would repeat it. */
+.build-duration .field.is-invalid {
+  border-color: var(--danger);
+}
+
+.build-duration-hint {
+  line-height: 1.45;
+}
+
 /* Tall, and scrollable, because a compile is thousands of lines and the point of
    this panel is watching it.
 
@@ -3169,6 +4025,48 @@ select.field {
   font-family: var(--mono);
   font-size: 11px;
   line-height: 1.5;
+}
+
+/* --- pipeline-run output ("Run a pipeline") -------------------------------- */
+
+/* The caret at the end of the streaming view. A blinking block says "the
+   analyzer is speaking" better than a spinner from anywhere else, because it
+   sits exactly where the next line will appear. Hidden while a run is idle,
+   since a steady cursor suggests stuck output. */
+.run-cursor {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+  background: var(--accent);
+  animation: run-blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes run-blink {
+  to { visibility: hidden; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-cursor { animation: none; }
+}
+
+/* The cursor-off mode. Same monospace identity as the log so switching
+   between the two modes does not re-typeset the text under you. */
+.run-textarea {
+  width: 100%;
+  min-height: min(58vh, 46rem);
+  resize: vertical;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, #000 25%, var(--surface));
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
 }
 
 .build-log-line {
@@ -3214,6 +4112,274 @@ select.field {
 @media (max-width: 1100px) {
   .build-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* --- console: the shared read-only terminal panel --------------------------
+   ClamAV shows three blocks of machine text - the connection test, the
+   submission log and a result document - and they are read the same way, so
+   they share one component and one set of sizes. The default is a card-sized
+   pane that grows with the window; `is-tall` is for the log that is the page
+   (a running scan), `is-short` for the JSON of one small file. */
+.console-body {
+  min-height: min(30vh, 18rem);
+  max-height: 58vh;
+  /* A barely-there wash from the top edge, so the pane reads as a screen
+     rather than a black rectangle punched into the card. */
+  background:
+    linear-gradient(180deg,
+      color-mix(in oklab, var(--accent) 4%, transparent),
+      transparent 20rem),
+    color-mix(in oklab, #000 25%, var(--surface));
+}
+
+.console-body.is-tall {
+  min-height: min(46vh, 34rem);
+  max-height: 70vh;
+}
+
+.console-body.is-short {
+  min-height: 9rem;
+  max-height: 38vh;
+}
+
+.console-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The console's state, drawn as light rather than another chip: a hairline of
+   the tone under the header, bright in the middle and gone at both ends. It
+   says the same thing as the chip at a glance, which is what a status bar is
+   for - and it is the only saturated colour on the card. */
+.console-accent {
+  height: 2px;
+  margin: 0 0.7rem;
+  border-radius: 999px;
+  opacity: 0.85;
+  box-shadow: 0 0 14px -4px var(--tone);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--tone) 80%, transparent) 22%,
+    var(--tone) 50%,
+    color-mix(in oklab, var(--tone) 25%, transparent) 78%,
+    transparent
+  );
+}
+
+.console-accent.is-default {
+  box-shadow: 0 0 14px -4px color-mix(in oklab, var(--brand-violet) 60%, transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--accent) 75%, transparent) 22%,
+    color-mix(in oklab, var(--brand-violet) 75%, transparent) 58%,
+    transparent
+  );
+}
+
+.console-accent.is-accent { --tone: var(--accent); }
+.console-accent.is-success { --tone: var(--success); }
+.console-accent.is-warning { --tone: var(--warning); }
+.console-accent.is-danger { --tone: var(--danger); }
+
+/* A step's echo line. The transcript announces each step before its result -
+   `[1/5] locating the host-side driver` - and the announcement has to read as
+   a heading, not as another result row, or a five-step test is ten flat lines.
+   The gap above (except on the first step) is what makes the pairs group. */
+.build-log-line.is-step {
+  margin-top: 0.4rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.build-log-line.is-step:first-child {
+  margin-top: 0;
+}
+
+/* --- connection-test stepper ----------------------------------------------- */
+
+/* Every step carries a state tone, and the bubble, spine, glyph and state pill
+   all mix from it - so a row recolours as a whole instead of needing four
+   separate rules per state. */
+.check-step {
+  --tone: var(--brand-cyan);
+  display: grid;
+  grid-template-columns: 1.55rem minmax(0, 1fr);
+  gap: 0.55rem;
+  padding: 0.32rem 0;
+}
+
+.check-step.is-ok { --tone: var(--success); }
+.check-step.is-bad { --tone: var(--danger); }
+
+.check-step-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+/* The number is the same number the transcript prints, so a row and its log
+   line can be matched by eye. A soft gradient rather than a flat ring: the
+   rows sit on a dark card and an outline alone reads as a bullet list. */
+.check-step-num {
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in oklab, var(--tone) 34%, transparent);
+  border-radius: 999px;
+  background: linear-gradient(
+    150deg,
+    color-mix(in oklab, var(--tone) 26%, transparent),
+    color-mix(in oklab, var(--tone) 4%, transparent)
+  );
+  box-shadow: 0 4px 12px -10px color-mix(in oklab, var(--tone) 85%, transparent);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in oklab, var(--tone) 88%, var(--foreground));
+}
+
+/* The connector fades out of the step's own colour and into the next row. */
+.check-step-spine {
+  width: 1px;
+  flex: 1 1 auto;
+  min-height: 0.5rem;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--tone) 45%, transparent),
+    color-mix(in oklab, var(--foreground) 8%, transparent)
+  );
+}
+
+.check-step-body {
+  min-width: 0;
+  padding-bottom: 0.2rem;
+}
+
+.check-step-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Its own glyph per kind of step: a driver file, an imported module, an
+   address, a socket. Four identical ticks hide which half of the test failed. */
+.check-step-ico {
+  flex: 0 0 auto;
+  color: var(--tone);
+  opacity: 0.95;
+}
+
+.check-step-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.check-step-mark {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex: 0 0 auto;
+  padding: 0.05rem 0.36rem 0.05rem 0.3rem;
+  border: 1px solid color-mix(in oklab, var(--tone) 30%, transparent);
+  border-radius: 999px;
+  background: linear-gradient(
+    120deg,
+    color-mix(in oklab, var(--tone) 20%, transparent),
+    color-mix(in oklab, var(--tone) 5%, transparent)
+  );
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: color-mix(in oklab, var(--tone) 90%, var(--foreground));
+}
+
+.check-step-detail {
+  margin-top: 0.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: color-mix(in oklab, var(--muted) 88%, transparent);
+}
+
+/* One segment per step, in the card header: the whole result at a glance
+   before reading a single row. */
+.step-strip {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.step-strip-seg {
+  --tone: var(--muted);
+  width: 1.1rem;
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--tone) 50%, transparent),
+    var(--tone)
+  );
+  box-shadow: 0 0 8px -4px var(--tone);
+}
+
+.step-strip-seg.is-ok { --tone: var(--success); }
+.step-strip-seg.is-bad { --tone: var(--danger); }
+.step-strip-seg.is-info { --tone: var(--brand-cyan); }
+
+/* --- transport icon wells ---------------------------------------------------
+   SFTP and TCP are two different mechanisms, not two rows of the same list:
+   violet for the driver that lives in python/clamd/, cyan for the socket
+   client. Grey only when that mechanism cannot run. */
+
+.transport-ico {
+  display: inline-flex;
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in oklab, var(--tone) 30%, transparent);
+  border-radius: 0.5rem;
+  background: linear-gradient(
+    140deg,
+    color-mix(in oklab, var(--tone) 24%, transparent),
+    color-mix(in oklab, var(--tone) 7%, transparent)
+  );
+  box-shadow: 0 6px 16px -13px color-mix(in oklab, var(--tone) 90%, transparent);
+  color: var(--tone);
+}
+
+.transport-ico.is-sftp { --tone: var(--brand-violet); }
+.transport-ico.is-tcp { --tone: var(--brand-cyan); }
+.transport-ico.is-off { --tone: var(--muted); }
+
+/* The rule under the page title, in the same three-colour run as the console
+   accents - it ties the header to the cards without a second heading. */
+.clamd-rule {
+  height: 1px;
+  margin-top: 0.7rem;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--accent) 60%, transparent),
+    color-mix(in oklab, var(--brand-violet) 45%, transparent) 32%,
+    color-mix(in oklab, var(--brand-cyan) 25%, transparent) 58%,
+    transparent 88%
+  );
+}
+
 
 /* --- guest metrics trend diagram ------------------------------------------- */
 
@@ -4184,6 +5350,382 @@ textarea:focus-visible {
   text-transform: uppercase;
 }
 
+/* --- logs panel ----------------------------------------------------------- */
+/*
+ * Two panes, one grid. The rail is a fixed slice because the file names are
+ * short and the viewer is where the reading happens; giving the list `1fr` too
+ * would let a long path steal width from the line that needs it.
+ *
+ * The viewer is a column so its header, toolbar, volume strip and footer stay
+ * put while only the scroll body moves. That is the whole reason this is a grid
+ * and not one more <Card> with a scroller in the middle.
+ */
+
+.logs-split {
+  display: grid;
+  grid-template-columns: minmax(14rem, 19rem) minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .logs-split { grid-template-columns: minmax(0, 1fr); }
+  .logs-rail { max-height: 34vh; }
+}
+
+.logs-rail {
+  display: flex;
+  flex-direction: column;
+  max-height: 78vh;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* HeroUI's card__header is a COLUMN flex, and `.log-search` carries
+   `flex: 1 1 14rem` for the row toolbars it was written for. In a column that
+   grows the input to 14rem of HEIGHT - the filter box was 238px tall and pushed
+   the whole file list off the card. Row direction gives the input its width
+   back. */
+.logs-rail-head {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+.logs-rail-head .log-search { flex: 1 1 auto; }
+
+.logs-rail-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.4rem;
+}
+
+.logs-rail-foot {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.5rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+.logs-viewer {
+  display: flex;
+  min-width: 0;
+  min-height: 34rem;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.logs-head {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+.logs-head-sub {
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.logs-head-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Counts that double as filters. A chip that only reports is a chip the reader
+   has to translate into a click somewhere else; this one does both, and its
+   pressed state is the filter's state. */
+.logs-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 14%, transparent);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 600;
+  transition: color 120ms var(--ease), border-color 120ms var(--ease),
+    background 120ms var(--ease);
+}
+
+.logs-pill.is-danger {
+  border-color: color-mix(in oklab, var(--danger) 32%, transparent);
+  background: color-mix(in oklab, var(--danger) 9%, transparent);
+  color: var(--danger);
+}
+
+.logs-pill.is-warning {
+  border-color: color-mix(in oklab, var(--warning) 32%, transparent);
+  background: color-mix(in oklab, var(--warning) 9%, transparent);
+  color: var(--warning);
+}
+
+.logs-pill.is-success {
+  border-color: color-mix(in oklab, var(--success) 32%, transparent);
+  background: color-mix(in oklab, var(--success) 9%, transparent);
+  color: var(--success);
+}
+
+.logs-pill.is-accent {
+  border-color: color-mix(in oklab, var(--accent) 32%, transparent);
+  background: color-mix(in oklab, var(--accent) 9%, transparent);
+  color: var(--accent);
+}
+
+.logs-pill.is-on {
+  background: color-mix(in oklab, currentColor 20%, transparent);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.logs-pill:hover { filter: brightness(1.18); }
+
+.logs-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+
+.logs-search-wrap {
+  display: flex;
+  flex: 1 1 16rem;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.35rem 0.2rem 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 14%, transparent);
+  border-radius: 0.4rem;
+  background: color-mix(in oklab, var(--foreground) 2%, transparent);
+  transition: border-color 120ms var(--ease), box-shadow 120ms var(--ease);
+}
+
+.logs-search-wrap:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 10%, transparent);
+}
+
+.logs-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.7rem;
+}
+
+.logs-match-count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.logs-match-count.is-empty { color: var(--danger); }
+
+.logs-step {
+  display: inline-flex;
+  width: 1.35rem;
+  height: 1.35rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.3rem;
+  color: var(--muted);
+  transition: color 120ms var(--ease), background 120ms var(--ease);
+}
+
+.logs-step:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+
+.logs-step:disabled { cursor: default; opacity: 0.35; }
+
+.logs-sev-count {
+  margin-left: 0.3rem;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
+}
+
+.log-severity button:disabled { cursor: default; opacity: 0.4; }
+
+.logs-select {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 14%, transparent);
+  border-radius: 0.35rem;
+  outline: none;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.66rem;
+}
+
+.logs-select:focus-visible {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+
+/* Line volume per minute. A strip, not a chart: it is read as a texture -
+   "quiet, then a burst" - so it has no axes and no labels. */
+.logs-volume {
+  display: flex;
+  height: 1.6rem;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 1px;
+  padding: 0 0.75rem 0.3rem;
+}
+
+.logs-volume-bar {
+  min-width: 2px;
+  flex: 1 1 0;
+  border-radius: 1px 1px 0 0;
+  background: color-mix(in oklab, var(--accent) 40%, transparent);
+  transition: background 120ms var(--ease);
+}
+
+.logs-volume-bar:hover { background: var(--accent); }
+
+.logs-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0;
+}
+
+/* The viewer already has its own frame; inside the card that frame would read
+   as a box in a box. */
+.logs-scroll {
+  max-height: 60vh;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.logs-placeholder {
+  display: flex;
+  min-height: 22rem;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.logs-placeholder p { margin: 0; }
+
+.logs-placeholder-sub {
+  max-width: 34rem;
+  font-size: 0.68rem;
+  opacity: 0.8;
+}
+
+.logs-foot {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+
+.logs-foot-count {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.logs-foot-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+/* Column header for the viewer. Sticky because the whole point of the columns
+   is that you can look up from line 1,800 and still know which one is which. */
+.log-view-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  background: color-mix(in oklab, var(--surface) 94%, var(--foreground));
+  color: color-mix(in oklab, var(--muted) 80%, transparent);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.log-view-head .log-view-body { text-transform: none; letter-spacing: 0; }
+
+/* A continuation belongs to the line above it. The metadata columns go quiet
+   rather than disappearing, so the row keeps the grid the rest of the column
+   has; only the message keeps its weight. */
+.log-view-row.is-continuation .log-view-time,
+.log-view-row.is-continuation .log-view-level,
+.log-view-row.is-continuation .log-view-source { opacity: 0.35; }
+
+.log-view-row.is-continuation .log-view-body { opacity: 0.8; }
+
+.log-view-row.is-continuation .log-view-gutter::before {
+  content: "↳";
+  margin-right: 0.2rem;
+  color: color-mix(in oklab, var(--muted) 60%, transparent);
+}
+
+/* The row the search is sitting on. Distinct from a passive highlight: this is
+   the one Enter/Shift+Enter is moving, so it gets a rail and a tint. */
+.log-view-row.is-active-hit {
+  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--warning);
+}
+
+.log-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.log-toggle.is-on {
+  border-color: color-mix(in oklab, var(--success) 55%, transparent);
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+  color: var(--success);
+}
+
 /* --- trace panel ---------------------------------------------------------- */
 
 .trace-metrics { display: flex; flex-direction: column; gap: 0.75rem; }
@@ -4332,4 +5874,413 @@ textarea:focus-visible {
   .vm-metrics-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .log-view-source { display: none; }
   .log-view-time { width: 4.5rem; }
+}
+/* ---------------------------------------------------------------------------
+   Sub-sections (Build page) and health-tinted section numbers (Build, Utils).
+
+   The tone classes set --subtone, and every rule below reads that variable, so
+   a wrapper only ever declares its state once.
+--------------------------------------------------------------------------- */
+
+.build-sub {
+  --subtone: var(--accent);
+  margin-top: 1.15rem;
+}
+
+.build-sub:first-child { margin-top: 0; }
+
+.build-sub.is-success { --subtone: var(--success); }
+.build-sub.is-warning { --subtone: var(--warning); }
+.build-sub.is-danger  { --subtone: var(--danger); }
+
+/* The rail. A 2px rule alone is easy to miss while scrolling past three lists,
+   so the header wears a wash of the same ink: the colour is legible at the
+   edge of vision, which is the whole point of encoding health here instead of
+   only in the cards' chips. `--subtone` drives both, so a wrapper declares its
+   state once and the rail, the number and the wash all follow. */
+.build-sub-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  border-left: 2px solid color-mix(in oklab, var(--subtone) 55%, transparent);
+  padding: 0.3rem 0.6rem 0.35rem 0.6rem;
+  margin-bottom: 0.7rem;
+  border-radius: 0 0.4rem 0.4rem 0;
+  background: linear-gradient(
+    to right,
+    color-mix(in oklab, var(--subtone) 7%, transparent),
+    transparent 60%
+  );
+}
+
+.build-sub-n {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--subtone);
+  letter-spacing: 0.02em;
+}
+
+.build-sub-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.build-sub-hint {
+  margin-top: 0.1rem;
+  font-size: 0.7rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.build-sub-body > .build-card { overflow: hidden; }
+
+/* The numbered chip is accent by default; a degraded section wears its state
+   instead - same padding, only the ink changes. The ring is re-stated at each
+   tone, not left to the base rule, or a green badge would keep the accent
+   edge and read as two different states at once. */
+.build-section-n.is-success {
+  background: color-mix(in oklab, var(--success) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--success) 22%, transparent);
+  color: var(--success);
+}
+
+.build-section-n.is-warning {
+  background: color-mix(in oklab, var(--warning) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--warning) 22%, transparent);
+  color: var(--warning);
+}
+
+.build-section-n.is-danger {
+  background: color-mix(in oklab, var(--danger) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--danger) 22%, transparent);
+  color: var(--danger);
+}
+
+/* One line per row keeps the code blocks' coloured spans aligned with the
+   source line they came from. */
+.code-line { display: block; }
+
+/* ---------------------------------------------------------------------------
+   Section sub-menu and drawn checkboxes.
+
+   Sections themselves are tabs now (SubNav, the Pipelines Configuration
+   pattern), so there is no in-page sticky menu to style here - only the
+   checkbox pair below, which every panel's "yes" should look the same in.
+--------------------------------------------------------------------------- */
+
+/* ------------------------------------------------------------------ */
+
+.checkbox {
+  --cbx-ink: transparent;
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.checkbox-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.checkbox-input:disabled { cursor: not-allowed; }
+
+.checkbox-box {
+  width: 1rem;
+  height: 1rem;
+  display: grid;
+  place-items: center;
+  border-radius: 0.3rem;
+  border: 1.5px solid color-mix(in oklab, var(--muted) 55%, transparent);
+  background: color-mix(in oklab, var(--surface) 90%, var(--muted) 4%);
+  color: var(--cbx-ink);
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.checkbox:hover .checkbox-box {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+
+.checkbox.is-checked .checkbox-box {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-foreground, white);
+}
+
+.checkbox.is-disabled .checkbox-box { opacity: 0.45; }
+
+/* The real input carries focus, the drawn box shows it - the visible ring is
+   only honest if it marks the element a keyboard user is actually on. */
+.checkbox-input:focus-visible + .checkbox-box {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The sample factory's feature rows get the same treatment as the test
+   picker's cards: a bordered row that answers the checkbox with its own
+   border and wash, so "checked" is legible as the row's state, not only the
+   little square's. */
+.factory-feature {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: 0.6rem;
+  row-gap: 0.1rem;
+  padding: 0.45rem 0.6rem 0.45rem 0.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--muted) 22%, transparent);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.factory-feature:hover {
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+}
+
+.factory-feature.is-checked {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  background: color-mix(in oklab, var(--accent) 7%, transparent);
+}
+
+.factory-feature-name {
+  grid-column: 2;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.factory-feature-note {
+  grid-column: 2;
+  min-width: 0;
+  font-size: 0.62rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* Composition options and post-compile flags: bordered blocks beside the
+   feature rows, so a select or a duration input reads as an option with a
+   stated effect rather than as another checkbox. */
+.factory-options,
+.factory-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.factory-option {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid color-mix(in oklab, var(--muted) 22%, transparent);
+  border-radius: 0.5rem;
+}
+
+.factory-option.is-on {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  background: color-mix(in oklab, var(--accent) 7%, transparent);
+}
+
+.factory-option-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.factory-option-note {
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+
+/* One bordered section per method family (loop, faults, math, timing, draw),
+   so the numeric knobs read as groups instead of one wrap-around bucket. */
+.factory-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.factory-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--muted) 18%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+}
+
+.factory-section.is-muted {
+  opacity: 0.6;
+}
+
+.factory-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.factory-section-title {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--foreground);
+}
+
+.factory-section-note {
+  font-size: 0.6rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.factory-section-note code {
+  font-size: 0.58rem;
+}
+
+.factory-field-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.factory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  gap: 0.5rem;
+}
+
+.factory-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.factory-field-label {
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+
+.factory-field .field {
+  width: 100%;
+}
+
+.factory-flags {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+}
+
+/* --- generator resources ---------------------------------------------------
+   One row per GitHub source inside a kind card. The row is a small vertical
+   stack - identity, status, preview, actions - because a source carries four
+   facts at once and a single line would force the URL to eat the label. */
+
+.resource-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 0.6rem;
+  border: 1px solid color-mix(in oklab, var(--muted) 18%, transparent);
+  background: color-mix(in oklab, var(--surface) 92%, transparent);
+}
+
+.resource-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.resource-name {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.resource-url {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.resource-url:hover { color: var(--accent); text-decoration: underline; }
+
+.resource-meta {
+  font-size: 0.6rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.resource-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.resource-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.3rem;
+  border: 1px solid color-mix(in oklab, var(--muted) 20%, transparent);
+  background: color-mix(in oklab, var(--background) 60%, transparent);
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--foreground);
+}
+
+.resource-error {
+  font-size: 0.62rem;
+  line-height: 1.45;
+  color: var(--danger);
+}
+
+.resource-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.resource-add .field {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+/* A feature whose pool cannot honour it. Still legible - the reason is the
+   point of showing it - but visibly not a choice. */
+.factory-feature.is-disabled { opacity: 0.55; cursor: not-allowed; }
+
+.factory-feature.is-disabled:hover {
+  border-color: color-mix(in oklab, var(--muted) 22%, transparent);
 }

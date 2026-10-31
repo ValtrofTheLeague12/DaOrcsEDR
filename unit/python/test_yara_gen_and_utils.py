@@ -179,6 +179,39 @@ class TestSbomState:
         assert state["available"] is False
         assert "could not read" in state["reason"]
 
+    def test_unresolved_components_keep_what_they_do(self, monkeypatch, tmp_path):
+        # The generator has always written both keys; passing only the names
+        # left the card rendering a comma-joined string of identifiers, which is
+        # the thing the detail list exists to stop being.
+        import json
+        detail = {"name": "gnurx",
+                  "description": "POSIX regexp compatibility library [Windows system library]"}
+        summary = tmp_path / "sbom_summary.json"
+        summary.write_text(json.dumps({
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "unresolved_versions": ["gnurx"],
+            "unresolved_details": [detail],
+        }), encoding="utf-8")
+        monkeypatch.setattr(utils, "SBOM_SUMMARY", summary)
+        monkeypatch.setattr(utils, "SBOM_JSON", tmp_path / "sbom.json")
+        monkeypatch.setattr(utils, "_head_commit_date", lambda _cwd: None)
+        state = utils.sbom()
+        assert state["unresolved"] == ["gnurx"]
+        assert state["unresolved_details"] == [detail]
+
+    def test_a_summary_without_details_reports_none(self, monkeypatch, tmp_path):
+        # An older summary already on disk must not raise; the card falls back
+        # to the bare names rather than showing an empty list as a fact.
+        import json
+        summary = tmp_path / "sbom_summary.json"
+        summary.write_text(json.dumps({"generated_at": "2026-01-01T00:00:00+00:00",
+                                       "unresolved_versions": ["curl"]}),
+                           encoding="utf-8")
+        monkeypatch.setattr(utils, "SBOM_SUMMARY", summary)
+        monkeypatch.setattr(utils, "SBOM_JSON", tmp_path / "sbom.json")
+        monkeypatch.setattr(utils, "_head_commit_date", lambda _cwd: None)
+        assert utils.sbom()["unresolved_details"] == []
+
 
 class TestYaraInventory:
     def test_a_missing_directory_is_reported_not_fatal(self, monkeypatch, tmp_path):
@@ -244,9 +277,12 @@ class TestMalapiState:
         assert state["generated_stale"] is True
         assert "no longer match the site" in state["reason"]
 
-    def test_a_stale_httrack_lock_blocks_and_says_so(self, monkeypatch, tmp_path):
-        # httrack refuses to start while this file exists, so a lock left by a
-        # killed mirror makes every later refresh fail silently at best.
+    def test_a_stale_httrack_lock_is_reported_but_still_runnable(self, monkeypatch, tmp_path):
+        # httrack refuses to start while this file exists, but the scrape stage
+        # clears a lock older than a day itself before mirroring (see
+        # malapi_pipeline.stage_scrape). So a stale lock is worth saying out
+        # loud and is NOT a reason to disable the button - disabling it here is
+        # what left the card refusing a refresh that would have succeeded.
         site = tmp_path / "site"
         yaml = tmp_path / "yaml"
         site.mkdir()
@@ -264,10 +300,42 @@ class TestMalapiState:
         monkeypatch.setattr(utils, "MALAPI_LOCK", lock)
         monkeypatch.setattr(utils, "_httrack_available", lambda: (True, None))
         state = utils.malapi()
-        assert state["blocked"] is True
         assert state["lock"]["stale"] is True
         assert state["lock"]["age_days"] == 3
-        assert "httrack" in state["blocked_reason"].lower()
+        assert state["blocked"] is False
+        assert state["blocked_reason"] is None
+        # ...and the action the card offers stays enabled.
+        entry = next(e for e in utils.catalogue()["entries"] if e["id"] == "malapi-update")
+        assert entry["available"] is True
+        assert entry["unavailable_reason"] is None
+
+    def test_a_live_lock_blocks_the_refresh_and_says_why(self, monkeypatch, tmp_path):
+        # Under a day could be a real mirror running, and the scrape stage
+        # leaves those alone. This is the lock that genuinely prevents a run,
+        # and it reports minutes rather than "0 days old".
+        site = tmp_path / "site"
+        yaml = tmp_path / "yaml"
+        site.mkdir()
+        yaml.mkdir()
+        (site / "a.html").write_text("x", encoding="utf-8")
+        (yaml / "a.yaml").write_text("x", encoding="utf-8")
+        lock = tmp_path / "hts-in_progress.lock"
+        lock.write_text("Mirror in progress", encoding="utf-8")
+        import os, time
+        fresh = time.time() - 45 * 60
+        os.utime(lock, (fresh, fresh))
+        monkeypatch.setattr(utils, "MALAPI_SITE", site)
+        monkeypatch.setattr(utils, "MALAPI_YAML", yaml)
+        monkeypatch.setattr(utils, "MALAPI_SERVER", yaml / "server.py")
+        monkeypatch.setattr(utils, "MALAPI_LOCK", lock)
+        monkeypatch.setattr(utils, "_httrack_available", lambda: (True, None))
+        state = utils.malapi()
+        assert state["blocked"] is True
+        assert state["lock"]["age_minutes"] == 45
+        assert "45 minutes" in state["blocked_reason"]
+        entry = next(e for e in utils.catalogue()["entries"] if e["id"] == "malapi-update")
+        assert entry["available"] is False
+        assert entry["unavailable_reason"] == state["blocked_reason"]
 
     def test_a_fresh_lock_is_not_treated_as_stale(self, monkeypatch, tmp_path):
         # Under a day could be a real mirror running. Reporting that as stale
@@ -355,6 +423,30 @@ class TestCatalogueSafety:
         for util in ("malapi-update", "yargen-update"):
             joined = " ".join(by_id[util]["effects"])
             assert "network" in joined.lower(), f"{util} hides that it uses the network"
+
+    def test_every_unavailable_entry_says_why(self, monkeypatch, tmp_path):
+        # The UI shows `unavailable_reason` in the button's tooltip and falls
+        # back to the bare word "unavailable" when it is null. A disabled
+        # button with no reason is the state this page had for the MalAPI
+        # refresh: reading a `can_update` key that malapi() never returned left
+        # it unavailable with nothing to tell the operator.
+        monkeypatch.setattr(utils, "_httrack_available", lambda: (False, "httrack is not installed in WSL"))
+        for entry in utils.catalogue()["entries"]:
+            if not entry["available"]:
+                assert entry["unavailable_reason"], f"{entry['id']} is disabled and says nothing"
+
+    def test_an_absent_mirror_does_not_disable_the_refresh(self, monkeypatch, tmp_path):
+        # The scrape stage builds the mirror from nothing - that is what it is
+        # for - so absent pieces are the strongest reason to press the button,
+        # not a reason it is disabled.
+        monkeypatch.setattr(utils, "MALAPI_SITE", tmp_path / "absent")
+        monkeypatch.setattr(utils, "MALAPI_YAML", tmp_path / "absent")
+        monkeypatch.setattr(utils, "MALAPI_SERVER", tmp_path / "absent.py")
+        monkeypatch.setattr(utils, "MALAPI_LOCK", tmp_path / "nope.lock")
+        monkeypatch.setattr(utils, "_httrack_available", lambda: (True, None))
+        entry = {e["id"]: e for e in utils.catalogue()["entries"]}["malapi-update"]
+        assert entry["available"] is True
+        assert entry["unavailable_reason"] is None
 
     def test_git_actions_cannot_prompt_or_pull(self):
         # The MalAPI update is no longer a git operation, so what matters is

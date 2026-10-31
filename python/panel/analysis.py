@@ -39,6 +39,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -55,7 +56,25 @@ UPLOADER_SCRIPT = config.REPO / "mega" / "upload.py"
 # stray key is a hard error at startup and is reported here as one rather than
 # quietly ignored the way a permissive parser would.
 ARTIFACT_KEYS = ("store_artifact", "upload_artifacts", "remote_root", "timeout_seconds",
-                 "encrypt_artifacts", "encryption_recipient", "admin_public_key")
+                 "encrypt_artifacts")
+
+# The MEGA upload-and-protection settings moved to config/analysis.yaml, applied
+# at analyzer startup and arriving at the planner as env names. Where one of
+# these is defined there it WINS over config/artifacts.yaml - that precedence is
+# in load_artifact_options() - so every value this module reports and every gate
+# it answers goes through the same overlay. store_artifact stays file-only:
+# building a local bundle is not a machine-level question.
+#
+# The seal's keypair pair is gone: protection is the operator password zip, and
+# the password file lives outside the repo (see mega/protect.py), managed on the
+# page as a status chip - never as a value, so no secret-looking string can
+# enter a repo config through any form.
+MEGA_OVERRIDES = {
+    "upload_artifacts": "MEGA_UPLOAD",
+    "encrypt_artifacts": "MEGA_SEAL",
+    "remote_root": "MEGA_REMOTE_ROOT",
+    "timeout_seconds": "MEGA_TIMEOUT",
+}
 
 # Phases the planner appends to any config that omits them, so a two-phase
 # pipeline still writes its artifacts and prints a report.
@@ -156,35 +175,60 @@ ENV_OPTIONS = [
            "Writes symbol/offset diagnostics here. Empty means the trace layer "
            "writes nothing.",
            "src/core/trace.cpp:21"),
+
+    # --- the nine keys the planner's own kKeys list carries, in that order ---
+    # Backed by the parity tests in unit/python/test_analysis_settings.py: this
+    # list must name exactly the keys analysis_config.cpp reads, in the same
+    # order, or the console drifts from what the binary honours. ENABLE_TRACING
+    # is default-true because its C++ says unset MEANS tracing on; the defaults
+    # on the MEGA group are artifacts.yaml's own values, which is what a run
+    # without these keys configured would use.
+    _flag("ENABLE_TRACING", "Trace layer hard-off",
+          "false, 0, no or off silences the trace file entirely - even where "
+          "TRACE_FILE is set, without touching it. The cost to know about: the "
+          "last-calls tail in a crash report goes quiet with it. Unset or true "
+          "leaves tracing exactly as it was.",
+          "src/core/trace.cpp:44", default=True),
+    _flag("IA_INTERRUPT_IF_PACKED", "Stop when the sample looks packed",
+          "The byte histogram's whole-file entropy becomes a tripwire: at or "
+          "above the threshold the run stops right there - before the phases "
+          "that would spend hours on a packed artifact nothing will be "
+          "believed about - and the report names both numbers. --resume "
+          "pushes past the stop without editing anything.",
+          "src/main/phase_extract.cpp:251"),
+    _number("IA_INTERRUPT_ENTROPY", "Packed threshold, bits/byte",
+            "The threshold the stop above compares against. The analyzer "
+            "accepts anything above 0 up to 8 bits/byte (0 rejects the run "
+            "back left at default); the console floors the form at 0.1, and "
+            "out-of-range values are warned about with the default standing.",
+            "src/main/phase_extract.cpp:253", 7.5, 0.1, 8.0),
+    _flag("MEGA_UPLOAD", "Upload the evidence bundle",
+          "Per-run override of artifacts.yaml's upload_artifacts: on ends the "
+          "run with a MEGA push, off suppresses it everywhere this applies. "
+          "IA_ARTIFACT_UPLOAD=0 (the panel's own runner sets it for every job "
+          "it starts) still wins over everything, in both directions.",
+          "src/main/pipeline_planner.cpp:745"),
+    _text("MEGA_REMOTE_ROOT", "MEGA destination parent",
+          "The bundle lands under <remote_root>/<sample>_artifact. Overrides "
+          "the file's remote_root for this run only; empty keeps it.",
+          "src/main/pipeline_planner.cpp:747"),
+    _flag("MEGA_SEAL", "Password-protect the bundle before upload",
+          "Per-run override of artifacts.yaml's encrypt_artifacts: the archive "
+          "is wrapped in a password-protected zip (WinZip AES-256) and only "
+          "the zip is uploaded - the plaintext stays local. Off leaves it "
+          "plain. The password comes from the operator password file outside "
+          "the repo, managed just below; nothing here ever holds the value.",
+          "src/main/pipeline_planner.cpp:746"),
+    _number("MEGA_TIMEOUT", "Upload timeout, seconds",
+            "How long the MEGA push may take before it is abandoned: 1 to "
+            "86400. Out-of-range or non-numeric values are reported with the "
+            "file's value standing. 900 is artifacts.yaml's default.",
+            "src/main/pipeline_planner.cpp:751", 900.0, 1.0, 86400.0),
 ]
 
 ENV_BY_KEY = {o["key"]: o for o in ENV_OPTIONS}
 
-# ---------------------------------------------------------------------------
-# Phase rush.
-#
-# "Rush" is triage: run the cheap local phases, drop the ones that dominate wall
-# clock on a shared research box. The list is a judgement call, so each entry
-# says why - an unexplained list would become folklore.
-#
-#   radare2, graphs, xref   disassembly, call graphs and cross-references; the
-#                           single biggest cost of a run, and useless for a
-#                           first look at a file
-#   capa                    rule matching over every section; minutes on a large
-#                           PE, and a triage answer rarely needs it
-#   cminer                  function-name inference by ML; wants `extraction`
-#   recovery                carve-and-recover pass, same input as cminer
-#   hexdump                 dumps blobs; only useful once something was carved
-#   cti                     internet lookups: slow, rate-limited, and the thing
-#                           most likely to be unwanted on an isolated network
-#   model                   EMBER2024 scoring, which starts a local service
-#
-# `extraction` is deliberately KEPT even though it only feeds the dropped phases:
-# it is fast, it is what produces the carved blob inventory, and dropping it
-# would silently change the report for every run that did not ask for rush.
-# ---------------------------------------------------------------------------
-SLOW_PHASES = ("radare2", "graphs", "xref", "capa", "cminer", "recovery",
-               "hexdump", "cti", "model")
+
 
 # The opt-in rule-generation phase, and the phases it must land BEFORE.
 #
@@ -380,7 +424,121 @@ def _phase_list(value) -> list[str]:
     return []
 
 
-def _pipeline(path) -> dict:
+def _global_settings() -> dict[str, str]:
+    """What config/analysis.yaml defines, as {key: value}.
+
+    Imported here rather than at module scope because analysis_settings imports
+    this module for ENV_OPTIONS: a top-level import would be a cycle. A
+    function-local import is the same escape hatch this file already uses for
+    tempfile and pathlib, for the same reason.
+
+    Read per call rather than cached: this file is the operator's standing
+    choice and is edited from the console on the page sitting next to this one,
+    so a cached copy would be wrong within one poll of the edit that mattered.
+    """
+    from . import analysis_settings
+
+    try:
+        return analysis_settings.set_values(config.REPO)
+    except OSError:
+        # The file exists but cannot be read. Refusing every pipeline edit would
+        # be a worse failure than allowing one: the operator cannot fix an
+        # unreadable config from here anyway, and the analyzer will not start on
+        # it either, so nothing is silently mis-applied.
+        return {}
+
+
+def _global_keys() -> set[str]:
+    """Keys config/analysis.yaml defines, which no pipeline may also set."""
+    return set(_global_settings())
+
+
+def _refuse_shadowed(updates: dict) -> None:
+    """Refuse a per-pipeline write for any key set globally.
+
+    The analyzer applies config/analysis.yaml *after* the pipeline's
+    `environment:` block, so such a line is not a weaker setting - it is a
+    setting that does not happen. Writing one from a browser is how you get a
+    file that says ML_SKIP: "0" and a run that skips the model anyway, with
+    nothing in either file explaining it.
+
+    So this is refused rather than accepted-and-ignored, and the message names
+    where the key actually lives so the fix is one click on the other page.
+    """
+    _refuse_shadowed_document_names(
+        sorted(k for k in updates if k in _global_keys()))
+
+
+def _refuse_shadowed_document_names(shadowed: list[str]) -> None:
+    """The shared message, so the two callers cannot drift apart in wording."""
+    if shadowed:
+        raise ValueError(
+            "set globally in config/analysis.yaml, where it wins over any "
+            "pipeline: " + ", ".join(shadowed)
+            + ". Clear it there first."
+        )
+
+
+def _refuse_shadowed_document(text: str) -> None:
+    """Refuse a whole new pipeline file that duplicates a global key.
+
+    Used by save_pipeline, where every `environment:` key in the text is one the
+    caller has just introduced - so unlike an edit to an existing file, there is
+    no "pre-existing line" that is not the caller's to own.
+
+    Deliberately NOT in _verify_pipeline. That is the shared gate for the yarGen
+    toggle as well, which does not write an environment key; putting
+    the rule there would refuse every edit to a pipeline that still carries a
+    stale shadowed line - which is precisely the file the operator needs to be
+    able to edit in order to clean it up.
+    """
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return  # _verify_pipeline reports the parse failure with a better message
+    if not isinstance(doc, dict):
+        return
+    env = doc.get("environment")
+    if not isinstance(env, dict):
+        return
+    global_keys = _global_keys()
+    _refuse_shadowed_document_names(
+        sorted(str(k) for k in env if str(k) in global_keys))
+
+
+def _refuse_global_only(updates: dict) -> None:
+    """Refuse a per-pipeline write of a phase-scoped setting.
+
+    Phase-scoped keys - everything with an `affects` phase - are machine-wide:
+    they are set on Analysis Configuration and apply to every run. The
+    per-pipeline controls for them are what filled these files with inert
+    ML_SKIP and CTI_SKIP lines on pipelines that never run the affected phase,
+    so the console no longer offers a control for one on any pipeline page, on
+    either write route.
+
+    Unlike the shadowing rule this needs no catalog and no plan - it is a
+    property of the key, so it refuses the same way with the analyzer down.
+
+    Refusal is scoped to keys being SET. Clearing one is allowed, because
+    removing a line that does not belong is the cleanup this rule exists to
+    provoke. A hand-edited pipeline file still works - the analyzer reads its
+    environment block regardless of what this console offers - but the console
+    no longer helps write one.
+    """
+    scoped = sorted(k for k in updates if ENV_BY_KEY[k]["affects"])
+    if scoped:
+        raise ValueError(
+            "managed on Analysis Configuration, not per pipeline: "
+            + ", ".join(scoped)
+            + ". A phase-scoped setting applies to every run; this page sets "
+              "only the run-wide options."
+        )
+
+
+def _pipeline(path, global_keys: set[str] | None = None) -> dict:
+    # `global_keys` is passed in by callers that render a whole listing, which
+    # would otherwise re-read config/analysis.yaml once per pipeline file.
+    global_keys = _global_keys() if global_keys is None else global_keys
     entry = {
         "name": path.stem,
         "description": "",
@@ -394,13 +552,7 @@ def _pipeline(path) -> dict:
         "resolved": [],
         "inserted": [],
         "unknown_phases": [],
-        "phase_check": "unavailable",
-        # True when a previous phase-rush trimmed this pipeline. Read from the
-        # marker in the file rather than inferred from the phase set, because
-        # "no slow phases" and "rushed" are not the same claim: a pipeline
-        # authored as triage was never trimmed.
-        "rushed": False,
-        # When the file itself last changed. Not the same as when this page read
+        "phase_check": "unavailable",        # When the file itself last changed. Not the same as when this page read
         # it: the panel polls on a timer, so "read Ns ago" only ever describes
         # the poll, while "edited Nm ago" is the fact an operator wants when they
         # are deciding whether what they are looking at is current.
@@ -419,8 +571,6 @@ def _pipeline(path) -> dict:
         return entry
     entry["content"] = content
     entry["spans"] = yamlview.spans(content)
-    entry["rushed"] = bool(_rush_markers(content))
-
     try:
         # JSON is valid YAML, so a .json pipeline in this directory parses with
         # the same loader the planner uses for both.
@@ -493,8 +643,31 @@ def _pipeline(path) -> dict:
                     # this page is a review surface, not a place to read secrets.
                     "value": "••••••" if secret else _scalar(value),
                     "secret": secret,
+                    # True when config/analysis.yaml sets this key too, so this
+                    # line does not happen. Reported rather than hidden: it is
+                    # already in the file, and an operator reading the YAML has
+                    # to be able to find out that it is inert.
+                    "shadowed": key in global_keys,
                 })
     return entry
+
+
+def _options_for() -> list[dict]:
+    """The options a pipeline page offers.
+
+    The run-wide ones only. The phase-scoped settings - CTI_SKIP and the ML
+    knobs - are machine-wide, changed on Analysis Configuration, so a pipeline
+    page neither offers a control for one nor a card: a setting neither this
+    page nor this file can change has no business taking up a slot here, and
+    listing it read-only is how the "Settings for this pipeline" heading came
+    to hold six controls that could not affect the run. The file's own stale
+    lines for those keys are still reported in the environment list below,
+    marked like any other line that does not mean what it says.
+
+    Copies, never the ENV_OPTIONS dicts themselves: ENV_BY_KEY shares them,
+    and decorating one pipeline's copy would leak into every other pipeline.
+    """
+    return [dict(o) for o in ENV_OPTIONS if not o["affects"]]
 
 
 def _resolve_entry(entry: dict, catalog: dict) -> dict:
@@ -502,11 +675,12 @@ def _resolve_entry(entry: dict, catalog: dict) -> dict:
 
     Shared with the write routes so a save and a read return the same shape. A
     POST that answered with a thinner object than the GET would leave a client
-    reading `pipeline.rushed` or `pipeline.resolved` as undefined - which is the
+    reading `pipeline.resolved` as undefined - which is the
     kind of difference that only shows up as a blank panel later.
     """
     requires = catalog["requires"]
-    if catalog["available"]:
+    available = bool(catalog["available"])
+    if available:
         unknown = [p for p in entry["phases"] if p not in requires]
         entry["unknown_phases"] = unknown
         entry["phase_check"] = "ok" if not unknown else "unknown"
@@ -516,10 +690,20 @@ def _resolve_entry(entry: dict, catalog: dict) -> dict:
     resolved, inserted = _resolve(entry["phases"], requires)
     entry["resolved"] = resolved
     entry["inserted"] = inserted
+    entry["options"] = _options_for()
+    # An environment line for a phase this plan does not run is the same kind
+    # of inert line `shadowed` marks - read, then never used - so it gets the
+    # same treatment: reported beside the value rather than silently rendered
+    # as if it did something.
+    if available:
+        for line in entry["environment"]:
+            spec = ENV_BY_KEY.get(line["key"])
+            if spec and spec["affects"] and not any(p in resolved for p in spec["affects"]):
+                line["irrelevant"] = True
     return entry
 
 
-def _pipelines(catalog: dict) -> list[dict]:
+def _pipelines(catalog: dict, global_keys: set[str] | None = None) -> list[dict]:
     entries: list[dict] = []
     try:
         files = sorted(
@@ -530,8 +714,12 @@ def _pipelines(catalog: dict) -> list[dict]:
         files = []
 
     seen: set[str] = set()
+    # Once per listing, not once per file: this is a disk read of a file the
+    # console can edit, and thirteen reads for one page render is thirteen
+    # chances to render two different snapshots of it.
+    keys = _global_keys() if global_keys is None else global_keys
     for path in files:
-        entry = _pipeline(path)
+        entry = _pipeline(path, keys)
         # Bare `--pipeline default` is the built-in plan, so a default.yaml in
         # here is a copy of it rather than a pipeline that shadows it. The
         # analyzer's own listing hides it for the same reason; this page shows it
@@ -549,7 +737,8 @@ def _pipelines(catalog: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def _artifacts() -> dict:
+def _artifact_file() -> dict:
+    """config/artifacts.yaml parsed, with no overlay applied yet."""
     out = {
         "present": False,
         "file": _rel(ARTIFACTS_FILE),
@@ -558,8 +747,6 @@ def _artifacts() -> dict:
         "remote_root": "",
         "timeout_seconds": 900,
         "encrypt_artifacts": False,
-        "encryption_recipient": "user",
-        "admin_public_key": "",
         "errors": [],
         "uploader_script": "",
         "mtime": 0.0,
@@ -623,32 +810,85 @@ def _artifacts() -> dict:
                 continue
             out["timeout_seconds"] = seconds
             continue
-        if key == "encryption_recipient":
-            # Refused here for the same reason the planner refuses it: a value
-            # that only fails once an upload is halfway through is worse than
-            # one that never saves.
-            if value not in ("user", "admin"):
-                out["errors"].append("'encryption_recipient' must be 'user' or 'admin'")
-                continue
-            out["encryption_recipient"] = value
-            continue
-        if key == "admin_public_key":
-            # Empty is legal and means "use the default location", so this is
-            # the one string option that is allowed to be blank.
-            if not isinstance(value, str):
-                out["errors"].append("'admin_public_key' must be a path")
-                continue
-            out["admin_public_key"] = value.strip()
 
-    if out["admin_public_key"] and not out["encrypt_artifacts"]:
-        # Not an error - the two options are independent - but the combination
-        # looks configured while doing nothing, so it is surfaced.
-        out["errors"].append(
-            "'admin_public_key' is set but 'encrypt_artifacts' is false, "
-            "so bundles will NOT be sealed")
+    # encrypt_artifacts without a password file is not an error here - the
+    # uploader refuses to ship anything until one exists, which is the
+    # fail-closed behaviour wanted - but the page owes the operator that state,
+    # so the artifact dict below carries bundle_password (see password helpers).
 
     out["uploader_script"] = _rel(UPLOADER_SCRIPT) if UPLOADER_SCRIPT.is_file() else ""
     return out
+
+
+def _artifacts() -> dict:
+    """The artifact options as the analyzer will see them.
+
+    config/artifacts.yaml parsed, then config/analysis.yaml's MEGA_* values
+    overlaid exactly where load_artifact_options() overlays the env vars. Every
+    exit path - a missing file, a broken one, a healthy one - lands here, so the
+    pages always display what the next run will actually do.
+    """
+    return _apply_mega_overrides(_artifact_file())
+
+
+def _mega_value(option: str, raw):
+    """A MEGA_* analysis setting as the artifact option's type, or None.
+
+    None means "unusable" and matches the analyzer's own behaviour: the planner
+    warns and lets config/artifacts.yaml's value stand, so this file cannot
+    claim the decision - it never decided anything.
+    """
+    if option in ("upload_artifacts", "encrypt_artifacts"):
+        text = str(raw).strip().lower()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off"):
+            return False
+        return None
+    if option == "timeout_seconds":
+        try:
+            seconds = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+        return seconds if 1 <= seconds <= 86400 else None
+    # remote_root is a plain string: the same value the env var will carry. A
+    # blank line in analysis.yaml is treated as unset, exactly as the planner
+    # treats an empty env var.
+    text = str(raw).strip()
+    return text or None
+
+
+def _apply_mega_overrides(out: dict) -> dict:
+    """Overlay config/analysis.yaml's MEGA_* onto the file-parsed values.
+
+    Read per call rather than cached: this is the operator's standing choice and
+    the Analysis Configuration page edits it from the console a few pixels away,
+    so a cached copy would be wrong within one poll of the edit that mattered.
+    """
+    from . import analysis_settings  # noqa: PLC0415 - analysis_settings imports this module
+
+    mega = analysis_settings.set_values(config.REPO)
+    out["decided_by"] = {k: "config/artifacts.yaml"
+                         for k in MEGA_OVERRIDES if k in out}
+    out["mega_warnings"] = []
+    for option, env_key in MEGA_OVERRIDES.items():
+        if option not in out:
+            continue
+        raw = mega.get(env_key)
+        if raw is None:
+            continue
+        parsed = _mega_value(option, raw)
+        if parsed is None:
+            if str(raw).strip():
+                out["mega_warnings"].append(
+                    f"{env_key}={raw} does not fit '{option}'; "
+                    "config/artifacts.yaml's value stands (the analyzer logs "
+                    "the same choice at startup)")
+            continue
+        out[option] = parsed
+        out["decided_by"][option] = f"config/analysis.yaml ({env_key})"
+    return out
+
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +898,8 @@ def _artifacts() -> dict:
 
 def snapshot() -> dict:
     catalog = _catalog()
-    pipelines = _pipelines(catalog)
+    global_settings = _global_settings()
+    pipelines = _pipelines(catalog, set(global_settings))
     artifacts = _artifacts()
 
     # Newest mtime across everything this page reads, so one label can answer
@@ -685,62 +926,163 @@ def snapshot() -> dict:
         # MEGA upload is the one option with a side effect outside the host, so
         # it gets its own top-level flag rather than being buried in a tab.
         "mega_upload": bool(artifacts["upload_artifacts"]),
-       "mega_encrypt": bool(artifacts["encrypt_artifacts"]),
-       "encryption_recipient": artifacts["encryption_recipient"],
-       "admin_public_key": artifacts["admin_public_key"],
-        "options": ENV_OPTIONS,
-        "rush": {
-            "phases": list(SLOW_PHASES),
-            # Which pipelines carry a rush marker, so the toggle shows the real
-            # state of the file rather than guessing it from the phase list.
-            "active": [p["name"] for p in pipelines if p["rushed"]],
-        },
-        "checked_at": round(time.time(), 1),
+        "mega_encrypt": bool(artifacts["encrypt_artifacts"]),
+        # The password state, not the password: whether the operator password
+        # file exists and where it lives, so the page can show a status chip
+        # without any secret ever returning through this payload.
+        "bundle_password": _password_payload(),
+        "options": _options_for(),
+        # What config/analysis.yaml already owns, with the value it owns it at.
+        # The pipeline controls for these keys are rendered read-only rather than
+        # hidden: the key is on the other page, it applies to every run including
+        # this one, and an operator looking for "where do I turn this off" should
+        # be pointed somewhere, not left with an absence.
+        "global_settings": global_settings,        "checked_at": round(time.time(), 1),
     }
 
 
-def _is_rush(phases: list[str]) -> bool:
-    """Whether a pipeline already drops every slow phase.
-
-    Needs at least one phase: a pipeline with an empty list is broken, and
-    calling that "rushing" would report a broken config as a configured one.
-    """
-    return bool(phases) and not [p for p in SLOW_PHASES if p in phases]
-
-
 def artifact_upload_enabled() -> bool:
-    """Whether config/artifacts.yaml currently asks for a MEGA upload.
+    """Whether a MEGA upload is on right now, whatever page was last edited.
 
-    Read through the same parser the page uses, so the Export button's gate and
-    the toggle the operator just flipped cannot disagree.
+    Answered through the same precedence the planner applies - analysis.yaml's
+    MEGA_UPLOAD over config/artifacts.yaml's upload_artifacts - so the Artifacts
+    page's Export gate and the analyzer never disagree about who decided.
     """
     return bool(_artifacts()["upload_artifacts"])
 
 
+def artifact_upload_decision() -> dict:
+    """The upload toggle's value AND where it was decided, for gate messages.
+
+    Saying "artifacts.yaml says off" when analysis.yaml's MEGA_UPLOAD turned it
+    on would send the operator to fix the wrong file; the decider is part of the
+    answer, not a detail someone can guess.
+    """
+    state = _artifacts()
+    return {"enabled": bool(state["upload_artifacts"]),
+            "decided_by": state.get("decided_by", {}).get("upload_artifacts", "")}
+
+
 def artifact_upload_timeout() -> int:
     """The uploader's own timeout budget, so a manual export obeys the same
-    ceiling an analyzer run would."""
+    ceiling an analyzer run would (MEGA_TIMEOUT wins over the file, as usual)."""
     return int(_artifacts()["timeout_seconds"])
 
 
 def artifact_encrypt_enabled() -> bool:
-    """Whether a bundle must be sealed to a public key before it is uploaded.
+    """Whether a bundle must be password-protected before it is uploaded.
 
-    Read through the same parser as the upload toggle, so the button and the
-    analyzer can never disagree about whether evidence leaves the host in the
-    clear.
+    Read through the same MEGA_SEAL-over-file precedence as the analyzer, so the
+    button and the run can never disagree about whether evidence leaves the host
+    in the clear.
     """
     return bool(_artifacts().get("encrypt_artifacts"))
 
 
-def artifact_encryption_recipient() -> str:
-    """'user' (this machine's operator key) or 'admin' (the lab's public key)."""
-    return str(_artifacts().get("encryption_recipient") or "user")
+# --- bundle password -------------------------------------------------------
+#
+# The password file resource itself (mega/protect.py is the scheme that reads
+# it). The panel manages the FILE - create, replace, clear - and reports only
+# its existence and location. The value is never echoed back except in the one
+# response to a successful generate, and never written into any repo config:
+# a repo-read YAML holding evidence protection would put it one `cat` away
+# from anything that can read the checkout.
+
+_PASSWORD_TOO_SHORT_HINT = "the password must be at least 8 bytes to be a protection"
 
 
-def artifact_admin_public_key() -> str:
-    """Configured admin public key path, or '' to use the default location."""
-    return str(_artifacts().get("admin_public_key") or "")
+def _load_protect():
+    """Load mega/protect.py by path, the way artifacts.py loads mega/list.py.
+
+    mega/ holds scripts, not a package - no __init__.py, and protect.py rewrites
+    sys.path to reach credential.py - so the import is by file location with a
+    stable module name, and the failure is a value the routes can show rather
+    than a crash mid-request.
+    """
+    import importlib.util
+    path = config.REPO / "mega" / "protect.py"
+    if not path.is_file():
+        return None, f"{_rel(path)} not found"
+    if str(path.parent) not in sys.path:
+        sys.path.insert(0, str(path.parent))
+    try:
+        spec = importlib.util.spec_from_file_location("mega_protect", path)
+        if spec is None or spec.loader is None:
+            return None, f"could not load {_rel(path)}"
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module, None
+    except Exception as exc:  # noqa: BLE001 - the error text is the UI's message
+        return None, f"mega/protect.py failed to load: {exc}"
+
+
+def _password_file():
+    """The operator password file, or None when the protect module is absent."""
+    protect, _ = _load_protect()
+    return protect.password_file() if protect else None
+
+
+def _password_payload() -> dict:
+    """The response shape for the password state; never the value."""
+    protect, error = _load_protect()
+    if protect is None:
+        return {"present": False, "path": "", "error": error}
+    try:
+        path = protect.password_file()
+        present = protect.password_present(path)
+    except Exception as exc:  # noqa: BLE001 - report, do not 500 over a chip
+        return {"present": False, "path": "", "error": str(exc)}
+    return {"present": present, "path": _rel(path), "error": None}
+
+
+def _bundle_password_status() -> dict:
+    return _password_payload()
+
+
+def _bundle_password_clear() -> dict:
+    """Remove the password file; a missing one is already the wanted state."""
+    protect, error = _load_protect()
+    if protect is None:
+        return {"ok": False, "error": error}
+    protect.clear_password()
+    return {"ok": True, "status": _password_payload()}
+
+
+def _bundle_password_set(value: str) -> dict:
+    """Store the operator's own password, byte-exact, under the resolved file."""
+    if not isinstance(value, str) or not value.strip():
+        return {"ok": False, "error": "the password cannot be empty"}
+    # The repo refuses secret-looking values from browser forms - the vault and
+    # the .env are where credentials belong - and the password is no exception:
+    # it never lands in a repo config, only in the profile password file.
+    if len(value.encode("utf-8")) < 8:
+        return {"ok": False, "error": _PASSWORD_TOO_SHORT_HINT}
+    protect, error = _load_protect()
+    if protect is None:
+        return {"ok": False, "error": error}
+    try:
+        protect.set_password(value)
+    except protect.PasswordError as exc:
+        return {"ok": False, "error": str(exc)}
+    # The value is deliberately NOT returned here: only a generate shows the
+    # password once, because an operator-typed one is already in someone's
+    # head / password manager.
+    return {"ok": True, "status": _password_payload()}
+
+
+def _bundle_password_generate(length: int = 24) -> dict:
+    """Generate, store, and RETURN the password exactly once."""
+    protect, error = _load_protect()
+    if protect is None:
+        return {"ok": False, "error": error}
+    try:
+        if not 12 <= int(length) <= 128:
+            return {"ok": False, "error": "length must be between 12 and 128"}
+        value, _ = protect.generate_password(int(length))
+    except (protect.PasswordError, TypeError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "status": _password_payload(),
+            "password": value, "shown_once": True}
 
 
 # ---------------------------------------------------------------------------
@@ -895,27 +1237,27 @@ def write_artifact_options(patch: dict) -> dict:
     if unknown:
         raise ValueError("unknown artifact option: " + ", ".join(sorted(unknown)))
 
+    # Where config/analysis.yaml defines a MEGA_* setting, that wins over
+    # config/artifacts.yaml - the planner overlays the env vars onto the file.
+    # Accepting the write here would put a value in the file that does not
+    # decide what it says, so it is refused with a pointer to the page that
+    # actually decides, exactly as a pipeline write is refused for a key the
+    # global file owns.
+    shadowed = sorted(
+        f"'{k}' ({MEGA_OVERRIDES[k]})" for k in patch
+        if k in MEGA_OVERRIDES and _global_settings().get(MEGA_OVERRIDES[k]) is not None)
+    if shadowed:
+        raise ValueError(
+            "decided by config/analysis.yaml, which wins over config/"
+            "artifacts.yaml where both are set (MEGA_*): " + ", ".join(shadowed)
+            + ". Clear it there first - Analysis Configuration page, MEGA upload group.")
+
     prepared: dict[str, str] = {}
     for key, value in patch.items():
         if key in ("store_artifact", "upload_artifacts", "encrypt_artifacts"):
             if not isinstance(value, bool):
                 raise ValueError(f"'{key}' must be true or false")
             prepared[key] = "true" if value else "false"
-        elif key == "encryption_recipient":
-            if value not in ("user", "admin"):
-                raise ValueError("'encryption_recipient' must be 'user' or 'admin'")
-            prepared[key] = _quote(value)
-        elif key == "admin_public_key":
-            # Empty is legal: it means "use the default location". Anything
-            # else is a local path, so the same traversal guard the remote root
-            # gets applies here.
-            if not isinstance(value, str):
-                raise ValueError("'admin_public_key' must be a path")
-            path_text = value.strip()
-            if path_text and ("\\" in path_text
-                              or any(part == ".." for part in path_text.replace("\\", "/").split("/"))):
-                raise ValueError("'admin_public_key' must not contain '..'")
-            prepared[key] = _quote(path_text)
         elif key == "remote_root":
             if not isinstance(value, str) or not value.strip():
                 raise ValueError("'remote_root' must not be empty")
@@ -974,6 +1316,10 @@ def write_environment(pipeline: str, updates: dict) -> dict:
     unknown = [k for k in updates if k not in ENV_BY_KEY]
     if unknown:
         raise ValueError("option not honoured by the analyzer: " + ", ".join(sorted(unknown)))
+    # After the allowlist and before any coercion: a key the analyzer reads but
+    # one this file already owns is refused for the same reason an unknown key is
+    # - writing it would put a line in the file that does not mean what it says.
+    _refuse_shadowed(updates)
     # Belt and braces on top of the allowlist: a value that reads like a secret
     # has no business being written into a repo file from a browser form, even
     # if a future option slipped past the allowlist.
@@ -984,7 +1330,13 @@ def write_environment(pipeline: str, updates: dict) -> dict:
     prepared: dict[str, str | None] = {}
     for key, value in updates.items():
         spec = ENV_BY_KEY[key]
-        if spec["kind"] == "flag":
+        if value is None:
+            # An explicit null clears the key, whatever its kind. Only a flag
+            # had a removal path before (its false), which left a stale
+            # number-or-path line clearable by nothing but a text editor - and
+            # cleanup is the one write this page must never refuse.
+            prepared[key] = None
+        elif spec["kind"] == "flag":
             if not isinstance(value, bool):
                 raise ValueError(f"'{key}' must be true or false")
             prepared[key] = "1" if value else None
@@ -1007,6 +1359,10 @@ def write_environment(pipeline: str, updates: dict) -> dict:
             prepared[key] = _quote(text)
 
     with _write_lock:
+        # After coercion, and handed only the keys being set: clearing a line
+        # that does not belong is the cleanup this check exists to provoke, so
+        # it must pass.
+        _refuse_global_only({k: v for k, v in prepared.items() if v is not None})
         path = _pipeline_path(pipeline)
         original, newline, bom = _read_text(path)
         lines = original.splitlines()
@@ -1046,127 +1402,11 @@ def write_environment(pipeline: str, updates: dict) -> dict:
     return _resolve_entry(_pipeline(path), _catalog())
 
 
-_RUSH_MARKER = re.compile(r"^(\s*)#\s*phase-rush:\s*\[(.*?)\]\s*$")
-_PHASES_LINE = re.compile(r"^(\s*)phases:\s*\[(.*?)\]\s*(#.*)?$")
-
-
-def _rush_markers(text: str) -> list[list[str]]:
-    """The phase lists a previous rush trimmed, as recorded in the file."""
-    return [[n.strip() for n in m.group(2).split(",") if n.strip()]
-            for m in (_RUSH_MARKER.match(l) for l in text.splitlines()) if m]
-
-
-def set_rush(pipeline: str, enabled: bool) -> dict:
-    """Add or remove the triage profile in a pipeline's phase lists.
-
-    Reversible, and reversibility is why this leaves a marker behind:
-
-        stages:
-          - name: threat-intel
-            # phase-rush: [cti]
-            phases: []
-
-    The original list is recorded as a comment directly above the trimmed one,
-    so turning rush back off restores exactly what was there - no guessing at
-    which stage a phase belonged to, and no needing the panel to remember
-    something the file should know. The marker is also what makes the edit
-    legible to a human reading the YAML later: an empty stage with a comment
-    naming what it dropped explains itself, a mysteriously empty stage does not.
-
-    Only inline `phases: [...]` lists are touched. A pipeline written with
-    block-style lists is refused with an explanation rather than rewritten blind,
-    because guessing at its shape and saving the guess is how a config gets
-    quietly damaged.
-    """
-    with _write_lock:
-        path = _pipeline_path(pipeline)
-        original, newline, bom = _read_text(path)
-        lines = original.splitlines()
-        out: list[str] = []
-        restored: list[list[str]] = []
-        trimmed: list[list[str]] = []
-
-        i = 0
-        while i < len(lines):
-            marker = _RUSH_MARKER.match(lines[i])
-            phases = _PHASES_LINE.match(lines[i])
-            next_is_phases = i + 1 < len(lines) and _PHASES_LINE.match(lines[i + 1])
-
-            if marker and next_is_phases:
-                # A marker with no list under it is a half-edited file. Leaving
-                # it alone is right: it says a rush was applied, and the operator
-                # should see it, not have the panel tidy it away silently.
-                out.append(lines[i])
-                i += 1
-                continue
-
-            if enabled and phases:
-                indent, inner, comment = phases.groups()
-                names = [n.strip() for n in inner.split(",") if n.strip()]
-                kept = [n for n in names if n not in SLOW_PHASES]
-                if len(kept) != len(names):
-                    if out and _RUSH_MARKER.match(out[-1]):
-                        # Already trimmed on a previous apply; the marker holds
-                        # the fuller original, so leave it exactly as it is.
-                        out.append(lines[i])
-                        i += 1
-                        continue
-                    suffix = f"  {comment}" if comment else ""
-                    out.append(f"{indent}# phase-rush: [{', '.join(names)}]")
-                    out.append(f"{indent}phases: [{', '.join(kept)}]{suffix}")
-                    trimmed.append(names)
-                    i += 1
-                    continue
-
-            if not enabled and phases and i > 0 and _RUSH_MARKER.match(lines[i - 1]):
-                indent, _, comment = phases.groups()
-                recorded = [n.strip() for n in _RUSH_MARKER.match(lines[i - 1]).group(2).split(",") if n.strip()]
-                suffix = f"  {comment}" if comment else ""
-                # The marker line is replaced by the list it described, which is
-                # what makes the restore a true undo rather than an append.
-                out[-1] = f"{indent}phases: [{', '.join(recorded)}]{suffix}"
-                restored.append(recorded)
-                i += 1
-                continue
-
-            out.append(lines[i])
-            i += 1
-
-        if enabled and not trimmed:
-            if any(_RUSH_MARKER.match(l) for l in lines):
-                raise ValueError("phase rush is already applied to this pipeline")
-            raise ValueError(
-                "this pipeline selects none of the slow phases, so phase rush "
-                "has nothing to remove"
-            )
-        if not enabled and not restored:
-            raise ValueError("this pipeline has no phase-rush marker to restore")
-
-        text = newline.join(out).rstrip() + newline
-        verified = _verify_pipeline(path.name, text)
-
-        if enabled:
-            if not _is_rush(verified["phases"]):
-                raise ValueError("rush left slow phases in the pipeline; nothing was written")
-        else:
-            # A restore that came back with something other than what the marker
-            # recorded is a bug, not a success: the operator would believe the
-            # original pipeline is back and it would not be.
-            recorded = [p for group in restored for p in group]
-            missing = [p for p in recorded if p not in verified["phases"]]
-            if missing:
-                raise ValueError(
-                    "restore did not bring back " + ", ".join(missing) + "; nothing was written")
-
-        _atomic_write(path, text, newline, bom)
-        return _resolve_entry(_pipeline(path), _catalog())
-
-
 def set_yara_gen(pipeline: str, enabled: bool) -> dict:
     """Add or remove the `yara_gen` phase in a pipeline's phase lists.
 
     This is the writable form of the yarGen decision, and it edits the same
-    inline `phases: [...]` lists as set_rush() does - which means the wizard
+    inline `phases: [...]` lists - which means the wizard
     preview, the planner and this toggle cannot disagree about what the file
     says. It is deliberately a phase and not an `environment:` flag: the
     analyzer has no `YARA_GEN_SKIP`, because the phase not being in the list is
@@ -1179,13 +1419,12 @@ def set_yara_gen(pipeline: str, enabled: bool) -> dict:
     transit. When the last stage has no `export` - an unusual but legal shape -
     it is appended instead.
 
-    Removal needs no undo marker, unlike phase rush. Rush trims an unknown set
-    of phases and records what it took; this deletes one known literal, so
+    Removal needs no undo marker: this deletes one known literal, so
     re-adding it is an exact reversal by construction.
 
     Block-style pipelines are refused with an explanation rather than rewritten
-    blind, for the same reason rush refuses them: guessing at the file's shape
-    and saving the guess is how a config gets quietly damaged.
+    blind. Guessing at the file's shape and saving the guess is how a config
+    gets quietly damaged.
     """
     with _write_lock:
         path = _pipeline_path(pipeline)
@@ -1281,10 +1520,33 @@ def save_pipeline(name: str, content: str) -> dict:
             raise FileExistsError(f"pipelines/{name}.yaml already exists")
         if any(p.stem == name for p in PIPELINE_DIR.glob("*.json")):
             raise FileExistsError(f"a {name}.json pipeline already exists")
+        _refuse_shadowed_document(content)
+        _refuse_global_only_document(content)
         _verify_pipeline(path.name, content)
         _atomic_write(path, content if content.endswith("\n") else content + "\n")
 
     return _resolve_entry(_pipeline(path), _catalog())
+
+
+def _refuse_global_only_document(text: str) -> None:
+    """Refuse a new pipeline file that carries a phase-scoped setting.
+
+    The document-level twin of _refuse_global_only, for the same reason
+    _refuse_shadowed_document exists beside _refuse_shadowed: the wizard writes
+    a whole file, so every environment key in it is one the author just
+    introduced, and without this gate the edit route's refusal would be an
+    invitation to bake the same line in through the builder instead.
+    """
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return  # _verify_pipeline reports the parse failure with a better message
+    if not isinstance(doc, dict):
+        return
+    env = doc.get("environment")
+    if not isinstance(env, dict):
+        return
+    _refuse_global_only(sorted(str(k) for k in env if str(k) in ENV_BY_KEY))
 
 
 def _pipeline_path(name: str):

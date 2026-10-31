@@ -23,3 +23,18 @@ login in front of it. Every route is introspected into the in-app
 **Documentation** page and into `/api/openapi.json`, so the
 catalog cannot drift from what the panel actually serves.
 
+Both ports are movable because a loopback bind can fail on a port nothing is
+using: Windows reserves blocks of TCP ports for Hyper-V, WSL2 and Docker
+Desktop at boot, and a bind inside one returns `WinError 10013` ("an attempt was
+made to access a socket in a way forbidden by its access permissions") — in the
+system locale, which is how it ends up on screen as an untranslatable one-liner.
+`60100`/`60101` fall inside such a block on some machines. `admin-panel.ps1`
+checks both ports against the exclusions before it builds anything and names a
+free port to use instead; `-Port` moves the panel and `ADMIN_WEB_DEV_PORT` pins
+the Vite port.
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp   # the ranges
+.\admin-panel.ps1 -Port 60600                              # outside them
+```
+

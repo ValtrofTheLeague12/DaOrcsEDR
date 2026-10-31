@@ -23,6 +23,8 @@ logo_t load_logo();
 // Startup banner for runs where the PDCurses session is inactive: the same
 // logo, red and centred in the console window. Does nothing when stdout is not
 // a terminal, so a redirected run does not get the art in its captured output.
+// STATIC_ANALYZER_FORCE_LOGO=1 overrides that, which is how the admin panel's
+// captured Build output and pipeline logs show daorcs.logo.
 void print_logo_banner();
 
 // Interactive PDCurses front-end. It remains a no-op when stdout is redirected

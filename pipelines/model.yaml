@@ -8,7 +8,11 @@ phases: [model]
 
 # Exported into the process environment before the ML service starts, so the
 # knobs below reach ml/serve.py (and getenv() in the analyzer, e.g. ML_SKIP).
+# Threshold and feature count are per-file on purpose: they tune THIS
+# pipeline's scoring, and the global file does not name either.
+# ML_EXPLAIN used to be pinned here too, but config/analysis.yaml sets it
+# machine-wide and wins - the line was dead text, so it left. Explain is
+# currently OFF for every pipeline; that is the Analysis Configuration page.
 environment:
   ML_THRESHOLD: "0.6"
-  ML_EXPLAIN: "true"
   ML_TOP_K: "10"

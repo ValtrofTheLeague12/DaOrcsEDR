@@ -226,7 +226,7 @@ function RunLog({ text }: { text: string }) {
 
       <div className="fleet-vm-log-controls">
         {counts.error > 0 && (
-          <Chip size="sm" variant="soft" color="danger">{counts.error} error</Chip>
+          <Chip size="sm" variant="soft" color="danger">{counts.error} error{counts.error === 1 ? '' : 's'}</Chip>
         )}
         {counts.warning > 0 && (
           <Chip size="sm" variant="soft" color="warning">{counts.warning} warn</Chip>

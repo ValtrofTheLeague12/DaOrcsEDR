@@ -12,7 +12,7 @@ import type { YamlKind } from '../types'
 // scalar's body looks like keys to anything that reads line by line.
 //
 // Shared because two pages now show YAML as source - the compose viewer and the
-// analysis configuration - and they must colour it identically or the same file
+// pipelines configuration - and they must colour it identically or the same file
 // would read differently depending on where you opened it.
 // ---------------------------------------------------------------------------
 

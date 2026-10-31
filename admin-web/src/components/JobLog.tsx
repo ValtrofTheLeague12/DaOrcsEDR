@@ -42,7 +42,7 @@ const STATE_TONE = {
 /** Neutral colouring for a log this component knows nothing about.
  *
  *  Only the shape of the line decides its colour - never a match on words the
- *  command might be using. A uploader that prints "0 errors" must not be
+ *  command might be using. An uploader that prints "0 errors" must not be
  *  coloured as a failure because it contains the word "error", and a command
  *  that uses different words for failure is still readable; the state chip
  *  carries the verdict, not a regex.
@@ -158,7 +158,7 @@ export default function JobLog({
               <p className="font-mono text-[10px] text-default-400">
                 {subtitle}
                 {job ? ` · ${job.elapsed}s` : ''}
-                {job?.dropped ? ` · ${job.dropped} earlier lines dropped` : ''}
+                {job?.dropped ? ` · ${job.dropped} earlier line${job.dropped === 1 ? '' : 's'} dropped` : ''}
               </p>
             </div>
           </div>

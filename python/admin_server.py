@@ -18,7 +18,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from flask import jsonify
+from flask import Response, jsonify
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -45,6 +45,26 @@ def _serve_spa(app, dist: Path) -> None:
             # is_relative_to keeps a crafted path from escaping dist/.
             if path and candidate.is_file() and candidate.is_relative_to(dist.resolve()):
                 return app.send_static_file(path)
+
+            # A rebuild empties dist/ and replaces every hashed chunk. A tab
+            # opened before that rebuild still holds the old entry module, so
+            # clicking a panel that had not been loaded yet asks for a filename
+            # that no longer exists. The generic SPA fallback used to answer
+            # with index.html, and the browser then refused to evaluate HTML as
+            # a module - "This panel failed to open" until a manual reload.
+            #
+            # Answer a missing JS chunk with a module that reloads the tab
+            # once. The reload fetches the new index, which names the chunks
+            # that do exist, so the panel click works instead of failing.
+            if path.startswith("assets/") and path.endswith(".js"):
+                return Response(
+                    "try{const k='ia:stale-chunk';"
+                    "const t=Number(sessionStorage.getItem(k)||0);"
+                    "if(Date.now()-t>5000){sessionStorage.setItem(k,String(Date.now()));"
+                    "window.location.reload();}}catch(e){window.location.reload();}",
+                    mimetype="text/javascript",
+                    headers={"Cache-Control": "no-store"},
+                )
             return app.send_static_file("index.html")
 
         print(f"[+] serving React UI from {dist}")

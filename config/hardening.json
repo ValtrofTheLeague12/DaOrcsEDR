@@ -1,0 +1,6 @@
+{
+  "aslr": true,
+  "high_entropy_va": true,
+  "dep_nx": true,
+  "stack_protector": true
+}

@@ -22,14 +22,23 @@ eight things you don't.
 474 lines of the old README were the console alone, which is too long to be
 useful as one page.
 
+The console has **two configuration pages**, and which one you want is the whole
+question: [Analysis configuration](admin-console/analysis-config.md) is
+`config/analysis.yaml` and decides what *every* run does, while
+[Pipelines Configuration](admin-console/pipelines-configuration.md) is
+`pipelines/*.yaml` and decides what *one kind* of run does. The analyzer applies
+the first after the second, so a key may be set in only one of them.
+
 | Page | Covers |
 | --- | --- |
 | [Overview](admin-console/README.md) | Starting it, binding, auth, the three things it is easy to confuse it with |
 | [Networking](admin-console/networking.md) | The live host/adapter/container/VirtualBox graph |
 | [Artifacts](admin-console/artifacts.md) | Local and remote evidence bundles, export, recovery |
-| [Analysis configuration](admin-console/analysis-config.md) | The phase wizard, writable options, phase rush, authoring, generating YARA rules |
+| [Analysis configuration](admin-console/analysis-config.md) | `config/analysis.yaml` — the settings that apply to every run |
+| [Pipelines Configuration](admin-console/pipelines-configuration.md) | `pipelines/*.yaml` - the phase wizard, per-pipeline options, authoring, generating YARA rules |
 | [Build identity and tests](admin-console/build.md) | Provenance, freshness, validation, and running tests from the browser |
 | [Utils](admin-console/utils.md) | SBOM, MalAPI rules, YARA packs, yarGen-Go maintenance |
+| [ClamAV](admin-console/clamd.md) | Service status, sample submission (SFTP or TCP INSTREAM), output logs, scan results |
 
 ## Not documented here
 
@@ -47,7 +56,8 @@ useful as one page.
 | I want to… | Go to |
 | --- | --- |
 | run the analyzer | [Getting started](getting-started.md) |
-| change what a run does | [Pipelines](pipelines-and-phases.md), then [Analysis configuration](admin-console/analysis-config.md) |
+| change what a run does | [Pipelines](pipelines-and-phases.md), then [Pipelines Configuration](admin-console/pipelines-configuration.md) |
+| change what *every* run does | [Analysis configuration](admin-console/analysis-config.md) |
 | know whether a binary is current | [Build identity](admin-console/build.md) |
 | update a vendored tool | [Utils](admin-console/utils.md) |
 | see why a run failed | [Failure handling](failure-and-recovery.md) |

@@ -108,6 +108,27 @@ VBOXMANAGE = Path(r"C:\Program Files\Oracle\VirtualBox\VBoxManage.exe")
 UPLOAD_DIR = REPO / "exports" / "_panel_uploads"
 UPLOAD_MAX_BYTES = 256 * 1024 * 1024
 
+# What the panel's sample box may be pointed at. The roots are relative to
+# REPO; an absolute path is accepted only when it resolves inside one of them,
+# and the name must end in an allowed executable extension. Shared by the run
+# gate (pipeline_run.start) and the picker's inspect endpoint, via
+# python/panel/samples.py, so the two can never refuse different things.
+SAMPLE_ROOTS = ("samples", "tests/fixtures", "exports")
+ALLOWED_SAMPLE_EXT = {".exe", ".dll", ".bin", ".sys"}
+
+# Operator uploads are staged here, scanned, then moved into samples/.
+# Relative to REPO and resolved at call time for the same reason SAMPLE_ROOTS
+# are relative: a caller that points REPO elsewhere (a test, a relocated repo)
+# must not stage into the real exports/.
+SAMPLE_UPLOAD_DIR = "exports/_panel_uploads"
+
+# The upload cap, deliberately small. The factory's own bait is kilobytes; the
+# picker needs a file the analyzer can open whole; and an executable this
+# project did not build is exactly the thing to keep small enough to eyeball.
+# Enforced WHILE streaming - an over-size body is cut off mid-write, never
+# buffered whole and then measured.
+SAMPLE_UPLOAD_MAX_BYTES = 1024 * 1024
+
 
 def setting(name: str, default: str = "") -> str:
     """Process env, then .env, then default. Same precedence as server.py."""

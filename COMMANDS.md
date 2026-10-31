@@ -71,6 +71,20 @@ cmake --build build-ucrt --target static_analyzer --clean-first -j 4
 .\build.ps1 -ListPipelines         # list the pipelines it can see
 ```
 
+Binary hardening is read from `config\hardening.json` (ASLR, high-entropy VA,
+DEP/NX, stack protector - all on by default) and can be overridden per build:
+
+```powershell
+.\build.ps1 -DisableStackProtector
+.\build.ps1 -DisableAslr -DisableDepNx
+.\build.ps1 -EnableHighEntropyVa
+```
+
+`-EnableX` and `-DisableX` for the same protection cannot both be given. The
+file is the project-wide intent; a switch changes one build and leaves it alone.
+The admin panel's Build page edits the same file and reports what the finished
+binary actually carries.
+
 ### Verify the build
 
 ```powershell
@@ -242,6 +256,20 @@ run, so a second Ctrl+C stops rather than walking the plan backwards.
 Binds loopback only, on `127.0.0.1:60100` by default. `ADMIN_PANEL_TOKEN` puts
 a login in front of it; `ADMIN_WEB_PORT` moves the port.
 
+Windows reserves blocks of TCP ports for Hyper-V / WSL2 / Docker Desktop at
+boot. A bind inside one fails with `WinError 10013` even though nothing is
+listening, and `60100`/`60101` fall inside such a block on some machines — so
+the launch can fail on a port that `Get-NetTCPConnection` reports as free.
+`admin-panel.ps1` checks both the panel port and the Vite port against the
+exclusions before starting, explains the cause, and names a free port:
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp   # the ranges
+.\admin-panel.ps1 -Port 60600                              # outside them
+```
+
+`ADMIN_WEB_DEV_PORT` pins the Vite port (default: `ADMIN_WEB_PORT` + 1).
+
 ### Frontend checks
 
 ```powershell
@@ -296,14 +324,28 @@ Set in the shell, or in a pipeline's `environment:` block, or in `.env`.
 | `CTI_SKIP` | `1` stops the CTI phase touching the internet. |
 | `CTI_CONFIG` | Path to the JSON overlay for CTI providers. |
 | `STATIC_ANALYZER_CURSES` | `0` turns off the PDCurses progress screen. |
+| `STATIC_ANALYZER_FORCE_LOGO` | `1` prints the startup `daorcs.logo` even when stdout is redirected. The admin panel sets it so captured Build and pipeline logs keep the banner. |
+| `ENABLE_TRACING` | `false` silences symbol/offset tracing entirely - even where `TRACE_FILE` is set, and with it the last-calls tail in a crash report. Unset means on. |
 | `TRACE_FILE` | Path for symbol/offset diagnostics. |
+| `IA_INTERRUPT_IF_PACKED` | `1` stops the run right after the histogram phase when whole-file entropy is at or above the threshold; the message names both numbers, and `--resume` pushes through. |
+| `IA_INTERRUPT_ENTROPY` | That threshold, `0.1`–`8.0` bits/byte. Default `7.5`. |
+| `MEGA_UPLOAD` | `1` uploads the evidence bundle; overrides artifacts.yaml's `upload_artifacts`. |
+| `MEGA_REMOTE_ROOT` | MEGA destination parent, `<root>/<sample>_artifact`. |
+| `MEGA_SEAL` | `1` seals the bundle before upload; overrides `encrypt_artifacts`. |
+| `MEGA_RECIPIENT` | `user` or `admin` - which sealing keypair. |
+| `MEGA_ADMIN_PUBKEY` | Admin public key (or a path to it) for `admin` sealing. |
+| `MEGA_TIMEOUT` | Upload command timeout in seconds, `1`–`86400`. Default `900`. |
 | `KNOWN_PE_HASHES_FILE` | Overrides `data\known_pe_hashes.jsonl`. |
 | `SA_API_HOST`, `SA_API_PORT` | API server bind address. |
 | `ADMIN_PANEL_TOKEN` | Requires a token for the admin console. |
 | `ADMIN_WEB_PORT` | Admin console port. |
+| `ADMIN_WEB_DEV_PORT` | Vite dev-server port; defaults to `ADMIN_WEB_PORT` + 1. |
 
 The full list with the source line that reads each one is in
-[docs/admin-console/analysis-config.md](docs/admin-console/analysis-config.md).
+[docs/admin-console/analysis-config.md](docs/admin-console/analysis-config.md)
+(global layer) and
+[docs/admin-console/pipelines-configuration.md](docs/admin-console/pipelines-configuration.md)
+(per-pipeline layer). A key may be set in only one of the two.
 
 ---
 

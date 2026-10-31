@@ -34,6 +34,20 @@ std::filesystem::path trace_path() {
 }  // namespace
 
 extern "C" void trace_enable() {
+  {
+    // ENABLE_TRACING=false is the hard off. Leaving TRACE_FILE unset silences
+    // the file writes already, but an explicit flag can silence one that IS
+    // set without editing it - and the crash report's last-calls tail goes
+    // quiet with it, which is that setting's cost and is named in the option's
+    // detail rather than here. On means the same words every other env reader
+    // accepts; unset means on, which is the behaviour before this existed.
+    const char* flag = std::getenv("ENABLE_TRACING");
+    if (flag != nullptr && *flag != '\0') {
+      const std::string value(flag);
+      if (!(value == "1" || value == "true" || value == "yes" || value == "on"))
+        return;
+    }
+  }
   std::lock_guard<std::mutex> lock(trace_mutex);
   if (!trace_file.is_open()) {
     const std::filesystem::path path = trace_path();
@@ -421,6 +435,19 @@ std::string trace_symbolize(const void* address) {
 }
 
 extern "C" TRACE_NO_INSTRUMENT void trace_enable() {
+    {
+        // Same gate as the non-Windows implementation above: the words every
+        // other env reader accepts, unset meaning on. The call-site contract
+        // is unchanged - callers keep calling this either way; an off flag
+        // simply finds the file already closed and every write a no-op.
+        const char* flag = std::getenv("ENABLE_TRACING");
+        if (flag != nullptr && *flag != '\0') {
+            const std::string value(flag);
+            if (!(value == "1" || value == "true" || value == "yes" ||
+                  value == "on"))
+                return;
+        }
+    }
     AcquireSRWLockExclusive(&trace_lock);
 
     if (s_trace_file == INVALID_HANDLE_VALUE) {

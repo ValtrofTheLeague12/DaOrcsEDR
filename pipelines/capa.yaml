@@ -1,11 +1,13 @@
 # capa capability detection: matches the sample against the fireeye/cisa
 # rule set (network, persistence, anti-analysis, ...) and writes the JSON
 # report. Stands alone - no radare2/extraction prerequisite.
+#
+# The old environment block (CTI_SKIP/ML_THRESHOLD) is gone: capa's plan runs
+# no CTI phase, so CTI_SKIP did nothing, and ML_THRESHOLD belongs to the model
+# phase it does not run either - the receipt for why the console stopped
+# offering phase-scoped keys per pipeline. If a run of THIS file ever needs
+# them again, they are decisions about the machine, not about this plan.
 name: capa
 description: "capa capability detection (rule-based: network, persistence, anti-analysis)"
 
-phases: [capa]
-
-environment:
-  CTI_SKIP: 1
-  ML_SKIP: 1
+phases: [capa, yara_gen]

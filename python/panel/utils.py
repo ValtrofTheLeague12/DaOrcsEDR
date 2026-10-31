@@ -61,7 +61,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import build, config
+from . import build, config, eagle
 
 # ---------------------------------------------------------------------------
 # Layout
@@ -112,6 +112,14 @@ SBOM_TIMEOUT = 900.0
 # git pull on malt/.
 MIRROR_TIMEOUT = 1800.0
 YARA_TIMEOUT = 600.0
+# A cold configure plus a Release build of the VM core is minutes, and the
+# whole tree is recompiled after a source change. Bounded generously rather
+# than left unbounded.
+EAGLE_TIMEOUT = 2400.0
+
+# The build is a separate script so the generic job runner can stream it the
+# same way it streams the SBOM generator and the MalAPI pipeline.
+EAGLE_SCRIPT = Path(__file__).resolve().parent / "eagle.py"
 
 # The YARA check's own settings, kept beside the other config/ files. Only one
 # setting so far, and it is here rather than in config/analysis.yaml because it
@@ -657,12 +665,21 @@ _UTIL_SPEC = [
                     "button does not have to invent one.",
      "effects": ["reaches the network", "rewrites yarGen-Go/dbs/"],
      "timeout": SBOM_TIMEOUT},
+    {"id": "eagle-build", "label": "Build EagleVM", "utility": "eagle",
+     "description": "Configure and build the in-tree EagleVM virtualiser with "
+                    "the x64-release preset: the CLI, the marker stub DLL and "
+                    "the sandbox. Tests stay off. Instruction Virtualisation "
+                    "in the sample factory is unavailable until this succeeds.",
+     "effects": ["rewrites EagleVM/out/build/x64-release/",
+                 "needs the MSVC build tools", "takes minutes"],
+     "timeout": EAGLE_TIMEOUT},
 ]
 
 
 def catalogue() -> dict:
     """The utilities, with per-entry availability resolved right now."""
     mal = malapi()
+    eagle_state = eagle.status()
     entries = []
     for spec in _UTIL_SPEC:
         entry = dict(spec)
@@ -688,12 +705,19 @@ def catalogue() -> dict:
         elif entry["id"] == "yargen-update":
             available = YARGEN_UPDATE.is_file()
             reason = "update_and_check.ps1 not found"
+        elif entry["id"] == "eagle-build":
+            # The button stays pressable while the tree is unbuilt: building it
+            # is the whole point. Only a missing checkout or toolchain makes it
+            # unavailable, and then the reason names what is missing.
+            available = eagle_state["available"]
+            reason = eagle_state.get("reason") or "EagleVM cannot be built"
         entry["available"] = available
         entry["unavailable_reason"] = None if available else reason
         entries.append(entry)
 
     return {"entries": entries,
-            "sbom": sbom(), "malapi": mal, "yara": yara(), "yargen": yargen()}
+            "sbom": sbom(), "malapi": mal, "yara": yara(), "yargen": yargen(),
+            "eagle": eagle_state}
 
 
 def overview() -> dict:
@@ -724,6 +748,8 @@ def _argv(utility: str) -> list[str]:
     if utility == "yargen":
         return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-File", str(YARGEN_UPDATE), "-UpdateOnly"]
+    if utility == "eagle":
+        return [_python(), str(EAGLE_SCRIPT), "--build"]
     return []
 
 

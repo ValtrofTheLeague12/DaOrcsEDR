@@ -5,6 +5,7 @@ import { Card } from '@heroui/react/card'
 import Icon from './Icon'
 import CopyButton from './CopyButton'
 import Switch, { OptionField } from './Switch'
+import CodeBlock from './CodeBlock'
 import { api } from '../api'
 import type { EnvOption, PhaseInfo } from '../types'
 
@@ -115,12 +116,10 @@ function renderYaml(
 export default function PipelineWizard({
   catalog,
   options,
-  slowPhases,
   onCreated,
 }: {
   catalog: PhaseInfo[]
   options: EnvOption[]
-  slowPhases: string[]
   /** Called with the new pipeline's name once the file is on disk. */
   onCreated: (name: string) => void
 }) {
@@ -221,11 +220,6 @@ export default function PipelineWizard({
     (a, b) => catalog.findIndex((p) => p.name === a) - catalog.findIndex((p) => p.name === b),
   ))
 
-  // Triage: everything except the phases phase-rush drops. One click, because
-  // "run it fast" is a question with a known answer on this page.
-  const triagePreset = () =>
-    setPicked(catalog.filter((p) => !slowPhases.includes(p.name)).map((p) => p.name))
-
   const save = async () => {
     setSaving(true)
     setError(null)
@@ -286,10 +280,6 @@ export default function PipelineWizard({
 
         <Card.Content className="flex flex-col gap-2">
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onPress={triagePreset}>
-              <Icon name="rocket" size={13} />
-              Triage preset
-            </Button>
             <Button size="sm" variant="ghost" onPress={() => setPicked([])} isDisabled={picked.length === 0}>
               Clear
             </Button>
@@ -301,7 +291,6 @@ export default function PipelineWizard({
           <div className="max-h-[22rem] overflow-y-auto rounded-lg border border-default-200/70">
             {filtered.map((phase) => {
               const on = picked.includes(phase.name)
-              const slow = slowPhases.includes(phase.name)
               return (
                 <button
                   key={phase.name}
@@ -326,11 +315,6 @@ export default function PipelineWizard({
                       <span className="font-mono text-[12px] font-medium text-foreground">
                         {phase.name}
                       </span>
-                      {slow && (
-                        <span className="metric rounded border border-warning/40 px-1 font-mono text-[9px] text-warning">
-                          slow
-                        </span>
-                      )}
                       {phase.service && (
                         <span className="metric rounded border border-default-200 px-1 font-mono text-[9px] text-default-400">
                           {phase.service}
@@ -379,7 +363,7 @@ export default function PipelineWizard({
           <Card.Content className="flex flex-col gap-3">
             {selected.length === 0 ? (
               <p className="py-4 text-[11px] text-default-400">
-                Nothing picked yet. Start from the triage preset, or click steps on the left.
+                Nothing picked yet. Click steps on the left.
               </p>
             ) : (
               <ol className="flex flex-col gap-1">
@@ -632,9 +616,7 @@ export default function PipelineWizard({
             </Card.Content>
           ) : (
             <div className="flex max-h-[20rem] flex-col border-t border-default-200">
-              <pre className="metric overflow-x-auto px-3 py-2.5 font-mono text-[11px] leading-relaxed text-foreground">
-                {draft}
-              </pre>
+              <CodeBlock code={draft} lang="yaml" className="min-h-0 flex-1" />
             </div>
           )}
 

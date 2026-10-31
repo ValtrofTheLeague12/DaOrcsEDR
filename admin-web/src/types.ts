@@ -471,7 +471,23 @@ export interface PipelineConfig {
   stages: { name: string; phases: string[] }[]
   /** Declared phases, deduplicated, in declared order. */
   phases: string[]
-  environment: { key: string; value: string; secret: boolean }[]
+  /**
+   * The `environment:` block as written in the file.
+   *
+   * `shadowed` marks a key that config/analysis.yaml also sets - the analyzer
+   * applies the global file after this one, so the line does not happen.
+   * `irrelevant` marks a key whose affected phase is not in this pipeline's
+   * plan - the line is read and used by nothing. Both are rendered as
+   * annotations on the value rather than as editable state that would lie.
+   */
+  environment: { key: string; value: string; secret: boolean; shadowed: boolean; irrelevant?: boolean }[]
+  /**
+   * The options as they apply to THIS pipeline: phase-scoped ones only where
+   * the plan contains the phase, run-wide ones everywhere. Absent when the
+   * phase catalog was unavailable, in which case the page falls back to the
+   * unfiltered list rather than filtering on a guess.
+   */
+  options?: EnvOption[]
   /** Declared + inserted prerequisites + the epilogue: the real run order. */
   resolved: string[]
   /** Phases in `resolved` that are not in `phases`. */
@@ -482,8 +498,6 @@ export interface PipelineConfig {
   phase_check: string
   /** File mtime (unix seconds). When the config itself last changed. */
   mtime: number
-  /** True when a phase-rush marker in the file records trimmed phase lists. */
-  rushed: boolean
   content: string
   spans: [number, number, YamlKind][]
 }
@@ -502,7 +516,9 @@ export interface EnvOption {
   kind: 'flag' | 'number' | 'text'
   detail: string
   honoured_by: string
-  /** Phases this option changes the behaviour of, for the same reason. */
+  /** Phases this option changes the behaviour of, for the same reason. A
+   *  phase-scoped option is machine-wide and lives on Analysis Configuration,
+   *  so per-pipeline listings carry the run-wide options only. */
   affects: string[]
   /** flag: whether it is on when the file says nothing. */
   default?: boolean
@@ -548,12 +564,14 @@ export interface AnalysisConfig {
     upload_artifacts: boolean
     remote_root: string
     timeout_seconds: number
-    /** Seal the bundle to a public key before upload. */
+    /** Wrap the archive in a password-protected zip before upload. */
     encrypt_artifacts: boolean
-    /** 'user' = this machine's operator key, 'admin' = the lab's public key. */
-    encryption_recipient: 'user' | 'admin'
-    /** Admin public key path; '' means the default location. */
-    admin_public_key: string
+    /** Per MEGA-owned option, the file that decided: config/analysis.yaml's
+     *  MEGA_* wins over config/artifacts.yaml, mirroring the analyzer. */
+    decided_by?: Record<string, string>
+    /** MEGA_* settings whose values do not fit their option; the file's value
+     *  stands, the same choice the analyzer logs at startup. */
+    mega_warnings?: string[]
     /** Anything the analyzer's own loader would reject. */
     errors: string[]
     /** Repo-relative path of mega/upload.py, the MEGA uploader. */
@@ -567,22 +585,49 @@ export interface AnalysisConfig {
    *  effect outside this host. */
   mega_upload: boolean
   mega_encrypt: boolean
-  encryption_recipient: 'user' | 'admin'
-  admin_public_key: string
+  /** The operator password file's STATE, never its value: the zip protection
+   *  reads it from outside the repo, and no payload echoes the password back
+   *  except the one response to a generate. */
+  bundle_password: { present: boolean; path: string; error?: string | null }
   /** Writable `environment:` options, with the code that reads each one. */
   options: EnvOption[]
-  rush: {
-    /** Phases phase-rush drops. Each is a deliberate call, see analysis.py. */
-    phases: string[]
-    /** Pipelines carrying a rush marker. */
-    active: string[]
-  }
+  /**
+   * What config/analysis.yaml currently defines, as {key: value}.
+   *
+   * These are off limits to this page: the analyzer applies the global file
+   * after the pipeline's `environment:` block, so a pipeline line for one of
+   * them does not happen. The option is rendered read-only and pointed at
+   * Analysis Configuration rather than hidden, because the key IS on the other
+   * page and an operator told "not here" learns where to look.
+   */
+  global_settings: Record<string, string>
   /** Newest mtime across everything this page reads, unix seconds. The one
    *  label that answers "is what I am looking at current?" honestly - a
    *  `checked_at` on a polled page only ever describes the poll. */
   newest_edit: number
   /** When this payload was assembled, unix seconds. */
   checked_at: number
+}
+
+export type DynamicTransport = 'tcp' | 'sftp'
+
+export interface DynamicAnalysisOption {
+  id: DynamicTransport
+  label: string
+  summary: string
+  detail: string
+  selected: boolean
+}
+
+export interface DynamicAnalysisSnapshot {
+  path: string
+  exists: boolean
+  /** last write, unix seconds; null when the file has never been written */
+  modified: number | null
+  options: DynamicAnalysisOption[]
+  settings: { communication: DynamicTransport }
+  default: DynamicTransport
+  error: string | null
 }
 
 export interface ClamdResultFile {
@@ -605,19 +650,113 @@ export interface ClamdCheck {
   detail: string
   /** Informational checks never fail the test - matching the shell script. */
   advisory: boolean
+  /**
+   * What the step does, in a sentence. The transcript prints it before the
+   * result, the way a shell script echoes each step it is about to run.
+   */
+  echo?: string
+  /**
+   * Which glyph the page draws for this kind of step: a driver file, an
+   * imported module, an address, a socket. Unknown values fall back to a tick.
+   */
+  icon?: string
+}
+
+/**
+ * The transport recorded in config/dynamic_analysis.json - the file the
+ * Dynamic Analysis > Configuration page writes. `error` is set when that file
+ * could not be read, which makes the choice unknowable rather than defaulting
+ * to something the operator did not pick.
+ */
+export interface ClamdCommunication {
+  mode: 'sftp' | 'tcp'
+  path: string
+  error: string | null
 }
 
 export interface ClamdStatus {
+  /** Whether the selected transport can run right now. */
+  ready?: boolean
+  /** A daemon answered (TCP PING). False for SFTP: not probed here. */
   reachable: boolean
   mode: string
   endpoint: string
   version: string
   vm: { ip: string; host: string; port: number }
   checks: ClamdCheck[]
+  /** When the checks last ran (epoch seconds). */
+  checked_at?: number
+  /**
+   * The connection test's output as text - the same rows as `checks` plus the
+   * socket client's own narration. One source, so the panel and the log cannot
+   * disagree about what was tested.
+   */
+  output?: string[]
   ok: boolean
   note: string
+  communication?: ClamdCommunication
+  /** How a sample can reach a scanner from this host, and whether it can now. */
+  transports?: Record<'sftp' | 'tcp', ClamdTransport>
+  default_transport?: 'sftp' | 'tcp' | null
   error?: string
 }
+
+/** One way to move a sample to clamd, with the reason it cannot be used. */
+export interface ClamdTransport {
+  id: string
+  available: boolean
+  reason: string | null
+  /** The script or client that does the work, shown so it is never a black box. */
+  path: string
+  /** Every file the transport needs, so a missing one is visible by name. */
+  files?: string[]
+  detail: string
+}
+
+/** One result file as the scanner wrote it, for the viewer. */
+export interface ClamdResultDocument {
+  /** Bare file name under python/clamd/results/. */
+  name: string
+  bytes: number
+  /** last write, unix seconds */
+  modified: number
+  /** The file's text unchanged. Empty for a zero-byte interrupted download. */
+  raw: string
+}
+
+/** The job handle a submission returns, and the row it fills in when done. */
+export interface ClamdSubmitStart {
+  ok: boolean
+  job_id?: string
+  mode?: 'sftp' | 'tcp'
+  filename?: string
+  bytes?: number
+  sha256?: string
+  code?: string
+  error?: string
+  limit_bytes?: number
+}
+
+export interface ClamdScanRow {
+  id: string
+  label: string
+  state: 'pending' | 'running' | 'passed' | 'failed'
+  detail: string | null
+  duration: number | null
+  verdict?: 'clean' | 'infected' | null
+  signature?: string | null
+  sha256?: string
+  bytes?: number
+  result_file?: string | null
+}
+
+/** A ClamAV submission polled through the shared job endpoint. */
+export interface ClamdSubmitJob extends Omit<AnalyzerBuildJob, 'results' | 'kind'> {
+  kind?: 'clamd'
+  mode?: 'sftp' | 'tcp'
+  results?: ClamdScanRow[]
+}
+
 
 export interface ClamdResults {
   present: boolean
@@ -716,6 +855,10 @@ export interface QilingGuestMetrics {
   }
   disk: { total_bytes: number | null; used_bytes: number | null; free_bytes: number | null; percent: number | null }
   uptime_seconds: number | null
+  /** When vmmetrics' background collector sampled the guest, unix seconds. */
+  collected_at?: number | null
+  /** Seconds since that sample - the card is served from cache. */
+  age_seconds?: number | null
   error?: string
 }
 
@@ -1246,6 +1389,66 @@ export interface BuildConfiguration {
   cache_path?: string
 }
 
+/** One protection, as the settings file offers it. */
+export interface BuildHardeningOption {
+  key: string
+  label: string
+  summary: string
+  detail: string
+  /** What the analyzer gets when the settings file says nothing. */
+  default: boolean
+  /** The effective value - the file's, or the default when it is silent. */
+  enabled: boolean
+  /** The CMake option that carries this into the configure step. */
+  cmake: string
+  /** How the protection shows up in the binary. */
+  pe_label: string
+}
+
+export interface BuildHardeningSnapshot {
+  /** Repo-relative, so the page never shows an absolute path it cannot share. */
+  path: string
+  exists: boolean
+  options: BuildHardeningOption[]
+  settings: Record<string, boolean>
+  /** A malformed file is reported here rather than silently defaulted away. */
+  error: string | null
+}
+
+/** One protection, requested against present. */
+export interface BuildHardeningRow {
+  key: string
+  label: string
+  pe_label: string
+  requested: boolean
+  present: boolean
+  /** requested === present. Turning a protection OFF deliberately is compliance. */
+  ok: boolean
+  detail: string
+}
+
+export interface BuildHardeningCompliance {
+  available: boolean
+  /** Why there is no report: not built yet, or not a PE this parser reads. */
+  reason?: string
+  binary?: string
+  format?: string
+  /** The raw DllCharacteristics word the three header bits were read from. */
+  dll_characteristics?: number
+  settings: Record<string, boolean>
+  settings_error: string | null
+  rows: BuildHardeningRow[]
+  /** null when nothing could be compared; false means rebuild. */
+  compliant: boolean | null
+  note: string
+}
+
+/** Both halves in one payload: what is asked for, and what the binary carries. */
+export interface BuildHardening {
+  settings: BuildHardeningSnapshot
+  compliance: BuildHardeningCompliance
+}
+
 export interface BuildInspect {
   provenance: BuildProvenance
   freshness: BuildFreshness
@@ -1299,6 +1502,12 @@ export interface SbomState {
   by_origin?: Record<string, number>
   by_language?: Record<string, number>
   unresolved?: string[]
+  /**
+   * The same list with what each component actually does. A bare name is the
+   * thing this exists to stop being - "gnurx" is not a hint, and "POSIX regexp
+   * compatibility library shipped with the UCRT" is.
+   */
+  unresolved_details?: { name: string; description: string }[]
   cyclonedx_bytes?: number
   cyclonedx_present?: boolean
   last_commit?: string | null
@@ -1309,18 +1518,38 @@ export interface SbomState {
 export interface MalapiState {
   available: boolean
   reason?: string | null
-  path?: string
-  remote?: string | null
-  branch?: string | null
-  commit?: string | null
-  short?: string
-  commit_date?: string | null
-  dirty?: boolean
-  dirty_count?: number
-  ahead?: number | null
-  behind?: number | null
-  up_to_date?: boolean
-  can_update?: boolean
+  /**
+   * MalAPI rules are a mirror of malapi.io, not a git checkout, so there is no
+   * ahead/behind and nothing to call "up to date". A blocked refresh is a stale
+   * httrack lock or a missing mirror tool, not local edits.
+   */
+  blocked?: boolean
+  blocked_reason?: string | null
+  source?: string
+  mirror_path?: string
+  /** Age of the newest scraped page, in days. */
+  mirror_age_days?: number | null
+  yaml_path?: string
+  yaml_count?: number
+  /** Age of the newest generated API definition, in days. */
+  yaml_age_days?: number | null
+  server_path?: string
+  /** The generated API predates the mirror, so the analyzer serves stale rules. */
+  generated_stale?: boolean
+  httrack?: boolean
+  lock?: { path: string; age_days: number; age_minutes: number; stale: boolean } | null
+  /**
+   * memtt/malt, reported under its real name. It is the MalAPI tool, not the
+   * rules; nothing the analyzer runs links it.
+   */
+  malt_tool?: {
+    path: string
+    commit?: string | null
+    short?: string
+    remote?: string | null
+    used_by_analyzer: boolean
+    note: string
+  } | null
   note?: string
 }
 
@@ -1342,6 +1571,9 @@ export interface YaraState {
   update_reason?: string
   compiler?: string | null
   yara_version?: string | null
+  /** Persisted in config/yara_check.json by the backend when the checkbox in
+   *  the card is ticked; yara() reports what the last run left there. */
+  ignore_compile_failures?: boolean
   note?: string
 }
 
@@ -1366,10 +1598,38 @@ export interface YargenState {
   note?: string
 }
 
+export interface EagleArtifact {
+  name: string
+  exists: boolean
+  path: string
+  bytes: number | null
+  modified: number | null
+}
+
+export interface EagleState {
+  ok: boolean
+  ready: boolean
+  available: boolean
+  repo: string
+  repo_exists: boolean
+  preset: string
+  build_dir: string
+  build_dir_exists: boolean
+  toolchain: {
+    vcvars64: string | null
+    cmake: string | null
+    ninja: string | null
+  }
+  artifacts: Record<string, EagleArtifact>
+  missing: string[]
+  reason: string | null
+  note: string
+}
+
 export interface UtilEntry {
   id: string
   label: string
-  utility: 'sbom' | 'malapi' | 'yara' | 'yargen'
+  utility: 'sbom' | 'malapi' | 'yara' | 'yargen' | 'eagle'
   description: string
   effects: string[]
   available: boolean
@@ -1383,6 +1643,7 @@ export interface UtilsOverview {
   malapi: MalapiState
   yara: YaraState
   yargen: YargenState
+  eagle: EagleState
 }
 
 export interface BuildArtifacts {
@@ -1448,6 +1709,352 @@ export interface BuildJobsState {
   script: string
   script_found: boolean
 }
+
+/**
+ * The packed verdict for one sample (python/panel/pe_tools.pack_verdict).
+ * Computed server-side, always - the page displays it, the run gate re-derives
+ * it; nothing here is ever sent back as a claim about a file.
+ */
+export interface SamplePackedVerdict {
+  packed: boolean
+  /**
+   * "upx" when packer markers were found in the file (a fact), "entropy" when
+   * only the whole-file entropy threshold fired (the analyzer's own
+   * IA_INTERRUPT_ENTROPY number), null when the file reads as unpacked.
+   */
+  method: 'upx' | 'entropy' | null
+  /** The facts behind the verdict, in a sentence, for the alert. */
+  evidence: string
+  /** Whole-file entropy in bits/byte, as measured. */
+  entropy?: number
+  /** Present only when the file could not be read for a verdict. */
+  error?: string
+}
+
+/**
+ * The analyzer's OWN packed tripwire, read from config/analysis.yaml
+ * (IA_INTERRUPT_IF_PACKED). Reported, never written by the page: the panel
+ * gate stops a packed run BEFORE the spawn, this key stops it INSIDE the
+ * analyzer at the histogram phase - so with it on, overriding the panel gate
+ * only buys a run the analyzer kills mid-flight. The page says so rather than
+ * letting the operator find out from a truncated log.
+ */
+export interface AnalyzerPackedStop {
+  key: string
+  /** Whether the key is explicitly set in config/analysis.yaml. */
+  present: boolean
+  /** The value as written there, or null when absent. */
+  value: string | null
+  /**
+   * What the analyzer will do: only 1/true/yes/on read as enabled (the C++
+   * env_flag semantics); absent falls back to the binary default, which is
+   * off for this key.
+   */
+  enabled: boolean
+}
+
+/** One executable under a sample root, as listed by GET /api/build/samples. */
+export interface SampleFile {
+  name: string
+  /** Repo-relative path, which is what the picker and the run gate exchange. */
+  relative: string
+  bytes: number
+  modified: number
+}
+
+/**
+ * GET /api/build/samples — the Run a pipeline picker's choices. Metadata only:
+ * the selected file is inspected separately because a packed verdict reads the
+ * whole file.
+ */
+export interface SampleListing {
+  ok: boolean
+  files: SampleFile[]
+  /** Server-side cap for POST /api/build/samples/upload. */
+  upload_max_bytes: number
+}
+
+/**
+ * POST /api/build/samples/upload — an operator's own executable admitted into
+ * samples/ after the name rules, size cap and clamd scan. Refusals are
+ * payloads with a machine-readable `code`, so the page can offer the explicit
+ * unscanned retry only for `scan-unavailable`.
+ */
+export interface SampleUploadResult {
+  ok: boolean
+  code?: string
+  error?: string
+  detail?: string
+  file?: SampleFile
+  sha256?: string
+  scan?: {
+    verdict?: 'clean' | 'infected' | 'unavailable'
+    signature?: string | null
+    error?: string
+    seconds?: number
+  }
+}
+
+/**
+ * POST /api/build/samples/inspect — a typed sample path, validated with the
+ * same rules the run gate applies and described: resolved path, size, mtime,
+ * packed verdict. A refusal is `ok: false` with the rule's sentence.
+ */
+export interface SampleInspect {
+  ok: boolean
+  path?: string
+  relative?: string
+  bytes?: number
+  modified?: number
+  packed?: SamplePackedVerdict | null
+  /** State of the analyzer's own mid-run packed stop, so the override's cost
+      is known before it is taken. */
+  analyzer_packed_stop?: AnalyzerPackedStop | null
+  error?: string
+}
+
+/**
+ * One pipeline run from the Build page's "Run a pipeline" section
+ * (python/panel/pipeline_run.py). Its own endpoint and its own job store, not
+ * the build one: a run is a long analysis work item rather than a compile, and
+ * the runner keeps it separate so neither page's poll can mistake the other
+ * job for its own.
+ */
+export interface PipelineRunState {
+  id: string
+  /**
+   * `stopped` is separate from `failed` on purpose: a run ended by its duration
+   * limit or by the Stop button exits non-zero, and reporting that as a failure
+   * would blame the analyzer for a decision the panel made.
+   */
+  state: 'running' | 'done' | 'failed' | 'error' | 'stopped'
+  /** The pipeline as requested, echoed. */
+  pipeline: string
+  /** The resolved absolute sample path. */
+  sample: string
+  started_at: number
+  finished_at: number | null
+  exit_code: number | null
+  /** Non-null when the child exited non-zero; names the exit code. */
+  error: string | null
+  command: string
+  log_line_count: number
+  /** How many lines were dropped from the head, per build.py's arithmetic. */
+  log_dropped?: number
+  /** Lines kept by the cap, in order. */
+  log: string[]
+  /** The limit the run was started with, or null for unbounded. */
+  duration_sec?: number | null
+  /** Epoch seconds at which the watchdog will kill the run, or null. */
+  deadline?: number | null
+  /** True when the duration limit is what ended the run. */
+  timed_out?: boolean
+  /** The packed verdict the run gate recorded at start, on the job so a live
+      run can be labelled rather than only a refused one. */
+  packed?: SamplePackedVerdict | null
+}
+
+// --- Sample factory (python/panel/sample_factory.py) -----------------------
+
+/** One preset bundle of checkboxes; the checkboxes still compose on top. */
+export interface SampleTemplate {
+  id: string
+  language: 'c' | 'cpp'
+  features: string[]
+  label: string
+  description: string
+}
+
+export interface SampleFactoryCatalog {
+  languages: string[]
+  /** Checkbox names valid per language, so the UI can hide the others. */
+  features: Record<string, string[]>
+  feature_notes: Record<string, string>
+  /** Resource-backed features that exist but cannot run right now, with the
+   *  sentence that says why. Rendered disabled rather than hidden, so the
+   *  vocabulary does not change silently between visits. */
+  feature_unavailable: Record<string, string>
+  /** Current size of each resource pool: ip, domain. */
+  pools: Record<string, number>
+  templates: SampleTemplate[]
+  custom_id: string
+  compiler: { ok: boolean; gcc?: string; sysroot?: string; error?: string; detail?: string }
+  /** The in-tree UPX, or the sentence saying why packing is refused. */
+  upx: { ok: boolean; path?: string; error?: string; detail?: string }
+  /** The in-tree EagleVM, or the sentence saying why virtualisation is refused. */
+  eagle: EagleState
+  /** Encoding id -> the sentence the select shows beside it. */
+  encodings: Record<string, string>
+  /** Upper bound on the sleep the operator may ask for, in seconds. */
+  sleep_max: number
+}
+
+/** The composer knobs that map onto CodeFactory's own parameters. */
+export interface SampleShapeOptions {
+  /** Blocks passed to create_math_ops_c. */
+  n_math: number
+  /** Variables passed to create_random_vars (the loop's independent pool). */
+  n_vars: number
+  /** generate_for_loop count_to; 0 lets the backend draw one. */
+  loop_count: number
+  /** generate_for_loop step. */
+  loop_step: number
+  /** generate_for_loop break index; omitted lets the backend draw one. */
+  loop_break_at?: number
+  /** Number of instructions drawn via gen_instruction for the loop body. */
+  instruction_count: number
+  /** create_malloc_pointer size used by the fault archetypes. */
+  alloc_size: number
+  /** create_double_free_issues free count. */
+  n_frees: number
+}
+
+export interface SamplePreview {
+  ok: boolean
+  language: string
+  template: string | null
+  features: string[]
+  code: string
+  /** Present when the noise checkbox is on: the exact IP/domain Generate plants. */
+  noise?: { ip: string; domain: string } | null
+  /** Every value drawn from a resource pool, and the source it came from. */
+  resources?: SampleResourceUse[]
+  /** The encoding the resource-backed IOCs were composed with. */
+  encoding?: string
+  sleep_seconds?: number
+  /** The 32-bit draw seed; send it back to Generate to replay this exact sample. */
+  seed?: number
+  /** The CodeFactory knobs the source was composed from (loop_break_at null means auto). */
+  shape?: SampleShapeOptions & { loop_break_at: number | null }
+  error?: string
+}
+
+export interface SampleGenerated {
+  ok: boolean
+  source?: string
+  exe?: string
+  bytes?: number
+  noise?: { ip: string; domain: string } | null
+  code?: string
+  log?: string
+  /** The exact compiler argv, so the Output panel can show what ran. */
+  command?: string
+  /** samples/<name>.mk when the Makefile checkbox was on. */
+  makefile?: string | null
+  resources?: SampleResourceUse[]
+  encoding?: string
+  sleep_seconds?: number
+  seed?: number
+  /** The CodeFactory knobs the artefact was composed from. */
+  shape?: SampleShapeOptions & { loop_break_at: number | null }
+  /** Present when UPX ran: the two sizes and the resulting ratio. */
+  packed?: { before: number; after: number; ratio: number | null } | null
+  /** Present when Instruction Virtualisation ran: the source and result names. */
+  virtualized?: { from: string; to: string; log: string } | null
+  flags?: { upx: boolean; virtualize: boolean; makefile?: boolean }
+  error?: string
+  detail?: string
+}
+
+/**
+ * One sampled value and the GitHub source it came from (sample_factory's
+ * `_draw_dynamic`). `value` is the plaintext even when the generated source
+ * carries it encoded, because this is what the operator recognises.
+ */
+export interface SampleResourceUse {
+  feature: string
+  kind: SampleResourceKind
+  id: string
+  label: string
+  value: string
+  /** How the source stores it: plain, rot13, xor, base64 or chained. */
+  encoding?: string
+}
+
+export type SampleResourceKind = 'ip' | 'domain' | 'url' | 'hash'
+
+/**
+ * One GitHub file the factory's pools draw from
+ * (python/panel/sample_resources.py). `current` is false when the cached values
+ * were fetched for an older URL or kind - they are shown but not sampled.
+ */
+export interface SampleResource {
+  id: string
+  label: string
+  kind: SampleResourceKind
+  /** The normalised URL the panel actually fetches (github.com /blob/ becomes raw). */
+  url: string
+  enabled: boolean
+  note: string
+  added_at: number | null
+  fetched_at: number | null
+  count: number
+  preview: string[]
+  invalid: number
+  duplicates: number
+  truncated: boolean
+  bytes: number
+  current: boolean
+  /** Repo-relative path of the raw dump in ressources/, when one was saved. */
+  dump: string | null
+  last_error: string | null
+  last_error_at: number | null
+}
+
+export interface SampleResourceKindInfo {
+  kind: SampleResourceKind
+  label: string
+  detail: string
+  format: string
+  /** The factory checkbox this kind feeds: iocs. */
+  feature: string
+  /** Values from enabled resources with a current cache. */
+  pool_size: number
+  resources: SampleResource[]
+}
+
+export interface SampleResourceFeature {
+  available: boolean
+  reason: string | null
+  needs: SampleResourceKind[]
+}
+
+export interface SampleResourcesSnapshot {
+  path: string
+  /** The repo directory the raw dumps and parsed values are kept in. */
+  dump_dir: string
+  exists: boolean
+  /** Set when the definitions file exists but could not be read. */
+  error: string | null
+  kinds: SampleResourceKindInfo[]
+  pools: Record<SampleResourceKind, number>
+  features: Record<string, SampleResourceFeature>
+  limits: {
+    max_bytes: number
+    max_entries: number
+    max_resources: number
+  }
+}
+
+/** Every mutating resources endpoint returns the fresh snapshot, so a write
+ *  and the page's state cannot drift between two requests. `refresh` on an add
+ *  or refresh call describes that fetch, not whether the resource exists. */
+export interface SampleResourcesMutation extends SampleResourcesSnapshot {
+  ok: boolean
+  added?: string
+  refresh?: {
+    ok: boolean
+    error?: string
+    count?: number
+    invalid?: number
+    duplicates?: number
+    truncated?: boolean
+    fetched_at?: number
+    source?: string
+  }
+}
+
+
 
 export interface BuildOverview {
   toolchain: ToolchainReport

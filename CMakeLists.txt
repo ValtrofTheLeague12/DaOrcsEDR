@@ -32,6 +32,36 @@ option(STATIC_ANALYZER_USE_MEGA_SDK
     OFF
 )
 
+# ---------------------------------------------------------------------------
+# Windows binary hardening.
+#
+# Four protections, each ON by default because MinGW's linker already turns
+# the first three on and the compiler already supports the fourth. The point
+# of the options is that the INTENT is recorded: build-ucrt/CMakeCache.txt then
+# says which protections this tree was configured for, and the panel compares
+# that against what the finished PE header actually carries.
+#
+# The settings live in config/hardening.json, which build.ps1 reads and the
+# panel writes, so a build started from the panel and a build started from a
+# terminal produce the same binary. See python/panel/hardening.py.
+# ---------------------------------------------------------------------------
+option(STATIC_ANALYZER_HARDENING_ASLR
+    "Relocate the image at load time (IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE)"
+    ON
+)
+option(STATIC_ANALYZER_HARDENING_HIGH_ENTROPY_VA
+    "Relocate across the full 64-bit address space (IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA)"
+    ON
+)
+option(STATIC_ANALYZER_HARDENING_DEP_NX
+    "Mark the stack and heap non-executable (IMAGE_DLLCHARACTERISTICS_NX_COMPAT)"
+    ON
+)
+option(STATIC_ANALYZER_HARDENING_STACK_PROTECTOR
+    "Check a canary on every protected stack frame (-fstack-protector-strong)"
+    ON
+)
+
 find_package(LIEF CONFIG REQUIRED
     HINTS "C:/msys64/ucrt64/lib/cmake/LIEF"
 )
@@ -684,6 +714,47 @@ target_compile_options(static_analyzer PRIVATE
     -g
     -Wall -Wextra -Wpedantic
 )
+
+# ---------------------------------------------------------------------------
+# Windows binary hardening, applied to the analyzer.
+#
+# The three PE-header protections are LINK flags: they set the
+# IMAGE_DLLCHARACTERISTICS_* bits that Windows itself reads. The enable forms
+# are written out explicitly even though the MinGW specs already default them
+# on, because "the toolchain defaults to it" is not the same claim as "this
+# build asked for it" - and a build that quietly loses a protection because a
+# toolchain changed its default is exactly what the settings file exists to
+# prevent.
+#
+# The stack protector is a COMPILE flag and leaves no header bit behind. It is
+# detected in the finished binary by the canary runtime being linked in, which
+# is a weaker signal than the other three and is reported as such.
+# ---------------------------------------------------------------------------
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    if(STATIC_ANALYZER_HARDENING_ASLR)
+        target_link_options(static_analyzer PRIVATE -Wl,--dynamicbase)
+    else()
+        target_link_options(static_analyzer PRIVATE -Wl,--disable-dynamicbase)
+    endif()
+
+    if(STATIC_ANALYZER_HARDENING_HIGH_ENTROPY_VA)
+        target_link_options(static_analyzer PRIVATE -Wl,--high-entropy-va)
+    else()
+        target_link_options(static_analyzer PRIVATE -Wl,--disable-high-entropy-va)
+    endif()
+
+    if(STATIC_ANALYZER_HARDENING_DEP_NX)
+        target_link_options(static_analyzer PRIVATE -Wl,--nxcompat)
+    else()
+        target_link_options(static_analyzer PRIVATE -Wl,--disable-nxcompat)
+    endif()
+endif()
+
+if(STATIC_ANALYZER_HARDENING_STACK_PROTECTOR)
+    target_compile_options(static_analyzer PRIVATE -fstack-protector-strong)
+else()
+    target_compile_options(static_analyzer PRIVATE -fno-stack-protector)
+endif()
 
 set_source_files_properties(
     ${CMAKE_SOURCE_DIR}/src/core/trace.cpp

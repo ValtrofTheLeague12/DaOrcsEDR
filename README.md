@@ -31,7 +31,7 @@ hundred lines. Start at **[docs/README.md](docs/README.md)**.
 | [Getting started](docs/getting-started.md) | Invoking it, running the analyzer, the Python API server |
 | [Pipelines and analysis phases](docs/pipelines-and-phases.md) | The phase catalog, format detection, validation |
 | [Evidence bundles, encryption and output](docs/evidence-and-encryption.md) | What is written, and what happens before anything leaves |
-| [Admin console](docs/admin-console/README.md) | The web UI, in six pages — overview, networking, artifacts, analysis configuration, build identity, utils |
+| [Admin console](docs/admin-console/README.md) | The web UI — overview, networking, artifacts, analysis configuration, pipelines configuration, build identity, utils |
 | [Qiling analysis VM](docs/qiling-vm.md) | The emulated VM and its rootfs |
 | [Failure handling and recovery](docs/failure-and-recovery.md) | Exit codes, stopping and resuming a run, faults |
 | [Results](docs/results.md) | HTML dashboard, STIX/ATT&CK, assembly collection |

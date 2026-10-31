@@ -4,200 +4,152 @@
 
 #### Analysis configuration
 
-`GET /api/analysis/config` reads the two files that decide what an analysis run
-does, and shows them as the analyzer itself understands them:
+The machine-wide layer: `config/analysis.yaml`, the file that decides what an
+analysis does on *this* machine regardless of which pipeline is selected. The
+per-pipeline layer is a different page —
+[Pipelines Configuration](pipelines-configuration.md) — and the two never offer
+the same key.
 
-- **`pipelines/*.yaml`** — every named pipeline: description, stages, declared
-  phases, `environment:` exports, and the raw file with PyYAML-coloured YAML.
-- **`config/artifacts.yaml`** — `store_artifact`, `upload_artifacts` (the MEGA
-  upload), `remote_root`, `timeout_seconds`, and the `mega/upload.py` uploader
-  the analyzer resolves alongside them.
+`GET /api/analysis/settings` reads the file; `PUT /api/analysis/settings` writes
+it. Both are the panel's own pair of routes for this one file, alongside the
+pipeline page's four.
 
-**Declared phases and run order are shown separately, because they differ.** The
-planner inserts a prerequisite immediately before the phase that needs it, and
-appends `export` and `summary` when a config omits them, so `quick.yaml` — three
-phases on disk — runs five. Inserted phases are drawn dashed with a `+`, which
-is the difference between reviewing a config and running it.
+## Why the two layers are not equal
 
-**The phase catalog is the analyzer's, not a copy.** Which names a pipeline may
-use comes from the analyzer's own `GET /phases`, cached in `server.py` from
-`static_analyzer --list-phases --json`. That is what turns the page into a check:
-a phase name the binary does not know is an exit code 2, and a pipeline naming
-one is listed as *rejected* with the reason attached rather than silently
-omitted. The same rules are applied to `config/artifacts.yaml`, whose loader
-accepts exactly four keys and rejects the rest. With the analyzer down the
-catalog is absent, the phase check is skipped, and the page says *analyzer
-offline — names unvalidated* rather than validating against a list that may be
-out of date.
+```
+binary default  <  .env / shell  <  pipeline `environment:`  <  config/analysis.yaml
+```
 
-`environment:` values whose name looks like a credential are masked before they
-leave the process, using the same rules `redact::is_secret_name()` applies
-(`src/core/redact.cpp`). A pipeline that exports a CTI key can be reviewed here
-without the console becoming the place the key is written down.
+The analyzer applies this file **after** the selected pipeline
+(`apply_environment()` then `apply_analysis_settings()` in `main.cpp`), so a key
+set here is not outvoted by a pipeline that pins the same one.
 
-#### Options the console can write
+That inversion is the reason the file exists at all. The settings were
+per-pipeline first, and that turned out to be the wrong shape: `pipelines/
+default.yaml` shipped `ML_SKIP: 1` and `CTI_SKIP: 1`, so the default analysis
+silently never ran the model or the enrichment — decided by nobody, in a place
+designed for per-run differences, and unreachable from the environment.
 
-Four routes write, and they are the only routes in the panel that change a file
-the analyzer reads:
+The consequence for this page is that a key set here is **final** for that key.
+A pipeline can still set anything this file does not mention, which is how a
+one-off run turns CTI on for an investigation and off again afterwards, but a key
+it *does* mention cannot be overridden from there. See
+[a key belongs to one layer](pipelines-configuration.md#a-key-belongs-to-one-layer).
 
-| route | writes | notes |
-| --- | --- | --- |
-| `POST /api/analysis/artifact-options` | the four keys in `config/artifacts.yaml` | only the keys in the body |
-| `POST /api/analysis/pipeline/environment` | `environment:` in one pipeline | a flag set false *removes* the key |
-| `POST /api/analysis/pipeline/rush` | the phase lists in one pipeline | reversible; see below |
-| `POST /api/analysis/pipeline` | a new `pipelines/<name>.yaml` | never overwrites |
+## "Not set" is a third state
 
-Three properties hold for all of them, and they are what make a toggle on a
-config file safe to offer at all:
+A toggle reads as on/off, and that is the trap. Absent is not off:
 
-- **The text is edited, not the parse tree.** A key is replaced in place, so the
-  comments in `config/artifacts.yaml` — which are the file's documentation —
-  survive byte for byte. PyYAML's round trip would strip them.
-- **The result is validated before it lands.** The edited text is re-parsed with
-  the same loader the analyzer uses and checked against the analyzer's own rules.
-  An edit that would not parse, or that names a phase the binary does not know,
-  is refused and the file is left alone.
-- **Nothing arbitrary crosses the wire.** Only allowlisted keys with typed
-  values; which file, which key and what counts as valid are never taken from the
-  request.
+| state | what a run does |
+| --- | --- |
+| set here | this value, for every run, overriding the pipeline |
+| not set here | the pipeline's value, else `.env` / shell, else the binary default |
+| set here to `false` | **not** the pipeline's value — an explicit global off |
 
-Line endings and a BOM are preserved per file, because a save that rewrote CRLF
-as LF would show as a whole-file change in every diff — including the case where
-the edit was a no-op.
+So every control states which of the three it is, and clearing is a real action
+with its own button — *Follow the pipeline* on a flag, *Clear* on a value.
+Writing `false` is not the same as clearing, and the difference is the whole
+reason the third state is shown rather than inferred.
 
-#### Only options the analyzer actually reads
+## The file
 
-The `environment:` controls are the ten variables the binary reads, each shown
-with the source line that reads it: `CTI_SKIP` (`phase_cti.cpp:36`), `ML_SKIP`
-(`main.cpp:291`), `ML_EXPLAIN` and `ML_THRESHOLD` and `ML_TOP_K`
-(`phase_ml.cpp:96-98`), `CTI_CONFIG` (`phase_cti.cpp:176`),
-`STATIC_ANALYZER_CURSES` (`main.cpp:219`), `IA_ALLOW_CORE_DUMP`
-(`resume.cpp:246`), `IA_CONTINUE_ON_SIGNAL` (`resume.cpp:246`) and `TRACE_FILE`
-(`trace.cpp:21`).
-That reference is rendered under each control on purpose: the panel is making a
-claim on the operator's behalf, so the claim should be checkable rather than
-trusted. An option nothing reads is not offered — a switch that does nothing is
-worse than no switch. Inherited defaults are displayed but not written: a
-pipeline that never mentions `ML_EXPLAIN` still gets SHAP, because that is the
-binary's default, and the file is left saying nothing about it until somebody
-changes it.
+```yaml
+# Precedence, lowest to highest:
+#     .env / shell   <   pipeline `environment:`   <   this file
+ML_SKIP: "1"
+CTI_SKIP: "1"
+ML_THRESHOLD: "0.7"
+```
 
-That claim is enforced, not just asserted.
-`unit/python/test_panel_env_options.py` walks `ENV_OPTIONS` and fails if a key
-appears nowhere under `src/` or `include/`, if a `honoured_by` reference points
-at a line that does not exist, or if a control is offered for a key the binary
-ignores. Adding a checkbox therefore cannot outrun the code that reads it.
+An **unknown key is a startup error, not a warning** — exit code 2, before any
+work happens. Silently ignoring one would leave an operator who mistyped `ML_SKP`
+believing they had skipped the model. The console reports such a key in a red
+alert on this page, and refuses to delete it on a save: the analyzer's refusal is
+its call to make, and the panel's job is to say why the next run will not start.
 
-The last two are read once in `main.cpp`, in the narrow window after
-`apply_environment()` has put the pipeline's `environment:` block into the
-process and before the handlers are installed. Both are off by default.
+Only the keys the analyzer actually reads are accepted, and the console only
+offers those nineteen — the same list, described once and checked by
+`unit/python/test_panel_env_options.py`, which fails if the panel and the C++
+loader ever drift apart.
 
-`IA_ALLOW_CORE_DUMP` goes to `crash::install()` and widens the dump written when
-the process dies. `IA_CONTINUE_ON_SIGNAL` goes to `resume::install()`'s module
-instead, because it is about the pipeline rather than about a fault: with it set,
-the first Ctrl+C is absorbed and the run carries on to the next phase, and only
-a second one stops it. [Failure handling](../failure-and-recovery.md#carrying-on-when-the-run-is-interrupted)
-explains both, and why the second interrupt is still honoured.
+The nineteen arrive on this page grouped to match what they decide: the
+phase-scoped CTI/ML keys, the process behaviour flags and values (curses, core
+dumps, interrupt handling, the trace file and its `ENABLE_TRACING` hard-off,
+the `IA_INTERRUPT_IF_PACKED` tripwire with its entropy threshold), and a
+**MEGA upload and sealing** section of its own - the six keys that used to live
+only in `config/artifacts.yaml`. That file keeps working, but where one of the
+six is set here it wins, and the analyzer's log names which file decided. A
+third card, **Evidence bundle**, holds the one artifact option that never
+migrated: `store_artifact` - deliberately file-only, because building a local
+bundle is not a per-machine transfer decision - edited through the artifact
+writer the other page keeps.
+
+Where a setting is decided is one question, so the whole upload decision lives
+on this page and nowhere else: the Pipelines Configuration page removed its
+upload tab rather than keep a second set of controls that could quietly
+disagree with this one.
 
 A name that looks like a credential is refused outright, even before the
 allowlist: the vault and `.env` are where those belong, and a browser form is
 not.
 
-#### Phase rush
+## Editing it
 
-`phase_rush` is triage — run the cheap local phases and drop the ones that
-dominate wall clock on a shared box: `radare2`, `graphs`, `xref`, `capa`,
-`cminer`, `recovery`, `hexdump`, `cti` and `model`. `extraction` is deliberately
-kept: it is fast, it produces the carved blob inventory, and dropping it would
-silently change the report for every run that did not ask for rush.
+The same three properties the pipeline writer holds to, because they are what
+make a toggle on a config file safe to offer at all:
 
-Applying it records each original list as a comment directly above the list it
-trimmed:
+- **The text is edited, not the parse tree.** This file's comments explain the
+  precedence — stripping them on the first save would leave the next person to
+  edit it with no idea which way the layering goes.
+- **The result is validated before it lands**, with the same rules the analyzer
+  applies. A save that would produce a config the analyzer refuses is refused,
+  and the file is left alone.
+- **Only the keys sent are touched**, so two people editing different settings
+  cannot clobber each other by submitting a stale copy of the whole form.
 
-```yaml
-  - name: threat-intel
-    # phase-rush: [cti]
-    phases: []
-```
+Line endings and a BOM are preserved per file, because a save that rewrote CRLF
+as LF would show as a whole-file change in every diff — including when the edit
+was a no-op.
 
-That marker is what makes undoing it exact rather than a guess — no needing the
-panel to remember which stage a phase belonged to — and what explains an empty
-stage to whoever reads the YAML next, where a mysteriously empty stage would not.
-The round trip is byte-identical on a file this panel did not otherwise change.
-Two cases are refused rather than half-applied: a pipeline with none of the slow
-phases (nothing to remove), and a one-phase pipeline that consists *only* of slow
-phases (nothing would be left to run).
+## The hardening and bundle cards do not edit this file
 
-Only inline `phases: [...]` lists are edited. A pipeline written with block-style
-lists is refused with an explanation rather than rewritten blind.
+The page also carries two cards that are *not* `config/analysis.yaml`:
 
-#### Authoring
+- **Evidence bundle** edits `store_artifact` in `config/artifacts.yaml` — a
+  run-time file read by `load_artifact_options()`, and the one artifact key
+  with no MEGA twin.
+- **Hardening** edits `config/hardening.json` — the four compiler protection
+  switches — and its values reach a build, not a run.
 
-The **New pipeline** tab builds one from the analyzer's own phase catalog, so the
-admin picks from exactly the set the binary will accept — a name that is not in
-that catalog is an exit code 2, and this is where that is worth catching. The
-steps are not a hardcoded list; they arrive from `GET /phases`, which the
-analyzer serves from `--list-phases --json`.
+Both are here because they answer the same standing question the rest of the
+page does (*how is this machine's analysis configured?*). See
+[build.md § Binary hardening](build.md#binary-hardening) for the hardening
+settings themselves and the requested-vs-present comparison.
 
-Order *is* the pipeline, so the selection is a numbered list with move up/down
-rather than a set, and "Recommended order" restores the catalog's own order —
-the classic 27-phase order, which is the one ordering known to work end to end.
-**Triage preset** fills the selection with everything phase-rush does not drop,
-because "run it fast" is a question with a known answer on this page.
+Two consequences worth stating, because the files are easy to conflate:
 
-The wizard shows the **resolved** run order while you build, not just the
-selection: picking `hexdump` shows `extraction` being inserted before it and
-`export`/`summary` appended, so a list of three steps that runs six is visible
-rather than a surprise. The same closure the planner performs is shown on the
-client for the preview and recomputed server-side for the file — the preview is
-a convenience, the saved file is authoritative.
+- A hardening change takes effect at the **next build**. Nothing on this page
+  changes a run already in progress, and nothing on the hardening card changes
+  a run at all.
+- Clearing a key here hands it back to **Pipelines Configuration**. That rule
+  covers `analysis.yaml` and `artifacts.yaml` keys only; the hardening switches
+  have no second location to fall back to, and are simply on or off.
 
-Options the admin sets are written into `environment:`; options left alone are
-omitted entirely, because a block full of defaults is noise that has to be
-re-read every time the file is opened. Descriptions are emitted as
-double-quoted scalars and comments are stripped of `#`, because free text typed
-into a browser box otherwise produces YAML that does not parse. An existing name
-is refused rather than overwritten, because an existing pipeline is someone's
-work. Running a pipeline stays a CLI action for the same reason as everywhere
-else on this console.
+## Where it is read
 
-#### Generating YARA rules (`yara_gen`)
+Once at startup, by `src/main/analysis_config.cpp`, searching `config/` beside
+the working directory, then beside the executable, then one level above it — the
+same search shape `config/artifacts.yaml` uses, so a packaged build finds the
+config it shipped with.
 
-`yara` and `yara_gen` answer opposite questions, and the names are easy to
-conflate:
+Changes apply to the **next** run. A run already in progress has read them.
 
-* **`yara`** — does this sample match a rule that already exists?
-* **`yara_gen`** — what rule *would have* caught it?
+### One gap worth knowing about
 
-The packs in `yara-rules/` are last year's malware. `yara_gen` is how the next
-one gets written, using [yarGen-Go](https://github.com/Neo23x0/yarGen-Go).
-
-It is a **phase, opt-in per pipeline**, so the choice is the checkbox in the
-**New pipeline** wizard. It is deliberately never auto-inserted and never in a
-default pipeline: it takes 100s+ on a small sample, it needs a tool nothing else
-depends on, and its output is a rule set an analyst still has to review. What it
-generates is written to `yara_gen/<stem>_generated.yar` beside the other
-artifacts, and `run_summary.json` records the count, the author, whether the
-LLM pass ran, and `"reviewed": false`.
-
-It works with **no API key**. yarGen refuses to start without
-`yarGen-Go/config/config.yaml`, which is only an LLM key holder, so the wrapper
-passes `-no-llm` when there is no config and says so in the output. Rules are
-still generated from strings and opcodes; only the LLM enrichment is lost, and
-`llm_used: false` in the manifest records that they are weaker than the tool can
-produce.
-
-Two things the wrapper handles that are not obvious:
-
-**yarGen resolves `./dbs` relative to the working directory**, not to its own
-location. Run it from anywhere else and it reports
-`failed to read database directory ./dbs`, which reads like a missing download
-rather than the wrong directory. `python/yara_gen.py` pins the cwd.
-
-**Author and identifier are passed explicitly.** Left to its defaults yarGen
-writes `yarGen` as the author on every rule, and a rule set attributed to nobody
-is one nobody will maintain.
-
-Environment overrides: `YARGEN_PYTHON`, `YARGEN_TIMEOUT` (default 600s),
-`YARGEN_AUTHOR`, `YARGEN_IDENTIFIER`.
-
+`config/analysis.yaml` is not copied by the build. The POST_BUILD step in
+`CMakeLists.txt` copies `pipelines/`, `config/artifacts.yaml` and the `mega/`
+modules beside the executable, and `install()` does the same, but this file is in
+neither. Since a missing file is a silent no-op by design, a binary run from
+outside the source tree gets its pipelines and its artifact options and
+**no global settings at all** — and nothing says so, because "absent" is
+supposed to be quiet.

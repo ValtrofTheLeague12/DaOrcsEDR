@@ -17,9 +17,12 @@ So the precedence is inverted, and deliberately:
 
     .env / shell   <   pipeline `environment:`   <   config/analysis.yaml
 
-A pipeline can still set a key this file does not mention - that is how a
-one-off run turns CTI on for an investigation and off again afterwards - but a
-key this file does mention is not outvoted by a pipeline or a shell.
+A pipeline can still set a key this file does not mention - the analyzer reads
+its `environment:` block regardless of what this console offers - but the
+console no longer writes phase-scoped keys into pipelines at all: they are set
+here, machine-wide, because per-pipeline CTI and ML toggles are how pipelines
+ended up full of inert lines for phases they do not run. The run-wide options
+remain per-pipeline writable; that is what they are for.
 
 `ENV_OPTIONS` is shared with the per-pipeline writer deliberately: it is one
 list of the settings the analyzer reads, described once. The allowlist lives in
@@ -63,6 +66,74 @@ def _read_raw(path: Path) -> str:
         return ""
     except OSError as exc:
         raise OSError(f"could not read {path}: {exc}") from exc
+
+
+def _scalar_text(value: Any) -> str:
+    """A scalar as the file writes it, so the reader can match it to the YAML."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def set_values(repo: Path) -> dict[str, str]:
+    """What this file actually defines right now, as {key: value}.
+
+    Read on its own, without the ENV_OPTIONS decoration, because its callers are
+    the per-pipeline side asking "may I still set this key?" and the pipelines
+    page asking "what is it set to?". Both are answered by what is on disk, not
+    by what is available: a key nobody has set globally is free for a pipeline
+    to claim.
+
+    A file that cannot be parsed yields an empty map rather than raising. The
+    analyzer will refuse to start on it, and analysis.py's own snapshot already
+    reports the unreadable file - a collector that raised here would turn "show
+    me the config" into a 500 and hide the real error behind it.
+    """
+    raw = _read_raw(config_path(repo))
+    if not raw.strip():
+        return {}
+    try:
+        loaded = yaml.safe_load(raw)
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in loaded.items():
+        if not isinstance(key, str):
+            continue
+        if isinstance(value, (dict, list)):
+            # The analyzer refuses to start on a non-scalar, so there is nothing
+            # worth showing. The unknown-key alert on the global page is where
+            # that gets to complain about it.
+            continue
+        out[key] = _scalar_text(value)
+    return out
+
+
+def set_keys(repo: Path) -> set[str]:
+    """The keys this file defines. Membership only - see set_values()."""
+    return set(set_values(repo))
+
+
+def flag_enabled(repo: Path, key: str) -> dict:
+    """{key, present, value, enabled} for one flag, read with the ANALYZER's
+    own semantics rather than the panel's looser truthiness.
+
+    The C++ readers (env_flag in src/main/phase_extract.cpp:241, trace_enable
+    in src/core/trace.cpp:44) accept only 1/true/yes/on, and an absent key
+    means the binary's own default applies - which is OFF for
+    IA_INTERRUPT_IF_PACKED and ON for ENABLE_TRACING. `enabled` here mirrors
+    that, defaulting to the ENV_OPTIONS default, so a caller reporting "will
+    the analyzer do X" cannot disagree with the analyzer about its own file.
+    """
+    raw = set_values(repo).get(key)
+    if raw is None:
+        option = ENV_BY_KEY.get(key, {})
+        return {"key": key, "present": False, "value": None,
+                "enabled": bool(option.get("default", False))}
+    return {"key": key, "present": True, "value": raw,
+            "enabled": raw.strip().lower() in ("1", "true", "yes", "on")}
 
 
 def snapshot(repo: Path) -> dict[str, Any]:

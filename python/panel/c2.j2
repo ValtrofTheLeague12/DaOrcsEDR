@@ -1,0 +1,12 @@
+{{ comment|default('') -}}
+{% if imports %}{% for i in imports %}{{ i }}
+{% endfor %}{% endif %}
+{% if helpers %}{{ helpers }}
+{% endif %}{% for function in functions|default([]) %}{{ function }}{% endfor %}
+int main({{ main_args|default('') }}) {
+{% if vars %}{% for i in vars %}    {{ i }}
+{% endfor %}{% endif %}{% for call in function_calls|default([]) %}    {{ call }};
+{% endfor %}{% if print_vals|default(false) %}{% for i in variable_name|default([]) %}    printf("IOC : %s\n", {{ i }});
+{% endfor %}{% endif %}{% if add_sleep_time|default(false) %}    sleep({{ random.randint(0, 10) * 10000 }});
+{% endif %}    return EXIT_SUCCESS;
+}

@@ -388,7 +388,7 @@ function TopologyDiagram({ data }: { data: NetMap }) {
             Follow each arrow from the host through interfaces and networks to its nodes.
           </p>
         </div>
-        <span>{layout.nodes.length} nodes · {layout.links.length} connections</span>
+        <span>{layout.nodes.length} node{layout.nodes.length === 1 ? '' : 's'} · {layout.links.length} connection{layout.links.length === 1 ? '' : 's'}</span>
       </div>
 
       <ul className="topology-edge-legend" aria-label="Relationship types">

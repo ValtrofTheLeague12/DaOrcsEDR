@@ -23,7 +23,7 @@ import type {
 } from '../types'
 
 // ---------------------------------------------------------------------------
-// Analysis configuration - what the analyzer will run, before it runs it.
+// Pipelines Configuration - what the analyzer will run, before it runs it.
 //
 // This page replaces the "Analyze" placeholder that used to sit in the Analysis
 // group. It was never going to be a run button: starting an analysis is a
@@ -49,6 +49,17 @@ import type {
 // pipelines/<name>.yaml, because the file is the interface: the analyzer reads
 // that same file with the same loader, so there is no second format to keep in
 // sync and no state here that can disagree with what will run.
+//
+// One thing this page deliberately does NOT offer. `config/analysis.yaml` is the
+// machine-wide layer and it wins over anything set here:
+//
+//     .env / shell   <   pipeline `environment:`   <   config/analysis.yaml
+//
+// So an option the global file defines has no editable control here - it is shown
+// read-only, pointing at Analysis Configuration. It is not hidden, because "why
+// can I not turn ML off on this pipeline" is answered by pointing, not by an
+// absence. The backend refuses the same writes, so the rule holds for the YAML
+// tab and the wizard as well as for these controls.
 // ---------------------------------------------------------------------------
 
 // Configuration, not telemetry: a poll this fast would only re-read the same
@@ -57,7 +68,7 @@ import type {
 // moment someone has just edited a YAML.
 const INTERVAL = 60_000
 
-type Tab = 'pipelines' | 'create' | 'phases' | 'artifacts'
+type Tab = 'pipelines' | 'create' | 'phases'
 
 // --- small pieces ---------------------------------------------------------
 
@@ -297,6 +308,31 @@ function PipelineDetail({ pipeline, catalog }: { pipeline: PipelineConfig; catal
                       ) : (
                         env.value
                       )}
+                      {/* Not a different value - a different truth. config/
+                          analysis.yaml is applied after this pipeline, so this
+                          line is read and discarded, and a file that says one
+                          thing while the run does another is worth naming. */}
+                      {env.shadowed && (
+                        <span
+                          className="ml-1.5 rounded border border-default-200 px-1 text-[9px] text-default-400"
+                          title="config/analysis.yaml sets this key too, and the analyzer applies that file after this pipeline - so this value does not apply. Remove the line to keep the file honest."
+                        >
+                          overridden globally
+                        </span>
+                      )}
+                      {/* The other way a line can be inert: nothing is
+                          overriding it, but the phase it belongs to is not in
+                          this pipeline's plan, so the value is read and used
+                          by nothing. Same treatment as shadowed, because it is
+                          the same kind of truth. */}
+                      {env.irrelevant && !env.shadowed && (
+                        <span
+                          className="ml-1.5 rounded border border-default-200 px-1 text-[9px] text-default-400"
+                          title="This key affects a phase this pipeline does not run, so the value is read and used by nothing. Remove the line to keep the file honest."
+                        >
+                          unused here
+                        </span>
+                      )}
                     </dd>
                   </div>
                 ))}
@@ -369,8 +405,11 @@ function PipelinesTab({
             <PipelineDetail pipeline={current} catalog={data.phases.items} />
             <PipelineOptions
               pipeline={current}
-              options={data.options}
-              rushPhases={data.rush.phases}
+              /* Per pipeline, from the backend: relevance is decided against
+                 the plan the analyzer will run, which the panel cannot recompute
+                 without the catalog it may not have. */
+              options={current.options ?? data.options}
+              globalSettings={data.global_settings}
               yargen={yargen}
               onSaved={onSaved}
             />
@@ -389,24 +428,89 @@ function PipelinesTab({
 }
 
 /**
- * The writable half of a pipeline: phase rush, and the environment options.
+ * A setting config/analysis.yaml owns, drawn instead of offered.
  *
- * Both write into the file the analyzer reads rather than into panel state, so
+ * The analyzer applies the global file after this pipeline, so a pipeline page
+ * has no control for such a key: a value set here would be a value that does
+ * not happen. The pipeline's own line for the key, if it has one, is shown
+ * struck through beside the global value that actually applies - with a remove
+ * button, because cleanup should not require a text editor.
+ */
+function GlobalOptionCard({
+  opt,
+  globalValue,
+  pipelineValue,
+  onRemove,
+  pending,
+}: {
+  opt: EnvOption
+  /** What config/analysis.yaml sets; the caller only renders the card when set. */
+  globalValue: string
+  pipelineValue: string | undefined
+  onRemove?: () => void
+  pending?: boolean
+}) {
+  return (
+    <div className="rounded-md border border-dashed border-default-300 px-3 py-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[12px] text-default-500">{opt.label}</span>
+        <Chip size="sm" variant="soft" color="accent">
+          set globally
+        </Chip>
+      </div>
+      <p className="mt-1 font-mono text-[11px] text-accent-400">
+        {opt.key} = {globalValue}
+      </p>
+      {pipelineValue !== undefined && (
+        <p className="mt-1 flex flex-wrap items-center gap-x-2 font-mono text-[11px]">
+          <span
+            className="font-mono text-[11px] text-default-400 line-through"
+            title={`This pipeline says ${pipelineValue}. The analyzer applies the global file afterwards, so this line has no effect - remove it to keep the file honest.`}
+          >
+            {opt.key} = {pipelineValue} — inert here
+          </span>
+          {onRemove && (
+            <button
+              type="button"
+              className="build-link"
+              disabled={pending}
+              onClick={onRemove}
+            >
+              {pending ? 'Removing…' : 'Remove this line'}
+            </button>
+          )}
+        </p>
+      )}
+      <p className="mt-1 text-[11px] text-default-500">
+        Applies to this pipeline and every other one. Change it on Analysis
+        Configuration; this page cannot, because the global value wins.
+      </p>
+    </div>
+  )
+}
+
+/**
+ * The writable half of a pipeline: the environment options.
+ *
+ * It writes into the file the analyzer reads rather than into panel state, so
  * what the console shows is what the next run will do. Every control here sends
  * a key the server allowlists and the analyzer actually reads - the reason each
  * one carries its source line - and the server re-parses the result before it
  * replaces anything.
+ *
+ * The one exception is `globalSettings`: a key config/analysis.yaml owns has no
+ * control here at all. See GlobalOwnedOption.
  */
 function PipelineOptions({
   pipeline,
   options,
-  rushPhases,
+  globalSettings,
   yargen,
   onSaved,
 }: {
   pipeline: PipelineConfig
   options: EnvOption[]
-  rushPhases: string[]
+  globalSettings: Record<string, string>
   yargen: YargenState | null
   onSaved: () => void
 }) {
@@ -462,9 +566,96 @@ function PipelineOptions({
       `${opt.label} saved to ${pipeline.file}.`,
     )
 
-  const slowPresent = rushPhases.filter((p) => pipeline.phases.includes(p))
-  const rushable = slowPresent.length > 0
-  const rushableOff = pipeline.phases.length > slowPresent.length
+  // Only run-wide options reach this component, which is the list's whole
+  // point: the CTI and ML options are machine-wide - Analysis Configuration
+  // owns them - so no pipeline page carries a control or a card for one. What
+  // this page keeps instead of those controls is reportage: a stale line for
+  // one of those keys in this file still shows in the environment block, badge
+  // attached, and a write is refused whichever way it is phrased.
+  const removeLine = (opt: EnvOption) =>
+    send(
+      opt.key,
+      () => api.setPipelineEnvironment(pipeline.name, { [opt.key]: null }),
+      `${opt.key} removed from ${pipeline.file}.`,
+    )
+
+  const renderOption = (opt: EnvOption) => {
+    const globalValue = globalSettings[opt.key]
+    if (globalValue !== undefined) {
+      return (
+        <GlobalOptionCard
+          key={opt.key}
+          opt={opt}
+          globalValue={globalValue}
+          pipelineValue={declared.get(opt.key)}
+          onRemove={declared.has(opt.key) ? () => removeLine(opt) : undefined}
+          pending={pending === opt.key}
+        />
+      )
+    }
+
+    const value = draft[opt.key] ?? effective(opt)
+    const inherited = !declared.has(opt.key)
+    const dirty =
+      opt.kind === 'text' || opt.kind === 'number'
+        ? String(value) !== String(effective(opt))
+        : value !== effective(opt)
+
+    const control =
+      opt.kind === 'flag' ? (
+        <Switch
+          label={opt.label}
+          checked={Boolean(value)}
+          pending={pending === opt.key}
+          onChange={(v) => {
+            setDraft({ ...draft, [opt.key]: v })
+            void writeEnv(opt, v)
+          }}
+          detail={opt.detail}
+          footnote={`${opt.honoured_by}${inherited ? ` · default ${opt.default ? 'on' : 'off'}` : ''}${opt.affects.length ? ` · affects ${opt.affects.join(', ')}` : ''}`}
+        />
+      ) : (
+        <OptionField
+          label={opt.label}
+          detail={opt.detail}
+          footnote={`${opt.honoured_by}${inherited ? ' · default ' + opt.default : ''}`}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              className="field font-mono"
+              type={opt.kind === 'number' ? 'number' : 'text'}
+              min={opt.min}
+              max={opt.max}
+              step={opt.kind === 'number' ? 'any' : undefined}
+              value={String(value ?? '')}
+              spellCheck={false}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  [opt.key]: opt.kind === 'number' ? Number(e.target.value) : e.target.value,
+                })
+              }
+              aria-label={opt.label}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              isDisabled={!dirty || pending === opt.key}
+              onPress={() =>
+                void writeEnv(
+                  opt,
+                  opt.kind === 'number' ? Number(value) : String(value),
+                )
+              }
+            >
+              {pending === opt.key ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+        </OptionField>
+      )
+
+    return <div key={opt.key}>{control}</div>
+  }
 
   return (
     <Card className="w-full">
@@ -476,62 +667,13 @@ function PipelineOptions({
             the analyzer reads - the source is named under the control.
           </p>
         </div>
-        <Chip size="sm" variant="soft" color={pipeline.rushed ? 'accent' : 'default'}>
-          {pipeline.rushed ? 'phase rush applied' : 'full profile'}
-        </Chip>
       </Card.Header>
 
       <Card.Content className="flex flex-col gap-3">
-        {/* --- phase rush ---------------------------------------------------- */}
-        <div className="rounded-xl border border-default-200 p-3.5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[12px] font-medium text-foreground">Phase rush (triage)</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-default-500">
-                Drops the phases that dominate wall clock and answers nothing a first look needs:{' '}
-                <code className="font-mono">{rushPhases.join(', ')}</code>. The original list is
-                recorded as a <code className="font-mono"># phase-rush</code> comment above each
-                trimmed list, so this is reversible and explains itself to whoever reads the YAML
-                next.
-              </p>
-              {!pipeline.rushed && (
-                <p className="mt-1.5 font-mono text-[10px] text-default-400">
-                  {rushable
-                    ? `would remove: ${slowPresent.join(', ')}`
-                    : 'this pipeline selects none of the slow phases'}
-                  {!rushableOff && rushable && ' · nothing would be left, so it is refused'}
-                </p>
-              )}
-            </div>
-            <div className="flex shrink-0 flex-col items-end gap-2">
-              <Switch
-                label="Phase rush"
-                checked={pipeline.rushed}
-                pending={pending === '__rush'}
-                disabled={!pipeline.rushed && (!rushable || !rushableOff)}
-                onChange={(v) =>
-                  void send(
-                    '__rush',
-                    () => api.setPipelineRush(pipeline.name, v),
-                    v
-                      ? `Phase rush applied to ${pipeline.name}.`
-                      : `Original phases restored in ${pipeline.name}.`,
-                  )
-                }
-                detail=""
-              />
-              <span className="max-w-[16rem] text-right text-[10px] text-default-400">
-                {pipeline.rushed
-                  ? 'Undo puts every recorded phase back where it was.'
-                  : rushable && rushableOff
-                    ? 'Removes the slow phases from every phase list in this file.'
-                    : rushable
-                      ? 'Refused: nothing would be left to run.'
-                      : 'Nothing to drop here.'}
-              </span>
-            </div>
-          </div>
-        </div>
+        {/* --- phase list -----------------------------------------------------
+            yarGen edits the phase list rather than setting an option, so it
+            gets its own section instead of the environment block. */}
+        <p className="section-label">Phase plan</p>
 
         {/* --- yarGen rule generation -----------------------------------------
             Opt-in per pipeline, because it is slow, it needs a tool nothing
@@ -617,70 +759,11 @@ function PipelineOptions({
         </div>
 
         {/* --- environment options ------------------------------------------ */}
+        {/* Only run-wide options arrive; the CTI and ML settings are machine-
+            wide and live on Analysis Configuration, so this page lists none. */}
+        <p className="section-label mb-1.5">Options this pipeline can set</p>
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-          {options.map((opt) => {
-            const value = draft[opt.key] ?? effective(opt)
-            const inherited = !declared.has(opt.key)
-            const dirty =
-              opt.kind === 'text' || opt.kind === 'number'
-                ? String(value) !== String(effective(opt))
-                : value !== effective(opt)
-
-            const control =
-              opt.kind === 'flag' ? (
-                <Switch
-                  label={opt.label}
-                  checked={Boolean(value)}
-                  pending={pending === opt.key}
-                  onChange={(v) => {
-                    setDraft({ ...draft, [opt.key]: v })
-                    void writeEnv(opt, v)
-                  }}
-                  detail={opt.detail}
-                  footnote={`${opt.honoured_by}${inherited ? ` · default ${opt.default ? 'on' : 'off'}` : ''}${opt.affects.length ? ` · affects ${opt.affects.join(', ')}` : ''}`}
-                />
-              ) : (
-                <OptionField
-                  label={opt.label}
-                  detail={opt.detail}
-                  footnote={`${opt.honoured_by}${inherited ? ' · default ' + opt.default : ''}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="field font-mono"
-                      type={opt.kind === 'number' ? 'number' : 'text'}
-                      min={opt.min}
-                      max={opt.max}
-                      step={opt.kind === 'number' ? 'any' : undefined}
-                      value={String(value ?? '')}
-                      spellCheck={false}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          [opt.key]: opt.kind === 'number' ? Number(e.target.value) : e.target.value,
-                        })
-                      }
-                      aria-label={opt.label}
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      isDisabled={!dirty || pending === opt.key}
-                      onPress={() =>
-                        void writeEnv(
-                          opt,
-                          opt.kind === 'number' ? Number(value) : String(value),
-                        )
-                      }
-                    >
-                      {pending === opt.key ? 'Saving…' : 'Save'}
-                    </Button>
-                  </div>
-                </OptionField>
-              )
-
-            return <div key={opt.key}>{control}</div>
-          })}
+          {options.map(renderOption)}
         </div>
 
         {note && <p className="text-[11px] text-success">{note}</p>}
@@ -833,302 +916,6 @@ function PhasesTab({ data }: { data: AnalysisConfig }) {
   )
 }
 
-// --- artifacts / upload ---------------------------------------------------
-
-/** What the form holds, and what it was seeded from. Kept apart from the polled
- *  payload so a background refresh cannot discard half-typed edits: `saved` is
- *  the file as of the last successful write, and dirty is the comparison. */
-interface ArtifactForm {
-  store_artifact: boolean
-  upload_artifacts: boolean
-  remote_root: string
-  timeout_seconds: number
-  encrypt_artifacts: boolean
-  encryption_recipient: 'user' | 'admin'
-  admin_public_key: string
-}
-
-const isDirty = (form: ArtifactForm, base: ArtifactForm): boolean =>
-  form.store_artifact !== base.store_artifact ||
-  form.upload_artifacts !== base.upload_artifacts ||
-  form.remote_root.trim() !== base.remote_root ||
-  form.timeout_seconds !== base.timeout_seconds ||
-  form.encrypt_artifacts !== base.encrypt_artifacts ||
-  form.encryption_recipient !== base.encryption_recipient ||
-  form.admin_public_key.trim() !== base.admin_public_key
-
-function ArtifactsTab({ data, onSaved }: { data: AnalysisConfig; onSaved: () => void }) {
-  const a = data.artifacts
-  const [form, setForm] = useState<ArtifactForm>({
-    store_artifact: a.store_artifact,
-    upload_artifacts: a.upload_artifacts,
-    remote_root: a.remote_root,
-    timeout_seconds: a.timeout_seconds,
-    encrypt_artifacts: a.encrypt_artifacts,
-    encryption_recipient: a.encryption_recipient,
-    admin_public_key: a.admin_public_key,
-  })
-  const [saved, setSaved] = useState<ArtifactForm>({ ...form })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [ok, setOk] = useState(false)
-
-  const dirty = isDirty(form, saved)
-
-  // Re-seed only when the file itself changes underneath us - another editor,
-  // or this panel's own write. Keyed on the mtime rather than on every poll, so
-  // a 60s refresh never overwrites what someone is typing.
-  useEffect(() => {
-    const next = {
-      store_artifact: a.store_artifact,
-      upload_artifacts: a.upload_artifacts,
-      remote_root: a.remote_root,
-      timeout_seconds: a.timeout_seconds,
-      encrypt_artifacts: a.encrypt_artifacts,
-      encryption_recipient: a.encryption_recipient,
-      admin_public_key: a.admin_public_key,
-    }
-    setSaved(next)
-    setForm((current) => (isDirty(current, next) ? current : next))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [a.mtime])
-
-  // Mirrors the bounds load_artifact_options() enforces, so the button is
-  // disabled for a value the server would refuse rather than after a round trip.
-  const rootOk = form.remote_root.trim().startsWith('/') &&
-    !form.remote_root.includes('\\') &&
-    !form.remote_root.split('/').includes('..')
-  const timeoutOk = Number.isInteger(form.timeout_seconds) &&
-    form.timeout_seconds >= 1 && form.timeout_seconds <= 86400
-  const valid = rootOk && timeoutOk
-
-  const save = async () => {
-    setSaving(true)
-    setError(null)
-    setOk(false)
-    try {
-      // Only what changed. Sending the whole form would let a stale copy of an
-      // unrelated option overwrite a value somebody else just changed.
-      const patch: Record<string, boolean | string | number> = {}
-      if (form.store_artifact !== saved.store_artifact) patch.store_artifact = form.store_artifact
-      if (form.upload_artifacts !== saved.upload_artifacts) patch.upload_artifacts = form.upload_artifacts
-      if (form.remote_root.trim() !== saved.remote_root) patch.remote_root = form.remote_root.trim()
-      if (form.timeout_seconds !== saved.timeout_seconds) patch.timeout_seconds = form.timeout_seconds
-      if (form.encrypt_artifacts !== saved.encrypt_artifacts) patch.encrypt_artifacts = form.encrypt_artifacts
-      if (form.encryption_recipient !== saved.encryption_recipient) patch.encryption_recipient = form.encryption_recipient
-      if (form.admin_public_key.trim() !== saved.admin_public_key) patch.admin_public_key = form.admin_public_key.trim()
-
-      const res = await api.setArtifactOptions(patch)
-      const next = {
-        store_artifact: res.artifacts.store_artifact,
-        upload_artifacts: res.artifacts.upload_artifacts,
-        remote_root: res.artifacts.remote_root,
-        timeout_seconds: res.artifacts.timeout_seconds,
-        encrypt_artifacts: res.artifacts.encrypt_artifacts,
-        encryption_recipient: res.artifacts.encryption_recipient,
-        admin_public_key: res.artifacts.admin_public_key,
-      }
-      setForm(next)
-      setSaved(next)
-      setOk(true)
-      window.setTimeout(() => setOk(false), 2500)
-      onSaved()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        <Switch
-          label="Bundle locally"
-          checked={form.store_artifact}
-          pending={saving}
-          onChange={(v) => setForm({ ...form, store_artifact: v })}
-          detail="Builds exports/<sample>_artifact/ as a deterministic tar.gz with a SHA-256, a manifest and a README. The JSON reports under exports/<sample>_analysis/ are written either way."
-          footnote="planner::load_artifact_options()"
-        />
-        <Switch
-          label="Upload to MEGA"
-          checked={form.upload_artifacts}
-          pending={saving}
-          onChange={(v) => setForm({ ...form, upload_artifacts: v })}
-          detail="Uploads the sealed bundle with MEGAcmd after each run. Implies building it locally first, and is the option that sends evidence off this host - the Artifacts page's Export button obeys it too."
-          footnote="planner::load_artifact_options()"
-        />
-        <Switch
-          label="Encrypt the bundle before upload"
-          checked={form.encrypt_artifacts}
-          pending={saving}
-          onChange={(v) => setForm({ ...form, encrypt_artifacts: v })}
-          detail="Seals the archive to a public key with X25519 + HKDF-SHA256 + AES-256-GCM before anything is uploaded. The plaintext archive stays on local disk; only the sealed file is sent, and if sealing fails the upload is ABORTED rather than falling back to plaintext."
-          footnote="mega/seal.py"
-        />
-        <OptionField
-          label="MEGA remote root"
-          detail="The bundle lands in <root>/<sample>_artifact. An absolute MEGA path; .. and backslashes are refused."
-          footnote="config/artifacts.yaml"
-        >
-          <input
-            className="field font-mono"
-            value={form.remote_root}
-            onChange={(e) => setForm({ ...form, remote_root: e.target.value })}
-            placeholder="/"
-            spellCheck={false}
-            aria-invalid={!rootOk}
-          />
-          {!rootOk && (
-            <span className="text-[10px] text-danger">
-              Must start with / and contain no '..' or backslash.
-            </span>
-          )}
-        </OptionField>
-        <OptionField
-          label="Seal to which key"
-          detail="user = the operator keypair on this machine. admin = the lab's public key, so evidence is sealed to whoever owns it; only the public half is needed here, and the admin private key never has to exist on this machine."
-          footnote="config/artifacts.yaml"
-        >
-          <select
-            className="field"
-            value={form.encryption_recipient}
-            disabled={!form.encrypt_artifacts || saving}
-            onChange={(e) => setForm({ ...form, encryption_recipient: e.target.value as 'user' | 'admin' })}
-          >
-            <option value="user">user - this machine's operator key</option>
-            <option value="admin">admin - the lab's public key</option>
-          </select>
-        </OptionField>
-        {form.encryption_recipient === 'admin' && (
-          <OptionField
-            label="Admin public key"
-            detail="Path to the lab's X25519 public key, base64 or PEM. Leave empty to use %APPDATA%\IAProject\bundle-keys\admin.pub or IA_BUNDLE_ADMIN_PUBKEY."
-            footnote="config/artifacts.yaml"
-          >
-            <input
-              className="field font-mono"
-              value={form.admin_public_key}
-              onChange={(e) => setForm({ ...form, admin_public_key: e.target.value })}
-              placeholder="(default location)"
-              spellCheck={false}
-            />
-          </OptionField>
-        )}
-        <OptionField
-          label="Upload timeout"
-          detail="Hard ceiling on the uploader, in seconds (1 - 86400). The Artifacts page's Export action uses the same budget."
-          footnote="config/artifacts.yaml"
-        >
-          <input
-            className="field font-mono"
-            type="number"
-            min={1}
-            max={86400}
-            value={form.timeout_seconds}
-            onChange={(e) => setForm({ ...form, timeout_seconds: Number(e.target.value) })}
-            aria-invalid={!timeoutOk}
-          />
-          {!timeoutOk && (
-            <span className="text-[10px] text-danger">Between 1 and 86400 seconds.</span>
-          )}
-        </OptionField>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          size="sm"
-          variant="primary"
-          onPress={() => void save()}
-          isDisabled={!dirty || !valid || saving}
-        >
-          <Icon name="check" size={13} />
-          {saving ? 'Saving…' : 'Save to config/artifacts.yaml'}
-        </Button>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => { setForm({ ...saved }); setError(null) }}
-          disabled={!dirty || saving}
-        >
-          Discard changes
-        </button>
-        {ok && !dirty && (
-          <span className="text-[11px] text-success">Written. Applies to the analyzer on its next run.</span>
-        )}
-        {!dirty && !ok && (
-          <span className="text-[11px] text-default-400">
-            In sync with the file. The analyzer reads this once at startup, so a change takes effect
-            on its next run - the Artifacts page picks it up immediately.
-          </span>
-        )}
-      </div>
-
-      {error && (
-        <Alert status="danger">
-          <Alert.Title>Not written</Alert.Title>
-          <Alert.Description>{error}</Alert.Description>
-        </Alert>
-      )}
-
-      {a.errors.length > 0 && (
-        <Alert status="danger">
-          <Alert.Title>The analyzer will refuse this file</Alert.Title>
-          <Alert.Description>
-            <ul className="list-disc pl-4">
-              {a.errors.map((e) => (
-                <li key={e} className="font-mono text-[11px]">{e}</li>
-              ))}
-            </ul>
-          </Alert.Description>
-        </Alert>
-      )}
-
-      <Card className="w-full">
-        <Card.Header className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <Card.Title className="font-mono text-sm">{a.file}</Card.Title>
-            <p className="mt-1 text-[11px] text-default-500">
-              Only these four keys are accepted; anything else is a hard error at startup, which is
-              why this page reports unknown keys instead of ignoring them. Saving edits the keys in
-              place - the comments in the file are its documentation and are left exactly as they
-              are.
-            </p>
-            {a.uploader_script && (
-              <p className="mt-1 font-mono text-[10px] text-default-400">
-                uploader: {a.uploader_script}
-              </p>
-            )}
-            {a.mtime > 0 && (
-              <p className="mt-1 font-mono text-[10px] text-default-400">
-                last edited {ago(a.mtime)}
-              </p>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Chip size="sm" variant="soft" color={a.present ? 'success' : 'warning'}>
-              {a.present ? 'present' : 'missing'}
-            </Chip>
-            {a.content && <CopyButton text={a.content} />}
-          </div>
-        </Card.Header>
-        {a.content ? (
-          <div className="flex max-h-[26rem] flex-col border-t border-default-200">
-            <YamlView content={a.content} spans={a.spans} />
-          </div>
-        ) : (
-          <Card.Content className="py-6 text-[11px] text-default-500">
-            No file at this path. The analyzer falls back to safe defaults: no archive, no cloud
-            upload - which is the same state the switches above show. Standard JSON reports under{' '}
-            <code className="font-mono">exports/</code> are unaffected either way.
-          </Card.Content>
-        )}
-      </Card>
-    </div>
-  )
-}
-
 // --- page -----------------------------------------------------------------
 
 export default function AnalysisConfig() {
@@ -1170,11 +957,12 @@ export default function AnalysisConfig() {
     <>
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-4">
         <div>
-          <h2 className="page-title">Analysis Configuration</h2>
+          <h2 className="page-title">Pipelines Configuration</h2>
           <p className="mt-1 text-[11px] text-default-500">
             The pipelines and upload options the analyzer reads. Options are written into the same
             YAML the analyzer loads, and every edit is validated against the analyzer's own rules
-            before it replaces anything.
+            before it replaces anything. Settings that apply to <em>every</em> run live on Analysis
+            Configuration and win over anything set here.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1192,7 +980,7 @@ export default function AnalysisConfig() {
 
       {error && (
         <Alert status="danger" className="mb-4">
-          <Alert.Title>Cannot read the analysis configuration</Alert.Title>
+          <Alert.Title>Cannot read the pipelines configuration</Alert.Title>
           <Alert.Description>{error}</Alert.Description>
         </Alert>
       )}
@@ -1230,7 +1018,9 @@ export default function AnalysisConfig() {
               sub={data.mega_upload ? `bundles go to ${data.artifacts.remote_root}` : 'no evidence leaves this host'}
               icon={<Icon name="rocket" size={15} />}
               trendTone={data.mega_upload ? 'warning' : 'accent'}
-              onClick={() => setTab('artifacts')}
+              /* Read-only here by design: the upload decisions live on the
+                 Analysis Configuration page, so this tile reports the
+                 effective state instead of hosting a second control for it. */
             />
             <StatTile
               label="Last edited"
@@ -1245,7 +1035,6 @@ export default function AnalysisConfig() {
               { id: 'pipelines', label: 'Pipelines', icon: 'git-merge', tone: broken.length > 0 ? 'bad' : 'ok' },
               { id: 'create', label: 'New pipeline', icon: 'plus', tone: data.phases.available ? 'ok' : 'warn' },
               { id: 'phases', label: 'Phases', icon: 'model', tone: data.phases.available ? 'ok' : 'warn' },
-              { id: 'artifacts', label: 'Upload & artifacts', icon: 'rocket' },
             ]}
             active={tab}
             onChange={(id) => setTab(id as Tab)}
@@ -1263,13 +1052,15 @@ export default function AnalysisConfig() {
           {tab === 'create' && (
             <PipelineWizard
               catalog={data.phases.items}
-              options={data.options}
-              slowPhases={data.rush.phases}
+              // Filtered rather than passed whole: the wizard writes a real
+              // `environment:` block, and a key config/analysis.yaml owns would
+              // land in the new file as a line that does not happen. The server
+              // refuses it too - this is so the author never sees the control.
+              options={data.options.filter((o) => data.global_settings[o.key] === undefined)}
               onCreated={onCreated}
             />
           )}
           {tab === 'phases' && <PhasesTab data={data} />}
-          {tab === 'artifacts' && <ArtifactsTab data={data} onSaved={refresh} />}
         </>
       )}
     </>

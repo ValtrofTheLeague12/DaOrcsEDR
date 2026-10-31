@@ -70,6 +70,18 @@ config/*
 # is toggled, so it must be tracked - a setting that silently resets on a
 # re-clone is the same one nobody can rely on.
 !config/yara_check.json
+# The build's hardening settings (ASLR, high-entropy VA, DEP/NX, stack
+# protector). Tracked for the same reason as yara_check.json, and then some:
+# the panel writes it, build.ps1 reads it, and a re-clone that silently reset
+# every protection would produce a binary nobody can tell from a deliberately
+# weakened one. The intent has to survive the checkout.
+!config/hardening.json
+# The sample factory's GitHub source definitions (URL + kind, no fetched
+# values). Tracked for the same reason: the two seeded sources and any source
+# an operator adds are configuration, and an empty pool after a re-clone would
+# look like the feature is broken. The dumps themselves stay in ressources/,
+# ignored.
+!config/sample_resources.json
 !config/systemd/
 config/systemd/*
 !config/systemd/qilin-service/

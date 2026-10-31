@@ -318,6 +318,22 @@ def vm_status() -> dict:
 # ---------------------------------------------------------------------------
 
 def guest_metrics(timeout: float = 8.0) -> dict:
+    """Live CPU / RAM for the Qiling guest, served from the shared collector.
+
+    This used to open its own paramiko session on every call - and the Qiling
+    panel calls it on mount and on every Check Status, so each click paid a
+    full SSH handshake (8 s worst case) while the Statistics page was already
+    collecting the same guest every 15 s in vmmetrics' daemon thread. It now
+    reads vmmetrics' cache, which is populated in the background and answers
+    immediately. `timeout` is kept for callers that still pass it; the cached
+    collector owns its own connect timeout.
+
+    The shape stays the one this panel has always served, so the frontend
+    contract does not move: vmmetrics' payload carries the same /proc-derived
+    fields under the same names.
+    """
+    from . import vmmetrics
+
     out = {
         "available": False,
         "reachable": False,
@@ -330,6 +346,8 @@ def guest_metrics(timeout: float = 8.0) -> dict:
                  "percent": None},
         "uptime_seconds": None,
         "error": "",
+        "collected_at": None,
+        "age_seconds": None,
     }
     try:
         info = json.loads(VM_INFO_FILE.read_text(encoding="utf-8"))
@@ -337,100 +355,48 @@ def guest_metrics(timeout: float = 8.0) -> dict:
     except (OSError, ValueError):
         info = {}
     host = str(info.get("VM_IP", "") or "").strip()
-    user = str(info.get("VM_HOST", "") or "").strip()
-    password = str(info.get("VM_PASSWORD", "") or "")
-    try:
-        port = int(info.get("VM_PORT", 22) or 22)
-    except (TypeError, ValueError):
-        port = 22
-    if not host or not user:
+    name = str(info.get("VM_NAME", "") or "").strip() or "Analysis VM"
+    if not host:
         out["error"] = "vm_info.json: VM_IP and VM_HOST are required"
         return out
+
     try:
-        import paramiko
-    except ImportError:
-        out["error"] = "paramiko is not installed (pip install paramiko)"
-        return out
-
-    # Every value from /proc or nproc: stable across distros. `nproc` then
-    # /proc/loadavg, the four meminfo keys, uptime seconds, then df's triple.
-    cmd = (
-        "nproc 2>/dev/null; "
-        "cat /proc/loadavg 2>/dev/null; "
-        "awk '/^MemTotal:|^MemAvailable:|^SwapTotal:|^SwapFree:/{print $1$2}' "
-        "/proc/meminfo 2>/dev/null; "
-        "cut -d' ' -f1 /proc/uptime 2>/dev/null; "
-        "df -B1 / 2>/dev/null | awk 'NR==2{print $2, $3, $4}'"
-    )
-
-    def _f(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
-
-    client = paramiko.SSHClient()
-    try:
-        try:
-            client.load_system_host_keys()
-        except OSError:
-            pass
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(host, port=port, username=user, password=password,
-                       timeout=timeout, banner_timeout=timeout,
-                       auth_timeout=timeout)
-        out["reachable"] = True
-        _stdin, stdout, _stderr = client.exec_command(cmd, timeout=timeout)
-        text = stdout.read().decode("utf-8", "replace")
-    except Exception as exc:  # noqa: BLE001 - powered off / refused / timeout
+        payload = vmmetrics.for_guest(name, host)
+    except Exception as exc:  # noqa: BLE001 - a status page must not 500
         out["error"] = f"{type(exc).__name__}: {exc}"
         return out
-    finally:
-        try:
-            client.close()
-        except Exception:  # noqa: BLE001
-            pass
+    if payload is None:
+        out["error"] = "vm_info.json has no VM_IP/VM_HOST pair for this guest"
+        return out
 
-    out["available"] = True
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    if lines:
-        out["cores"] = int(_f(lines[0]) or 0) or None
-    if len(lines) >= 2:
-        parts = lines[1].split()
-        for key, idx in (("1", 0), ("5", 1), ("15", 2)):
-            out["load"][key] = _f(parts[idx]) if len(parts) > idx else None
-    mem = {}
-    for line in lines[2:6]:
-        m = re.match(r"^(MemTotal|MemAvailable|SwapTotal|SwapFree)(\d+)$", line)
-        if m:
-            mem[m.group(1)] = float(m.group(2)) * 1024  # kB -> bytes
-    total, avail = mem.get("MemTotal"), mem.get("MemAvailable")
-    if total:
-        used = total - (avail if avail is not None else 0)
-        out["memory"].update({
-            "total_bytes": int(total),
-            "available_bytes": int(avail) if avail is not None else None,
-            "used_bytes": int(used),
-            "percent": round(used / total * 100, 1),
-        })
-    swap_total, swap_free = mem.get("SwapTotal"), mem.get("SwapFree")
-    if swap_total:
-        out["memory"]["swap_total_bytes"] = int(swap_total)
-        out["memory"]["swap_used_bytes"] = int(swap_total - (swap_free or 0))
-    # The df triple is the last line; uptime is the numeric-only line before it.
-    if len(lines) >= 2 and _f(lines[-2]) is not None:
-        out["uptime_seconds"] = _f(lines[-2])
-    df = lines[-1].split() if lines else []
-    if len(df) == 3 and all(_f(p) is not None for p in df):
-        dt, du, dfree = float(df[0]), float(df[1]), float(df[2])
-        out["disk"] = {
-            "total_bytes": int(dt), "used_bytes": int(du),
-            "free_bytes": int(dfree),
-            "percent": round(du / dt * 100, 1) if dt else None,
-        }
-    if out["cores"] is None and not out["memory"]["total_bytes"]:
-        out["available"] = False
-        out["error"] = out["error"] or "guest returned no /proc data"
+    state = payload.get("state") or "down"
+    # `pending` means the collector is running but has not sampled yet: the
+    # machine is instrumented and may well be up, it just has no answer. That
+    # is not "unreachable", and painting it as such would be a false negative.
+    out["reachable"] = state in ("up", "pending")
+    out["available"] = state == "up"
+    out["collected_at"] = payload.get("collected_at")
+    out["age_seconds"] = payload.get("age_seconds")
+    if state != "up":
+        out["error"] = (payload.get("error")
+                        or ("the collector has not sampled this guest yet"
+                            if state == "pending" else ""))
+        return out
+
+    out["cores"] = payload.get("cores")
+    out["load"] = payload.get("load") or out["load"]
+    mem = payload.get("memory") or {}
+    out["memory"] = {
+        "total_bytes": mem.get("total_bytes"),
+        "used_bytes": mem.get("used_bytes"),
+        "available_bytes": mem.get("available_bytes"),
+        "percent": mem.get("percent"),
+        "swap_total_bytes": mem.get("swap_total_bytes"),
+        "swap_used_bytes": mem.get("swap_used_bytes"),
+    }
+    out["disk"] = payload.get("disk") or out["disk"]
+    out["uptime_seconds"] = payload.get("uptime_seconds")
+    out["age_seconds"] = payload.get("age_seconds")
     return out
 
 

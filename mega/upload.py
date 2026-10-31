@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env python3
-"""Seal one analysis run into <artifact>_artifact/ and upload it.
+"""Package one analysis run into <artifact>_artifact/ and upload it.
 
     mega/upload.py --artifact quick_test
       -> exports/quick_test_analysis/           (evidence source, default)
@@ -8,6 +8,8 @@
              quick_test_evidence.tar.gz.sha256
              manifest.json
              README.txt
+             [quick_test_evidence.zip           when --encrypt is given]
+             [quick_test_evidence.zip.sha256    along with it]
       -> remote folder: quick_test_artifact/
 
 On zlib: zlib is deflate, not tar. It cannot write an archive on its own - it
@@ -25,6 +27,12 @@ Two properties this script goes out of its way to keep:
     members are sorted, so re-running produces a byte-identical tar and the same
     checksum. For evidence that means a rebuild can be *verified*, not just
     repeated.
+
+Protection is the password zip in mega/protect.py: when --encrypt is given the
+archive is wrapped in a WinZip AES-256 encrypted zip whose password comes from
+the operator profile (never the repo), and only the zip is a candidate for
+upload - the plaintext archive stays local. see protect.py for the scheme and
+the password file's location.
 
 Uploads go through the MEGAcmd CLI. When it is not installed, the bundle is
 still built and verified locally and the script says exactly what is missing -
@@ -48,7 +56,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import megacmd  # noqa: E402
-import seal    # noqa: E402
+import protect  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
@@ -141,32 +149,33 @@ def write_readme(out_dir: Path, artifact: str, source: Path, archive: Path,
     readme = out_dir / "README.txt"
     if encryption:
         crypto = f"""
-Encryption
+Protection
 ----------
-This bundle was SEALED before upload. Only the `{encryption['sealed_file']}`
-file went to remote storage; the archive above never left this host.
+This bundle was password-protected before upload. Only the
+`{encryption['sealed_file']}` file went to remote storage; the archive above
+never left this host.
 
     algorithm        : {encryption['algorithm']}
     format           : {encryption['format']}
-    sealed to        : {encryption['recipient']} key {encryption['recipient_key_id']}
-    sealed file      : {encryption['sealed_file']} ({encryption['sealed_bytes']} bytes)
-    sealed sha256    : {sha256_file(out_dir / encryption['sealed_file'])}
-    chunks           : {encryption['chunks']} x {encryption['chunk_bytes']} bytes
-    library          : python 'cryptography' - X25519 ECDH + HKDF-SHA256 +
-                       AES-256-GCM, entirely in-process (no gpg/openssl)
+    protected file   : {encryption['sealed_file']} ({encryption['sealed_bytes']} bytes)
+    protected sha256 : {sha256_file(out_dir / encryption['sealed_file'])}
+    library          : python 'pyzipper' - WinZip AES-256 (WZ_AES), entirely
+                       in-process (no gpg/openssl)
 
-To open it, on a machine holding the matching PRIVATE key:
+To open the protected file, on any machine that holds the PASSWORD:
 
-    python mega/seal.py decrypt {encryption['sealed_file']}
+    python mega/protect.py unzip {encryption['sealed_file']} --out-dir .
+    (accepting a --password-file/-stdin override; the default reads the
+    operator password file outside the repo)
 
-A private key that is lost is a bundle that is gone. There is no recovery
-path, by design.
+A password that is lost is a bundle that is gone. There is no recovery path,
+by design.
 """
     else:
         crypto = """
-Encryption
+Protection
 ----------
-NOT sealed. The archive above was uploaded as-is.
+NOT protected. The archive above was uploaded as-is.
 """
     readme.write_text(
         f"""Evidence bundle - {artifact}
@@ -216,23 +225,22 @@ def write_manifest(out_dir: Path, artifact: str, source: Path, archive: Path,
         "file_count": len(members),
         "files": [{"path": p, "size": s} for p, s in members],
         "tool": "mega/upload.py",
-        # Machine-readable counterpart of the README's Encryption section: a
+        # Machine-readable counterpart of the README's Protection section: a
         # consumer that has the manifest can tell whether the remote copy is
-        # readable by anyone or only by a key holder.
+        # readable by anyone or only by whoever holds the password.
         "encrypted": bool(encryption),
     }
     if encryption:
+        # The operator's password file path is deliberately NOT mirrored into
+        # a manifest that itself travels to remote storage: the remote folder
+        # does not need insight into the local profile.
         manifest["encryption"] = {
             "algorithm": encryption["algorithm"],
             "format": encryption["format"],
-            "recipient": encryption["recipient"],
-            "recipient_key_id": encryption["recipient_key_id"],
             "sealed_file": encryption["sealed_file"],
             "sealed_bytes": encryption["sealed_bytes"],
             "sealed_sha256": sha256_file(out_dir / encryption["sealed_file"]),
-            "chunks": encryption["chunks"],
-            "chunk_bytes": encryption["chunk_bytes"],
-            "library": "python-cryptography",
+            "library": encryption["library"],
         }
     path = out_dir / "manifest.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -266,9 +274,21 @@ def upload_megacmd(local_dir: Path, remote_root: str, timeout: int) -> str:
         destination is the PARENT of the artifact folder.
       * `mkdir` is silent on success, so its exit status alone does not prove
         much - which is why remote_exists() re-checks afterwards.
+      * `mkdir -p` exits 54 ("Folder already exists") when the parent is
+        already there. That wording reads like an error but reports the very
+        state this sequence needs, so the exit alone decides nothing: the
+        result is ARBITRATED by a listing, and only a folder that is absent
+        after a failed mkdir is an error. Without this, rerunning a pipeline
+        whose root survived the first run marked the whole bundle FAILED at
+        upload time.
     """
     dest = remote_root.rstrip("/") or "/"
-    megacmd.run("mkdir", "-p", dest, timeout=megacmd.QUICK_TIMEOUT)
+    made = megacmd.run("mkdir", "-p", dest, check=False,
+                       timeout=megacmd.QUICK_TIMEOUT)
+    if made.code != 0 and not remote_exists(dest):
+        raise megacmd.MegaError(
+            f"megacmd mkdir failed (exit {made.code}) and {dest} does not "
+            f"exist: {made.err or made.out or '(no output)'}")
     megacmd.run("put", str(local_dir), dest, timeout=timeout)
     return f"{dest}/{local_dir.name}".replace("//", "/")
 
@@ -277,11 +297,12 @@ def stage_for_upload(out_dir: Path, artifact: str, shipped: Path,
                      shipped_name: str, encryption: dict | None):
     """The folder to actually hand to MEGAcmd, and the temp root to clean up.
 
-    `put <folder>` uploads EVERYTHING in the folder. When the bundle is sealed
+    `put <folder>` uploads EVERYTHING in the folder. When the bundle is protected
     that folder still holds the plaintext archive, so uploading it as-is would
     put the evidence on a third-party account in the clear next to the
-    ciphertext - the protection would be decorative. So when sealing, only the
-    shippable files are staged and the plaintext is left behind on local disk.
+    encrypted zip - the protection would be decorative. So when protecting, only
+    the shippable files are staged and the plaintext is left behind on local
+    disk.
 
     The staged folder MUST be called `<artifact>_artifact`: MEGAcmd nests the
     upload on the folder NAME, so the remote path is derived from it. That is
@@ -348,15 +369,13 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=megacmd.DEFAULT_TIMEOUT,
                     help="seconds to allow the MEGAcmd upload")
     ap.add_argument("--encrypt", dest="encrypt", action="store_true", default=None,
-                    help="seal the archive to a recipient public key before upload "
-                         "(X25519 + HKDF-SHA256 + AES-256-GCM, in-process)")
+                    help="wrap the archive in a password-protected zip before upload "
+                         "(WinZip AES-256, in-process)")
     ap.add_argument("--no-encrypt", dest="encrypt", action="store_false",
-                    help="upload the archive as-is, even when config asks for sealing")
-    ap.add_argument("--recipient", choices=["user", "admin"], default="user",
-                    help="seal to this machine's operator key, or to the lab admin's "
-                         "public key (only the public half is needed)")
-    ap.add_argument("--admin-key", default=None,
-                    help="path to the admin public key (base64 or PEM)")
+                    help="upload the archive as-is, even when config asks for protection")
+    ap.add_argument("--password-file", default=None,
+                    help="password file for the zip (default: the operator password "
+                         "file outside the repo, or IA_BUNDLE_PASSWORD_FILE)")
     ap.add_argument("--expect-account", default=None,
                     help="refuse to upload unless MEGAcmd is logged in as this "
                          "address (default: the email in the sealed credential)")
@@ -386,29 +405,36 @@ def main() -> int:
 
         print(f"[+] sha256  {digest}")
 
-        # Sealing happens before the manifest and README are written, because
-        # both have to record who the bundle was sealed to and what the sealed
-        # bytes hash to. Writing them first would produce a bundle whose own
-        # paperwork says it is plaintext.
+        # Protection happens before the manifest and README are written, because
+        # both have to record what the protected bytes hash to. Writing them
+        # first would produce a bundle whose own paperwork says it is plaintext.
         encryption = None
         if args.encrypt:
-            # Seal BEFORE anything leaves the machine. The plaintext archive
-            # stays local; only the sealed file is a candidate for upload.
-            recipient = (seal.admin_recipient(Path(args.admin_key))
-                         if args.recipient == "admin" else seal.user_recipient())
-            print(f"[+] sealing to the '{args.recipient}' key "
-                  f"{seal.key_id_hex(recipient.public)}")
+            # Protect BEFORE anything leaves the machine. The plaintext archive
+            # stays local; only the zip is a candidate for upload.
+            out_zip = out_dir / f"{artifact}_evidence.zip"
             try:
-                encryption = seal.seal_file(archive, recipient)
-            except seal.SealError as exc:
-                # A failed seal must stop the upload. Falling through to "upload
-                # the plaintext anyway" is the one outcome that would silently
-                # undo the protection the operator asked for.
-                print(f"upload: could not seal the bundle: {exc}", file=sys.stderr)
-                print("        Refusing to upload the unencrypted archive.", file=sys.stderr)
+                password = protect.read_password(
+                    Path(args.password_file) if args.password_file else None)
+            except protect.PasswordError as exc:
+                print(f"upload: could not protect the bundle: {exc}", file=sys.stderr)
+                print("        Refusing to upload the unprotected archive.", file=sys.stderr)
                 return 4
-            print(f"[+] sealed  {encryption['sealed_file']} "
-                  f"({encryption['chunks']} chunk(s))")
+            password_file_hint = (Path(args.password_file)
+                                  if args.password_file else protect.password_file())
+            print(f"[+] zipping {archive.name} under a password "
+                  f"(password file: {password_file_hint})")
+            try:
+                encryption = protect.zip_bundle(archive, out_zip, password)
+            except protect.PasswordError as exc:
+                # A failed protection must stop the upload. Falling through to
+                # "upload the plaintext anyway" is the one outcome that would
+                # silently undo the protection the operator asked for.
+                print(f"upload: could not protect the bundle: {exc}", file=sys.stderr)
+                print("        Refusing to upload the unprotected archive.", file=sys.stderr)
+                return 4
+            print(f"[+] protected  {encryption['sealed_file']} "
+                  f"({encryption['sealed_bytes']} bytes, {encryption['algorithm']})")
 
         # What actually goes to the remote, and the digest that describes it.
         if encryption:
@@ -419,8 +445,14 @@ def main() -> int:
             shipped = archive
             shipped_name = archive.name
             shipped_digest = digest
-        (out_dir / f"{shipped_name}.sha256").write_text(
-            f"{shipped_digest}  {shipped_name}\n", encoding="ascii")
+        # The local bundle's paperwork must match its own contents, so the
+        # archive's sidecar always exists - and when the bundle is protected
+        # the shipped zip gets its own, because THAT is the copy's checksum.
+        (out_dir / f"{archive.name}.sha256").write_text(
+            f"{digest}  {archive.name}\n", encoding="ascii")
+        if shipped_name != archive.name:
+            (out_dir / f"{shipped_name}.sha256").write_text(
+                f"{shipped_digest}  {shipped_name}\n", encoding="ascii")
 
         readme = write_readme(out_dir, artifact, source, archive, digest, files,
                               raw_bytes, archive_bytes, encryption)
@@ -443,7 +475,7 @@ def main() -> int:
 
     if args.no_upload:
         print("[+] --no-upload: bundle is local only"
-              + (f" (sealed as {encryption['sealed_file']})" if encryption else ""))
+              + (f" (protected as {encryption['sealed_file']})" if encryption else ""))
         return 0
 
     remote_root = args.remote_root or "/"
@@ -479,7 +511,7 @@ def main() -> int:
     stage = None
     try:
         print(f"[+] uploading {out_dir.name}/ -> {expected_remote}"
-              + (f"  (sealed: {shipped_name})" if encryption else ""))
+              + (f"  (protected: {shipped_name})" if encryption else ""))
         to_send, stage = stage_for_upload(out_dir, artifact, shipped, shipped_name, encryption)
         landed = upload_megacmd(to_send, remote_root, args.timeout)
         if not remote_exists(landed):
@@ -488,8 +520,8 @@ def main() -> int:
             return 1
         print(f"[+] uploaded: {landed}")
         if encryption:
-            print(f"[+] encrypted for the '{encryption['recipient']}' key "
-                  f"{encryption['recipient_key_id']}")
+            print(f"[+] protected: {encryption['sealed_file']} goes to remote; "
+                  f"{archive.name} never left this host")
         return 0
     except megacmd.MegaError as exc:
         print(f"upload: {exc}", file=sys.stderr)

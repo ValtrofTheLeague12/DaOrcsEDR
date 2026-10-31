@@ -2,17 +2,36 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   AnalysisConfig,
   AnalysisSettingsSnapshot,
+  AnalyzerPackedStop,
   ArtifactExportJob,
   ArtifactsSnapshot,
   AnalyzerBuildJob,
+  PipelineRunState,
+  BuildHardening,
   BuildInspect,
   BuildJob,
   BuildOverview,
   BuildTestCatalogue,
+  SampleFactoryCatalog,
+  SampleGenerated,
+  SampleInspect,
+  SampleListing,
+  SamplePackedVerdict,
+  SamplePreview,
+  SampleResourceKind,
+  SampleResourcesMutation,
+  SampleResourcesSnapshot,
+  SampleShapeOptions,
+  SampleUploadResult,
   UtilsOverview,
   DepRefresh,
+  DynamicAnalysisSnapshot,
+  DynamicTransport,
   ClamdResults,
+  ClamdResultDocument,
   ClamdStatus,
+  ClamdSubmitJob,
+  ClamdSubmitStart,
   ComposeFile,
   ContainerList,
   DocsCatalog,
@@ -100,12 +119,48 @@ export const api = {
   // from the live URL map server-side, so this is a reference that cannot drift
   // from the routes actually registered.
   docs: () => json<DocsCatalog>('/api/docs'),
-  // ClamAV lives inside the analysis VM, so these are read-only views of the
-  // result JSONs and the local connection-test checks - nothing here starts a
-  // scan or SSHes anywhere. Triggering a run is a subprocess with real side
-  // effects (upload + freshclam + scan), so it stays a CLI action.
+  // ClamAV lives inside the analysis VM. Status and results are read-only
+  // views; submission is the one action, and it has two transports: the SFTP
+  // driver in python/clamd/ or the operator's TCP socket client in
+  // panel/utils/socket_validator.py. It returns a job handle because an SFTP
+  // deploy outlives an HTTP request.
   clamdStatus: () => json<ClamdStatus>('/api/clamd/status'),
   clamdResults: () => json<ClamdResults>('/api/clamd/results'),
+  /** One result document, unmodified, for the JSON viewer. */
+  clamdResult: (name: string) =>
+    json<ClamdResultDocument>(`/api/clamd/results/${encodeURIComponent(name)}`),
+  /** The scan in progress, or the last one, so a reload reattaches. */
+  clamdCurrent: () =>
+    json<ClamdSubmitJob | null>('/api/clamd/submit'),
+  /** Poll a submission through the same job store as builds and utils. */
+  clamdJob: (jobId: string) =>
+    json<ClamdSubmitJob>(`/api/build/${encodeURIComponent(jobId)}`),
+  /**
+   * Upload one sample and start the scan. There is no transport argument: it
+   * is read from config/dynamic_analysis.json, so the page cannot submit down
+   * a path the Dynamic Analysis page does not record. The refusal payload is
+   * returned rather than thrown so the caller can show `code`-specific wording
+   * (config-error, transport-unavailable, too-large) instead of a status.
+   */
+  clamdSubmit: async (file: File):
+    Promise<ClamdSubmitStart> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch('/api/clamd/submit', {
+      method: 'POST', credentials: 'same-origin', body: form,
+    })
+    return await res.json().catch(
+      () => ({ ok: false, error: `HTTP ${res.status}` })) as ClamdSubmitStart
+  },
+  // The one transport a sample under dynamic analysis may use. Read on page
+  // load and after a save, not polled: it is a standing policy, not telemetry.
+  dynamicAnalysis: () => json<DynamicAnalysisSnapshot>('/api/dynamic-analysis/config'),
+  setDynamicAnalysis: (communication: DynamicTransport) =>
+    json<DynamicAnalysisSnapshot>('/api/dynamic-analysis/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ communication }),
+    }),
   // Qiling emulation runs: summary.json + trace tail read out of each result
   // zip, plus rootfs/harness state. Also read-only.
   qilingRuns: () => json<QilingRuns>('/api/qiling/runs'),
@@ -222,23 +277,201 @@ containerBuild: (project: string) =>
   // showing an idle panel while the compiler works.
   currentBuild: () => json<AnalyzerBuildJob | null>('/api/build/current'),
 
+  // --- pipeline runs: watch the analyzer on a chosen sample ------------------
+  //
+  // One endpoint for the whole feature: the run in progress, or the most
+  // recent finished one. Polling while running is the page's job (2s, the
+  // build log's cadence); a reload reattaches rather than orphaning.
+  pipelineRun: () => json<PipelineRunState | null>('/api/pipeline-run'),
+  /**
+   * `duration` is a maximum in seconds, or undefined for no limit. Omitted
+   * rather than sent as 0: the server reads 0 as "below the 10s floor" and
+   * refuses it, which is the right answer for a number nobody meant.
+   *
+   * `allowPacked` is the explicit packed override - the server refuses a
+   * packed sample with `code: "sample-packed"` unless it is exactly true, and
+   * says in `detail` what the analyzer's own packed stop will do to an
+   * overridden run. A successful overridden start carries a `warning` when
+   * that analyzer stop is on.
+   */
+  startPipelineRun: (pipeline: string, sample: string, duration?: number | null,
+                     allowPacked = false) =>
+    json<{ ok: boolean; job_id: string; command: string; pipeline: string;
+           duration_sec?: number | null; packed?: SamplePackedVerdict | null;
+           warning?: string | null; analyzer_packed_stop?: AnalyzerPackedStop;
+           code?: string; error?: string; detail?: string }>(
+      '/api/pipeline-run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pipeline, sample, duration: duration ?? null,
+                             allow_packed: allowPacked }),
+    }),
+  stopPipelineRun: (jobId: string) =>
+    json<{ ok: boolean; job_id: string; state: string }>(
+      `/api/pipeline-run/${encodeURIComponent(jobId)}/stop`, { method: 'POST' }),
+  /**
+   * The Run a pipeline picker's choices: executables under the same sample
+   * roots the run gate enforces, newest first. Metadata only - inspecting the
+   * selected file is a separate call because a packed verdict reads it whole.
+   */
+  listSamples: () => json<SampleListing>('/api/build/samples'),
+  /**
+   * Upload an operator's own sample into samples/. Returns the refusal payload
+   * instead of throwing so the caller can read `code` and offer the explicit
+   * unscanned retry only when the scanner is the thing that refused.
+   */
+  uploadSample: async (file: File, allowUnscanned = false):
+    Promise<SampleUploadResult> => {
+    const form = new FormData()
+    form.append('file', file)
+    if (allowUnscanned) form.append('allow_unscanned', 'true')
+    const res = await fetch('/api/build/samples/upload', {
+      method: 'POST', credentials: 'same-origin', body: form,
+    })
+    return await res.json().catch(
+      () => ({ ok: false, error: `HTTP ${res.status}` })) as SampleUploadResult
+  },
+  /**
+   * Validate a typed sample path and describe it - same rules the run gate
+   * applies server-side, so what this shows is what the gate will enforce:
+   * size, mtime, the packed verdict, and the analyzer's own packed-stop state.
+   */
+  inspectSample: (path: string) =>
+    json<SampleInspect>('/api/build/samples/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    }),
+
+  // --- sample factory: compose a bait sample and compile it ------------------
+  //
+  // Templates, the checkbox vocabulary and the compiler state, so the Build
+  // page can render the offer without inventing any of it.
+  sampleTemplates: () =>
+    json<SampleFactoryCatalog>('/api/build/sample/templates'),
+  // The composed source text plus the noise pair it will carry. The preview
+  // and the artefact agree because the pair is drawn here, not at generate.
+  samplePreview: (language: string, template: string, features: string[],
+                  encoding: string, sleepSeconds: number,
+                  shape: SampleShapeOptions, seed?: number) =>
+    json<SamplePreview>('/api/build/sample/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language, template, features, encoding,
+                             sleep_seconds: sleepSeconds, ...shape, seed }),
+    }),
+  generateSample: (language: string, template: string, features: string[],
+                   options: {
+                     name?: string
+                     encoding: string
+                     sleepSeconds: number
+                     upx: boolean
+                     virtualize: boolean
+                     makefile: boolean
+                     seed: number
+                     shape: SampleShapeOptions
+                   }) =>
+    json<SampleGenerated>('/api/build/sample', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        language, template, features,
+        name: options.name,
+        encoding: options.encoding,
+        sleep_seconds: options.sleepSeconds,
+        upx: options.upx,
+        virtualize: options.virtualize,
+        makefile: options.makefile,
+        seed: options.seed,
+        ...options.shape,
+      }),
+    }),
+
   // Operator maintenance for the vendored stack: SBOM, the MalAPI rule
   // checkout, the YARA packs and yarGen-Go. One call for all four so the four
   // cards cannot describe four different moments.
   utilsOverview: () => json<UtilsOverview>('/api/utils'),
-  runUtils: (ids: string[]) =>
+  // `options` carries per-utility switches: { ignore_compile_failures } for
+  // the YARA check. The backend persists what it is given, so a reload of the
+  // page shows the checkbox as the last run left it - a toggle that resets
+  // itself teaches you to re-check nothing, which is worse than no toggle.
+  runUtils: (ids: string[], options?: Record<string, unknown>) =>
     json<{ ok: boolean; job_id?: string; running?: string[]; error?: string }>(
       '/api/utils', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
+      body: JSON.stringify({ ids, options: options ?? {} }),
     }),
+
+  // The YARA card's checkbox. A dedicated endpoint rather than reusing a run:
+  // the compile check is ~60s and a toggle that forces a minute of
+  // compilation each flip would be switched off and stay off.
+  setYaraOptions: (options: { ignore_compile_failures: boolean }) =>
+    json<{ ok: boolean; ignore_compile_failures?: boolean; error?: string }>(
+      '/api/utils/yara-check', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options),
+    }),
+
+  // --- generator resources: value pools the sample factory draws from -------
+  //
+  // Definitions live in config/sample_resources.json, fetched values in the
+  // panel cache. Every mutating call returns the fresh snapshot, so the page's
+  // pools cannot disagree with the file for even one render.
+  sampleResources: () => json<SampleResourcesSnapshot>('/api/utils/resources'),
+  addSampleResource: (body: {
+    label: string
+    kind: SampleResourceKind
+    url: string
+    enabled?: boolean
+    note?: string
+    fetch?: boolean
+  }) => json<SampleResourcesMutation>('/api/utils/resources', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }),
+  updateSampleResource: (id: string, body: {
+    label?: string
+    kind?: SampleResourceKind
+    url?: string
+    enabled?: boolean
+    note?: string
+  }) => json<SampleResourcesMutation>(
+    `/api/utils/resources/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  deleteSampleResource: (id: string) => json<SampleResourcesMutation>(
+    `/api/utils/resources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // A failed fetch returns ok:false with the snapshot (HTTP 200): the page
+  // needs the error AND the last good values, not just the error.
+  refreshSampleResource: (id: string) => json<SampleResourcesMutation>(
+    `/api/utils/resources/${encodeURIComponent(id)}/refresh`,
+    { method: 'POST' }),
 
   // Provenance, freshness, validation and build configuration. One call,
   // because the three together are one verdict - "can I trust this binary?" -
   // and a page that fetched them separately could render a green check beside a
   // stale commit.
   buildInspect: () => json<BuildInspect>('/api/build/inspect'),
+
+  // The hardening settings (config/hardening.json) and what the finished
+  // binary actually carries. One call for the same reason as buildInspect:
+  // the card answers "do the settings and the binary agree?", and two calls
+  // could render the requested settings beside a binary built before them.
+  buildHardening: () => json<BuildHardening>('/api/build/hardening'),
+  // A partial write: only the keys in the patch move, and the response is the
+  // same payload as the GET, so the card re-renders from what is on disk
+  // rather than from what was asked for.
+  setBuildHardening: (patch: Record<string, boolean>) =>
+    json<BuildHardening>('/api/build/hardening', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
 
   // The test catalogue, and the runner. Selection is explicit because the
   // entries are not equivalent: some write files, one runs the analyzer end to
@@ -282,22 +515,51 @@ containerBuild: (project: string) =>
         body: JSON.stringify(options),
       },
     ),
-  setPipelineEnvironment: (pipeline: string, environment: Record<string, boolean | number | string>) =>
+  // --- the bundle-password resource -------------------------------------------
+  //
+  // The password never crosses these routes in a config write; the state
+  // routes carry only presence and path, and the ONE response that contains
+  // the value is a generate. Everything hangs off the operator password file
+  // outside the repo, which upload.py reads by path at protection time.
+  bundlePassword: () =>
+    json<{ ok: boolean; present: boolean; path: string; error?: string | null }>(
+      '/api/artifacts/bundle-password',
+    ),
+  setBundlePassword: (password: string) =>
+    json<{ ok: boolean; present: boolean; path: string }>(
+      '/api/artifacts/bundle-password',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      },
+    ),
+  /** The generated value is returned exactly once; the page shows it with a
+   *  copy button and nothing ever echoes it again afterwards. */
+  generateBundlePassword: (length?: number) =>
+    json<{ ok: boolean; password: string; shown_once: boolean; present: boolean; path: string }>(
+      '/api/artifacts/bundle-password/generate',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(length ? { length } : {}),
+      },
+    ),
+  clearBundlePassword: () =>
+    json<{ ok: boolean; present: boolean; path: string }>(
+      '/api/artifacts/bundle-password',
+      { method: 'DELETE' },
+    ),
+  /** A `null` value clears the key from the block, whatever the option kind. */
+  setPipelineEnvironment: (pipeline: string, environment: Record<string, boolean | number | string | null>) =>
     json<{ ok: boolean; pipeline: PipelineConfig }>('/api/analysis/pipeline/environment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pipeline, environment }),
     }),
-  setPipelineRush: (pipeline: string, enabled: boolean) =>
-    json<{ ok: boolean; pipeline?: PipelineConfig; error?: string }>(
-      '/api/analysis/pipeline/rush', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pipeline, enabled }),
-    }),
 
-  // The writable form of the yarGen decision. Edits the same inline
-  // `phases: [...]` list as the rush toggle, inserting before `export` so the
+  // The writable form of the yarGen decision. Edits the inline
+  // `phases: [...]` list, inserting before `export` so the
   // generated rule file is part of the artifact set rather than written after it.
   setYaraGen: (pipeline: string, enabled: boolean) =>
     json<{ ok: boolean; pipeline?: PipelineConfig; error?: string }>(

@@ -12,6 +12,7 @@ import { Sparkline, type SparkTone } from '../components/Stat'
 import Pager, { usePaged } from '../components/Pager'
 import ComposeFileViewer from '../components/ComposeFileViewer'
 import BuildLog from '../components/BuildLog'
+import { CopyButton } from '../components/ServiceCard'
 
 // ---------------------------------------------------------------------------
 // Live Docker state, read from the Docker CLI by the panel backend.
@@ -252,6 +253,49 @@ function StorageCard({ storage }: { storage: NonNullable<ContainerList['storage'
         ))}
       </Card.Content>
     </Card>
+  )
+}
+
+// Where this service can be reached, when the panel knows.
+//
+// The ports row below it is docker's NAT mapping ("127.0.0.1:60001->3000/tcp"),
+// which is a fact about plumbing and not an address a person can paste into a
+// browser. This is the address. It comes from the panel's own service specs
+// joined on the published port (see panel/services.py), so it is the URL that
+// actually answers - not one derived from the image name.
+//
+// A tcp:// endpoint is shown as text with no link: `tcp://` is not something a
+// browser opens, and offering a link that cannot work teaches people that the
+// console's links are decoration.
+function Endpoint({ endpoint }: { endpoint: Container['endpoint'] }) {
+  if (!endpoint) return null
+  const openable = endpoint.kind === 'http'
+  return (
+    <div className="container-endpoint">
+      <div className="container-image-line">
+        <span>Endpoint</span>
+        <code title={endpoint.url}>
+          {openable ? (
+            <a href={endpoint.url} target="_blank" rel="noreferrer noopener">
+              {endpoint.url}
+            </a>
+          ) : (
+            endpoint.url
+          )}
+        </code>
+        <CopyButton value={endpoint.url} label="endpoint URL" />
+      </div>
+      <div className="container-endpoint-meta">
+        <span title={`The panel probes this service as ${endpoint.key}`}>
+          {endpoint.service}
+        </span>
+        {endpoint.ui_url && endpoint.ui_url !== endpoint.url && (
+          <a href={endpoint.ui_url} target="_blank" rel="noreferrer noopener">
+            open UI ↗
+          </a>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -582,6 +626,10 @@ export default function Containers() {
                           <Trend label="MEM" unit="%" data={track.mem} tone="success" max={100} />
                         </div>
                       )}
+
+                      {/* The address before the plumbing: the port mapping below
+                          says how the port got here, this says where to go. */}
+                      <Endpoint endpoint={c.endpoint} />
 
                       {c.ports.length > 0 && (
                         <div className="container-ports">

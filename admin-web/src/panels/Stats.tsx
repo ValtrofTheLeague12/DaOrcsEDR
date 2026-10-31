@@ -30,7 +30,7 @@ function Ring({
   const v = value ?? 0
   const t = total ?? 0
   const pctDone = t ? Math.round((v / t) * 100) : 0
-  const stroke = `var(--${tone === 'default' ? 'default-400' : tone})`
+  const stroke = tone === 'default' ? 'var(--muted)' : `var(--${tone})`
   const r = 30
   const c = 2 * Math.PI * r
 
@@ -84,7 +84,7 @@ export default function Stats() {
     <>
       <div className="mb-6 flex items-baseline justify-between gap-4">
         <h1 className="page-title">Statistics</h1>
-        <span className="text-[11px] text-default-400">
+        <span className="meta-pill">
           aggregates every concern · history {historyLabel}
         </span>
       </div>
@@ -129,9 +129,11 @@ export default function Stats() {
       {/* --- breakdown --- */}
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
         {/* Services */}
-        <div className="stat-tile">
+        <div className="stat-tile tone-accent">
           <div className="mb-4 flex items-center gap-2">
-            <Icon name="overview" size={14} className="text-default-400" />
+            <span className="stat-tile-icon">
+              <Icon name="overview" size={14} />
+            </span>
             <span className="eyebrow">Services</span>
           </div>
           <Ring
@@ -158,9 +160,11 @@ export default function Stats() {
         </div>
 
         {/* Logs */}
-        <div className="stat-tile">
+        <div className="stat-tile tone-violet">
           <div className="mb-4 flex items-center gap-2">
-            <Icon name="logs" size={14} className="text-default-400" />
+            <span className="stat-tile-icon">
+              <Icon name="logs" size={14} />
+            </span>
             <span className="eyebrow">Logs</span>
           </div>
           <div className="metric font-mono text-2xl font-semibold leading-none">
@@ -188,9 +192,11 @@ export default function Stats() {
         </div>
 
         {/* Runs */}
-        <div className="stat-tile">
+        <div className="stat-tile tone-amber">
           <div className="mb-4 flex items-center gap-2">
-            <Icon name="artifacts" size={14} className="text-default-400" />
+            <span className="stat-tile-icon">
+              <Icon name="artifacts" size={14} />
+            </span>
             <span className="eyebrow">Analysis runs</span>
           </div>
           <div className="metric font-mono text-2xl font-semibold leading-none">
@@ -230,10 +236,12 @@ export default function Stats() {
 
       {/* --- containers + disk --- */}
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <div className="stat-tile">
+        <div className="stat-tile tone-cyan">
           <div className="mb-4 flex items-center justify-between gap-2">
             <span className="flex items-center gap-2">
-              <Icon name="containers" size={14} className="text-default-400" />
+              <span className="stat-tile-icon">
+                <Icon name="containers" size={14} />
+              </span>
               <span className="eyebrow">Containers</span>
             </span>
             <span
@@ -268,9 +276,11 @@ export default function Stats() {
           )}
         </div>
 
-        <div className="stat-tile">
+        <div className="stat-tile tone-emerald">
           <div className="mb-4 flex items-center gap-2">
-            <Icon name="machine" size={14} className="text-default-400" />
+            <span className="stat-tile-icon">
+              <Icon name="machine" size={14} />
+            </span>
             <span className="eyebrow">Storage</span>
           </div>
           <div className="metric font-mono text-2xl font-semibold leading-none">

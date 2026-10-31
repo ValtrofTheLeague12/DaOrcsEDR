@@ -134,7 +134,7 @@ function TopArtifacts({
       <Card.Header className="flex items-start justify-between gap-3">
         <div>
           <Card.Title>{title}</Card.Title>
-          <p className="mt-1 text-[11px] text-default-500">Largest archive sizes, first</p>
+          <p className="mt-1 text-[11px] text-default-500">Largest archives first</p>
         </div>
         <Icon name="stats" size={16} />
       </Card.Header>
@@ -240,9 +240,9 @@ function ArtifactStats({
       </div>
 
       <div className="artifact-ranking-grid">
-        <TopArtifacts title="Top 5 sized artifacts · local" artifacts={localStats} />
+        <TopArtifacts title="Top 5 largest artifacts · local" artifacts={localStats} />
         <TopArtifacts
-          title="Top 5 sized artifacts · remote"
+          title="Top 5 largest artifacts · remote"
           artifacts={remoteStats}
           unavailable={remote.length === 0 ? remoteUnavailable : null}
         />
@@ -372,7 +372,7 @@ function RemoteList({
   uploadEnabled,
   onExportStarted,
   encryptEnabled,
-  recipient,
+  passwordReady,
 }: {
   bundles: UnifiedBundle[]
   truncated: string | null
@@ -386,10 +386,10 @@ function RemoteList({
    *  Read once here rather than per bundle so a disabled account shows one
    *  explanation instead of a button per row that all fail the same way. */
   uploadEnabled: boolean
-  /** Whether exports are sealed to a public key first. */
+  /** Whether exports are password-protected first. */
   encryptEnabled: boolean
-  /** Which key, when encryptEnabled. */
-  recipient: string
+  /** Whether the operator password file exists, when encryptEnabled. */
+  passwordReady: boolean
   /** Hand the job to the page, which owns the log modal: a running upload must
    *  not be tied to a list the operator can page away from. */
   onExportStarted: (job: { jobId: string; name: string }) => void
@@ -418,7 +418,7 @@ function RemoteList({
   }
 
   // The mirror of recover: push what is on disk up to MEGA. It is a job, not a
-  // request, because sealing a large bundle and pushing it over a consumer link
+  // request, because protecting a large bundle and pushing it over a consumer link
   // takes minutes - and the log is the part worth watching.
   const exportBundle = async (name: string) => {
     setExporting(name)
@@ -453,11 +453,11 @@ function RemoteList({
           <Alert status="warning">
             <Alert.Title>Export is disabled</Alert.Title>
             <Alert.Description>
-              <code className="font-mono">upload_artifacts</code> is false in{' '}
-              <code className="font-mono">config/artifacts.yaml</code>, so evidence cannot be
-              pushed to MEGA from here - the same option that stops the analyzer doing it on a
-              run. Recover still works: pulling evidence down does not send it anywhere. Turn it
-              back on under <strong>Analysis → Analysis Configuration → Upload &amp; artifacts</strong>.
+              The upload toggle is off - whoever decided it is shown on{' '}
+              <strong>Analysis Configuration → MEGA upload</strong>, whose{' '}
+              <code className="font-mono">MEGA_*</code> settings win over{' '}
+              <code className="font-mono">config/artifacts.yaml</code> where both are set.
+              Recover still works: pulling evidence down does not send it anywhere.
             </Alert.Description>
           </Alert>
         )}
@@ -519,15 +519,17 @@ function RemoteList({
                               className="artifact-action"
                               title={uploadEnabled
                                 ? (encryptEnabled
-                                  ? `Seal this bundle to the '${recipient}' public key and upload it to MEGA ${remoteRoot}`
-                                  : `Upload this bundle to MEGA ${remoteRoot} UNSEALED`)
-                                : 'Uploading is disabled by upload_artifacts in config/artifacts.yaml'}
+                                  ? (passwordReady
+                                    ? `Protect this bundle with the operator password and upload it to MEGA ${remoteRoot}`
+                                    : `Cannot protect yet: no bundle password is set - set or generate one on the Analysis Configuration page first`)
+                                  : `Upload this bundle to MEGA ${remoteRoot} UNPROTECTED`)
+                                : 'Uploading is disabled - see the Analysis Configuration page, MEGA upload group'}
                               onClick={() => void exportBundle(bundle.name)}
-                              disabled={exporting !== null || !uploadEnabled}
+                              disabled={exporting !== null || !uploadEnabled || (encryptEnabled && !passwordReady)}
                             >
                               {exporting === bundle.name
                                 ? 'Exporting…'
-                                : encryptEnabled ? 'Export to MEGA' : 'Export unencrypted'}
+                                : encryptEnabled ? 'Export to MEGA' : 'Export unprotected'}
                               <span aria-hidden="true">↑</span>
                             </button>
                           )}
@@ -570,7 +572,12 @@ function RemoteList({
         {(truncated || notExamined > 0) && (
           <Alert status="warning" className="mt-2">
             <Alert.Title>Remote listing is partial</Alert.Title>
-            <Alert.Description>{truncated ?? `${notExamined} bundles were not examined.`}</Alert.Description>
+            <Alert.Description>
+              {truncated ??
+                `${notExamined} bundle${notExamined === 1 ? '' : 's'} ${
+                  notExamined === 1 ? 'was' : 'were'
+                } not examined.`}
+            </Alert.Description>
           </Alert>
         )}
         <BundleTimelineNote path={historyPath} written={historyWritten} updatedAt={historyAt} />
@@ -595,10 +602,12 @@ export default function Artifacts() {
   const uploadEnabled = analysis?.mega_upload ?? true
   // What an export will actually do, decided server-side from the same config
   // the analyzer reads. Shown on the button because "this leaves the host" and
-  // "this leaves the host readable by anyone holding the key" are different
-  // claims, and the operator should be able to see which one they are making.
+  // "this leaves the host readable by anyone who can open the remote folder"
+  // are different claims, and the operator should see which one they are
+  // making. Protection is a password zip, so the state is on/off plus whether
+  // the password file exists enough to actually protect anything.
   const encryptEnabled = analysis?.mega_encrypt ?? false
-  const recipient = analysis?.encryption_recipient ?? 'user'
+  const passwordReady = analysis?.bundle_password?.present ?? false
   const [exportJob, setExportJob] = useState<{ jobId: string; name: string } | null>(null)
 
   useEffect(() => {
@@ -684,7 +693,7 @@ export default function Artifacts() {
               <MetricTile
                 label="Needs attention"
                 value={String(summary.attention)}
-                note="missing or integrity check failed"
+                note="missing, or failed its integrity check"
                 icon={<Icon name="overview" size={15} />}
                 tone={summary.attention > 0 ? 'warning' : 'success'}
               />
@@ -744,7 +753,7 @@ export default function Artifacts() {
                   historyAt={data.history?.updated_at ?? null}
                   uploadEnabled={uploadEnabled}
                   encryptEnabled={encryptEnabled}
-                  recipient={recipient}
+                  passwordReady={passwordReady}
                   onExportStarted={setExportJob}
                 />
               )}

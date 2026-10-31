@@ -1,8 +1,9 @@
 """Evidence bundles: the local tarballs, their MEGA copies, and the gap between.
 
-`mega/` seals an analysis run into `exports/<artifact>_artifact/` - a
+`mega/` turns an analysis run into `exports/<artifact>_artifact/` - a
 deterministic tar.gz, a `.sha256`, a `manifest.json` inventory and a README - and
-then hands it to MEGA. This module reads both ends of that, and nothing else.
+then hands it (or its password-protected zip) to MEGA. This module reads both
+ends of that, and nothing else.
 
 Two halves, deliberately separate:
 
@@ -859,7 +860,7 @@ if __name__ == "__main__":  # manual probe: `python -m python.panel.artifacts`
 
 
 # ---------------------------------------------------------------------------
-# Export: seal and push a local bundle to MEGA
+# Export: protect and push a local bundle to MEGA
 #
 # The mirror of Recover, which pulls a remote bundle down. This pushes one up,
 # through the same mega/upload.py an operator would run by hand - not a
@@ -868,21 +869,23 @@ if __name__ == "__main__":  # manual probe: `python -m python.panel.artifacts`
 # and a second uploader would quietly be a different thing producing different
 # bytes under the same name.
 #
-# Job-based rather than a blocking request: sealing a large bundle and pushing it
+# Job-based rather than a blocking request: protecting a large bundle and pushing it
 # over a consumer link is minutes, and the interesting part is the log. Same
 # in-memory job shape as the compose build in containers.py, for the same reason.
 #
-# Gated on config/artifacts.yaml's upload_artifacts. That option is the operator
-# saying "this lab does not send evidence off the host", and a button in a
-# browser is exactly the kind of thing that has to honour it: the toggle that
-# turns uploading off must mean it everywhere, not just in the analyzer.
+# Gated on the effective upload toggle: the Analysis Configuration page's
+# MEGA_UPLOAD wins over config/artifacts.yaml's upload_artifacts, the same
+# precedence the analyzer applies. The toggle is the operator saying "this lab
+# does not send evidence off the host", and a button in a browser is exactly
+# the kind of thing that has to honour it: the setting that turns uploading
+# off must mean it everywhere, not just in the analyzer.
 # ---------------------------------------------------------------------------
 
 EXPORT_MAX_LOG_LINES = 4000
 EXPORT_JOB_TTL = 3600.0
 
 # The uploader gets the configured timeout; the subprocess gets that plus a
-# margin for sealing and process teardown, so a stuck upload is still killed.
+# margin for protecting and process teardown, so a stuck upload is still killed.
 EXPORT_GRACE = 180.0
 
 _uploader_job_lock = threading.Lock()
@@ -902,7 +905,7 @@ def _valid_remote_root(root: str) -> str | None:
 
 
 def start_export(name: str, remote_root: str = "/", timeout: int | None = None) -> tuple[bool, dict]:
-    """Seal and upload one bundle; returns (ok, job-or-error)."""
+    """Protect and upload one bundle; returns (ok, job-or-error)."""
     if not valid_name(name):
         return False, {"error": "invalid artifact name"}
     root = _valid_remote_root(remote_root)
@@ -918,31 +921,35 @@ def start_export(name: str, remote_root: str = "/", timeout: int | None = None) 
         }
 
     # Read through the analysis parser so the button's gate and the toggle the
-    # operator just flipped can never disagree about whether uploading is on.
+    # operator just flipped can never disagree about whether uploading is on -
+    # and the refusal names the file that actually decided, because with
+    # analysis.yaml's MEGA_UPLOAD winning over artifacts.yaml, sending the
+    # operator to fix the wrong file is the failure mode this gate exists for.
     from . import analysis  # local import: analysis imports nothing from here
 
-    if not analysis.artifact_upload_enabled():
+    decision = analysis.artifact_upload_decision()
+    if not decision["enabled"]:
         return False, {
             "error": "uploading is disabled",
-            "detail": "upload_artifacts is false in config/artifacts.yaml - "
-                      "enable it on the Analysis Configuration page first",
+            "detail": "uploading is off, decided by "
+                      f"{decision['decided_by'] or 'the defaults'} - enable it "
+                      "on the Analysis Configuration page first",
         }
 
     seconds = timeout or analysis.artifact_upload_timeout()
 
-    # Pre-flight the key BEFORE the job starts. A missing key is a configuration
-    # problem the operator can fix in a second; discovering it two minutes into a
-    # streaming upload job, after the bundle has been built, is not the same
-    # experience. upload.py still refuses to fall back to plaintext, so this is
-    # about telling people early rather than about safety.
+    # Pre-flight the password BEFORE the job starts. A missing password file is
+    # a configuration problem the operator can fix in a second; discovering it
+    # two minutes into a streaming upload job, after the bundle has been built,
+    # is not the same experience. upload.py still refuses to fall back to
+    # plaintext, so this is about telling people early rather than about safety.
     encrypt = analysis.artifact_encrypt_enabled()
-    recipient = analysis.artifact_encryption_recipient()
     if encrypt:
         try:
-            _resolve_recipient(recipient, analysis.artifact_admin_public_key())
+            _preflight_bundle_password()
         except Exception as exc:                       # noqa: BLE001
             return False, {
-                "error": f"cannot seal to the '{recipient}' key",
+                "error": "the bundle password is not set up",
                 "detail": f"{type(exc).__name__}: {exc}",
             }
 
@@ -956,28 +963,29 @@ def start_export(name: str, remote_root: str = "/", timeout: int | None = None) 
         _uploader_jobs[job_id] = {
             "job_id": job_id, "name": name, "remote_root": root,
             "state": "running", "lines": [], "dropped": 0,
-            "encrypt": encrypt, "recipient": recipient,
+            "encrypt": encrypt,
             "started_at": now, "finished_at": None, "exit_code": None,
         }
 
     threading.Thread(target=_run_export, args=(_uploader_jobs[job_id], root, seconds),
                      daemon=True).start()
+    # The response says the bundle will be protected, never anything about the
+    # password itself: the value lives in the operator password file and no
+    # payload here carries it.
     return True, {"job_id": job_id, "reused": False, "encrypted": encrypt,
-                  "recipient": recipient if encrypt else None}
+                  "password_protected": encrypt}
 
 
-def _resolve_recipient(recipient: str, admin_key: str):
-    """Load the recipient key now, so a missing one is a 400 and not a job log.
+def _preflight_bundle_password() -> None:
+    """Prove the password file is readable NOW, so a missing one is a 400.
 
-    Imported lazily: seal.py pulls in `cryptography`, and the artifacts page has
-    to load on a machine where that is not installed even when nobody is
-    exporting anything.
+    Read through the same protect.py the uploader uses - and the same default
+    location - so a pre-flight that passes is a guarantee the real read will
+    too, not a parallel implementation that can drift from it.
     """
     sys.path.insert(0, str(config.REPO / "mega"))
-    import seal                                       # noqa: PLC0415
-    if recipient == "admin":
-        return seal.admin_recipient(Path(admin_key) if admin_key else None)
-    return seal.user_recipient()
+    import protect                                     # noqa: PLC0415
+    protect.read_password()
 
 
 def _prune_uploader_jobs(now: float) -> None:
@@ -1004,8 +1012,10 @@ def _run_export(job: dict, remote_root: str, timeout: int) -> None:
                "--remote-root", remote_root, "--timeout", str(timeout),
                # Stated explicitly, both ways, so what leaves the host is the
                # config's decision and never a default that happens to match.
-               "--encrypt" if job.get("encrypt") else "--no-encrypt",
-               "--recipient", job.get("recipient") or "user"]
+               # The password file is the uploader's default (the operator one
+               # the Analysis page manages): the C++/panel side passes paths,
+               # never the password itself.
+               "--encrypt" if job.get("encrypt") else "--no-encrypt"]
     try:
         proc = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

@@ -35,6 +35,13 @@ const std::vector<std::string>& known_analysis_keys() {
       "IA_ALLOW_CORE_DUMP",     // keep a dump when the process dies
       "IA_CONTINUE_ON_SIGNAL",  // Ctrl+C re-runs the phase and continues
       "TRACE_FILE",             // symbol/offset diagnostics
+      "ENABLE_TRACING",         // hard off for the trace layer
+      "IA_INTERRUPT_IF_PACKED", // stop the run when entropy says packed
+      "IA_INTERRUPT_ENTROPY",   // the threshold the packed stop uses
+      "MEGA_UPLOAD",            // upload the evidence bundle (analysis.yaml wins)
+      "MEGA_REMOTE_ROOT",       // MEGA destination parent
+      "MEGA_SEAL",              // password-protect the bundle before upload
+      "MEGA_TIMEOUT",           // upload command timeout, seconds
   };
   return kKeys;
 }
@@ -154,6 +161,20 @@ analysis_settings load_analysis_settings() {
 
 void apply_analysis_settings(const analysis_settings& settings) {
   for (const auto& [key, value] : settings.settings) {
+    // A key that is already in the environment arrived from the pipeline's
+    // `environment:` block, or from the shell. That is the documented
+    // precedence working, not an error - but an overwrite nobody said loud is
+    // exactly the config dup nobody can diagnose later: the pipeline's value
+    // is about to vanish with no trace of it having existed. Name it before
+    // it goes (secret-looking names get nothing but the fact of the replace;
+    // everything else is a flag, a number or a path, scrubbed anyway).
+    if (const char* previous = std::getenv(key.c_str());
+        previous != nullptr && std::string_view(previous) != value &&
+        !redact::is_secret_name(key)) {
+      LOG_WARN("analysis config: {} replaces the value set earlier for it "
+               "(pipeline or shell): {}",
+               key, redact::scrub(previous));
+    }
 #if defined(_WIN32)
     // Both blocks, for the same reason the pipeline's apply_environment() does
     // it: SetEnvironmentVariable covers what children inherit, _putenv_s covers

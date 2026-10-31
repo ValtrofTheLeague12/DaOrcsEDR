@@ -32,6 +32,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
 from panel import analysis_settings as S  # noqa: E402
+from panel import analysis as A  # noqa: E402
 from panel.analysis import ENV_BY_KEY, ENV_OPTIONS  # noqa: E402
 
 HEADER = (
@@ -169,6 +170,188 @@ class TestUnknownKeysSurvive:
         assert body["LEGACY_SETTING"] == "1"
         assert body["ML_SKIP"] is True
         assert S.snapshot(repo)["unknown"] == ["LEGACY_SETTING"]
+
+
+class TestPipelinesCannotDuplicateAGlobalKey:
+    """A key belongs to one layer, or the file that loses is a lie.
+
+    The analyzer applies config/analysis.yaml *after* the selected pipeline, so a
+    pipeline line for a key the global file also sets is not a weaker setting -
+    it is a setting that does not happen. Left alone that produces the worst
+    failure mode available here: a YAML file that says ML_SKIP: "0", a run that
+    skips the model, and nothing in either file explaining the gap.
+
+    So the per-pipeline writer refuses it, the pipeline-page verification refuses
+    it (which is what covers the wizard and the raw-YAML tab, since every write
+    goes through there), and the read side reports which existing lines are
+    already inert so an operator can clean them up.
+    """
+
+    @pytest.fixture
+    def wired(self, repo, monkeypatch):
+        """Point the pipeline side at a throwaway repository."""
+        monkeypatch.setattr(A.config, "REPO", repo)
+        monkeypatch.setattr(A, "PIPELINE_DIR", repo / "pipelines")
+        (repo / "pipelines").mkdir()
+        return repo
+
+    def test_the_writer_refuses_a_global_key(self, wired):
+        with pytest.raises(ValueError, match="config/analysis.yaml"):
+            A.write_environment("capa", {"CTI_SKIP": False})
+
+    def test_the_refusal_names_the_key(self, wired):
+        with pytest.raises(ValueError) as exc:
+            A.write_environment("capa", {"CTI_SKIP": True, "ML_TOP_K": 5})
+        assert "CTI_SKIP" in str(exc.value)
+        assert "ML_TOP_K" not in str(exc.value)
+
+    def test_a_key_nobody_set_globally_is_still_writable(self, wired):
+        # The refusal must not be "refuse everything". TRACE_FILE is not in the
+        # fixture's global file, and a run-wide key is exactly what a pipeline
+        # may still differ on - the machine-wide ones moved to the other page.
+        path = wired / "pipelines" / "triage.yaml"
+        path.write_text(
+            "name: triage\nphases: [strings]\n", encoding="utf-8"
+        )
+        entry = A.write_environment("triage", {"TRACE_FILE": "t.log"})
+        assert entry["environment"][0]["key"] == "TRACE_FILE"
+
+    def test_a_new_pipeline_cannot_bake_one_in(self, wired):
+        # The wizard writes a whole file, so every environment key in it is one
+        # the author just introduced. CTI_SKIP is the key the fixture's global
+        # file defines.
+        with pytest.raises(ValueError, match="config/analysis.yaml"):
+            A.save_pipeline(
+                "triage",
+                'name: triage\nphases: [strings]\nenvironment:\n  CTI_SKIP: "0"\n',
+            )
+        assert not (wired / "pipelines" / "triage.yaml").exists()
+
+    def test_a_new_pipeline_may_still_use_a_free_key(self, wired):
+        entry = A.save_pipeline(
+            "triage",
+            'name: triage\nphases: [strings]\nenvironment:\n  TRACE_FILE: "t.log"\n',
+        )
+        assert entry["environment"][0]["key"] == "TRACE_FILE"
+
+    def test_a_new_pipeline_cannot_bake_in_a_key_its_plan_ignores(self, wired):
+        # The document-level twin of the write-route refusal: the wizard writes
+        # phases and environment keys in one act, so an ML key on a plan with
+        # no model phase is refused at save time, not discovered inert later.
+        # Phase-scoped keys are refused on scope, so any ML key serves.
+        with pytest.raises(ValueError, match="Analysis Configuration"):
+            A.save_pipeline(
+                "triage",
+                'name: triage\nphases: [strings]\nenvironment:\n  ML_TOP_K: "3"\n',
+            )
+        assert not (wired / "pipelines" / "triage.yaml").exists()
+
+    def test_editing_another_key_is_not_blocked_by_a_stale_line(self, wired):
+        # The gate is per-key, not per-file, and it has to be: a pipeline that
+        # still carries a stale line is exactly the file an operator needs to
+        # edit to clear it, so refusing every edit because of it would make the
+        # only way out a text editor.
+        path = wired / "pipelines" / "legacy.yaml"
+        path.write_text(
+            'name: legacy\nphases: [strings]\nenvironment:\n  CTI_SKIP: "0"\n',
+            encoding="utf-8",
+        )
+        entry = A.write_environment("legacy", {"TRACE_FILE": "t.log"})
+        assert sorted(e["key"] for e in entry["environment"]) == ["CTI_SKIP", "TRACE_FILE"]
+        assert next(e for e in entry["environment"] if e["key"] == "CTI_SKIP")["shadowed"]
+
+    def test_an_existing_inert_line_is_reported_not_hidden(self, wired):
+        # The file already says it, and someone reading the YAML has to be able
+        # to find out that it does not apply.
+        path = wired / "pipelines" / "legacy.yaml"
+        path.write_text(
+            'name: legacy\nphases: [strings]\nenvironment:\n  CTI_SKIP: "0"\n',
+            encoding="utf-8",
+        )
+        (A.PIPELINE_DIR / "caps.yaml").write_text(
+            'name: caps\nphases: [strings]\nenvironment:\n  ML_TOP_K: "3"\n',
+            encoding="utf-8",
+        )
+        by_name = {p["name"]: p for p in A._pipelines(A._catalog())}
+        legacy_env = {e["key"]: e for e in by_name["legacy"]["environment"]}
+        assert legacy_env["CTI_SKIP"]["shadowed"] is True
+        caps_env = {e["key"]: e for e in by_name["caps"]["environment"]}
+        assert caps_env["ML_TOP_K"]["shadowed"] is False
+
+    def test_clearing_the_global_key_frees_it_again(self, wired):
+        # The rule has to be reversible from the other page, or a setting could
+        # only ever be set once and never adjusted. A run-wide key carries the
+        # assertion now: a phase-scoped key is refused on scope after handback,
+        # which its own test pins.
+        S.write_settings(wired, {"TRACE_FILE": None})
+        assert "TRACE_FILE" not in A._global_keys()
+        path = wired / "pipelines" / "caps.yaml"
+        path.write_text(
+            'name: caps\nphases: [strings]\n', encoding="utf-8"
+        )
+        entry = A.write_environment("caps", {"TRACE_FILE": "t.log"})
+        assert entry["environment"][0]["key"] == "TRACE_FILE"
+
+    def test_a_phase_scoped_key_stays_refused_after_handback(self, wired):
+        # Clearing the global key does NOT reopen per-pipeline writes of a
+        # phase-scoped one - scope is a property of the key, not of who owns it
+        # this week.
+        S.write_settings(wired, {"CTI_SKIP": None})
+        assert "CTI_SKIP" not in A._global_keys()
+        path = wired / "pipelines" / "caps.yaml"
+        path.write_text(
+            'name: caps\nphases: [strings, cti]\n', encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="Analysis Configuration"):
+            A.write_environment("caps", {"CTI_SKIP": True})
+
+
+class TestSetValues:
+    """What the pipelines page is told the global file says."""
+
+    def test_values_are_rendered_as_the_file_writes_them(self, repo):
+        # The reader compares this against the YAML they can open in the same
+        # console, so Python's repr("1") would be a lie of presentation.
+        (repo / "config" / "analysis.yaml").write_text(
+            'ML_SKIP: true\nCTI_SKIP: "1"\nML_TOP_K: 10\n', encoding="utf-8"
+        )
+        assert S.set_values(repo) == {
+            "ML_SKIP": "true", "CTI_SKIP": "1", "ML_TOP_K": "10",
+        }
+
+    def test_a_nested_value_is_skipped_rather_than_shown(self, repo):
+        # The analyzer exits 2 on a non-scalar, so there is no value to display.
+        # The unknown-key alert on the global page is where that gets reported.
+        (repo / "config" / "analysis.yaml").write_text(
+            "ML_SKIP:\n  a: 1\n", encoding="utf-8"
+        )
+        assert S.set_values(repo) == {}
+
+    def test_an_unreadable_file_yields_nothing_rather_than_raising(self, repo):
+        # The analyzer refuses to start on this file anyway, and this collector
+        # runs inside the snapshot that explains why. Raising here would replace
+        # that explanation with a 500.
+        (repo / "config" / "analysis.yaml").write_text(
+            "ML_SKIP: [unclosed\n", encoding="utf-8"
+        )
+        assert S.set_values(repo) == {}
+        assert S.set_keys(repo) == set()
+
+    def test_the_file_only_ever_holds_keys_the_analyzer_reads(self):
+        # This used to assert the file sets *nothing*, on the grounds that an
+        # empty file is why the pipelines page can offer every option. That was
+        # asserting local state as if it were a property of the project: the
+        # console writes this file from a browser, so an operator setting
+        # ML_SKIP globally is doing exactly what it is for, and the test went red
+        # for it. Observed, in fact, on the first run after the page shipped.
+        #
+        # The invariant that is actually the project's is the narrower one: a key
+        # in this file is a key the analyzer reads. A drift here means every run
+        # exits 2 at startup, which no operator action can be blamed for.
+        stray = [k for k in S.set_values(REPO) if k not in ENV_BY_KEY]
+        assert not stray, (
+            f"config/analysis.yaml has keys the analyzer refuses: {stray}"
+        )
 
 
 class TestShippedConfigIsValid:

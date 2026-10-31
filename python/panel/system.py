@@ -453,14 +453,21 @@ def gpu() -> dict:
         idx = adapters.index(adapter) if adapter else None
         if idx is not None:
             matched.add(idx)
+        # `adapter` is None whenever CIM could not be read at all (a PowerShell
+        # timeout or a non-JSON reply) or simply named the card differently -
+        # and nvidia-smi's live metrics are the more valuable half of the row,
+        # so they are kept either way. Spreading None would raise, which is how
+        # one unreadable CIM query took down all of /api/system.
         merged.append({
-            **adapter,
+            **(adapter or {}),
             **dev,
             # nvidia-smi is authoritative for VRAM on this card; the CIM uint32
             # would be wrong for anything over 4 GB.
             "vram_bytes": dev.get("memory_total_bytes"),
             "vram_source": "nvidia-smi",
             "live": True,
+            # Present and None when CIM did not supply it, so the UI can tell
+            # "no driver version reported" from a field that was never sent.
             "driver_version": (adapter or {}).get("driver_version"),
         })
 

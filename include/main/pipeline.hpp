@@ -115,6 +115,14 @@ struct context {
   // process - and run_summary.json reports this one instead, because that is
   // the honest answer to "what did this run do".
   std::uint64_t executed_mask = 0;
+  // Set when the run stopped itself on a policy flag rather than finishing,
+  // failing, or being interrupted. Today that is only "packed":
+  // IA_INTERRUPT_IF_PACKED turns the histogram phase's whole-file entropy into
+  // a stop condition, and main() reads this - not `interrupted` - for the
+  // Result line and its own exit code. The planner stops before the next
+  // phase once it is set, so the completed phases stay checkpointed and
+  // --resume pushes through.
+  std::string stop_reason;
   // Set when the run stopped because the operator asked it to (Ctrl+C), as
   // opposed to finishing or failing.
   bool interrupted = false;

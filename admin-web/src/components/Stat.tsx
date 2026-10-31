@@ -42,7 +42,7 @@ export function Sparkline({
 
   const hi = max ?? Math.max(...points)
   const lo = min ?? Math.min(...points)
-  const span = hi - lo || 1
+  const span = hi - lo
   const W = 100
   const H = height
   const pad = 2
@@ -50,7 +50,11 @@ export function Sparkline({
 
   // Normalise against the widest window so the shape is comparable over time.
   const step = data.length > 1 ? W / (data.length - 1) : W
-  const y = (v: number) => pad + usable - ((v - lo) / span) * usable
+  // A perfectly flat series has no range to map onto. Drawing it at the floor
+  // reads as a UI underline rather than as a trend; centring it says "measured,
+  // unchanged", which is what the data actually means.
+  const y = (v: number) =>
+    span === 0 ? pad + usable / 2 : pad + usable - ((v - lo) / span) * usable
 
   // Split into contiguous runs of non-null samples.
   const runs: { d: string; area: string }[] = []
@@ -132,13 +136,6 @@ function buildPath(pts: string[], baseline: number): { d: string; area: string }
 // Stat tile
 // ---------------------------------------------------------------------------
 
-const TONE_RING: Record<SparkTone, string> = {
-  accent: 'text-accent',
-  success: 'text-success',
-  warning: 'text-warning',
-  danger: 'text-danger',
-}
-
 export function StatTile({
   label,
   value,
@@ -162,16 +159,16 @@ export function StatTile({
   return (
     <Tag
       onClick={onClick}
-      className={`stat-tile group ${onClick ? 'cursor-pointer' : ''}`}
+      className={`stat-tile tone-${trendTone} group ${onClick ? 'cursor-pointer' : ''}`}
     >
       <div className="flex items-start justify-between gap-3">
         <span className="text-[11px] font-medium uppercase tracking-wider text-default-400">
           {label}
         </span>
-        {icon && <span className={`opacity-70 ${TONE_RING[trendTone]}`}>{icon}</span>}
+        {icon && <span className="stat-tile-icon">{icon}</span>}
       </div>
 
-      <div className="mt-2 font-mono text-2xl font-semibold leading-none tracking-tight text-foreground tabular-nums">
+      <div className="mt-3 font-mono text-2xl font-semibold leading-none tracking-tight text-foreground tabular-nums">
         {value}
       </div>
 
