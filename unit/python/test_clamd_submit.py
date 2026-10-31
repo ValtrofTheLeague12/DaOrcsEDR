@@ -34,7 +34,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import clamd  # noqa: E402
+from panel.clamd import clamd  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

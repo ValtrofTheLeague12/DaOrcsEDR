@@ -11,7 +11,7 @@ from loguru import logger
 # panel can tail both from one place and a run leaves nothing behind in whatever
 # directory the server happened to be started from.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from panel.config import logs_dir  # noqa: E402
+from panel.core.config import logs_dir  # noqa: E402
 
 LOG_DIR     = logs_dir()
 LOG_FILE    = LOG_DIR / "logs.jsonl"

@@ -173,12 +173,12 @@ admin-web/                    Admin console SPA (React + Vite + HeroUI). dist/
                               is served by python/panel; only src/ is source
 admin-panel.ps1               Builds the SPA, starts the panel, opens a browser
 python/admin_server.py        Flask entry point for the admin console
-python/panel/                 Panel backend: app.py holds the routes, netmap.py
-                              the network graph, virt.py hypervisor detection,
-                              vms.py the machine inventory and power control,
-                              artifacts.py local + MEGA evidence bundles,
-                              analysis.py pipelines + artifact/upload options,
-                              yamlview.py the shared PyYAML span colouring
+python/panel/                 Panel backend: app.py holds the routes, grouped by
+                              domain: core/ (config, auth, docs, YAML view),
+                              utils/ (job runners and shared helpers), analysis/,
+                              artifacts/, build/, clamd/, qiling/, samples/,
+                              network/ (netmap, virt, vms, vmmetrics) and
+                              host/ (services, containers, stats, logs, trace)
 python/clamd/                 ClamAV host-side tooling: scanner client, SSH
                                driver, artifact collector, requirements.txt
 python/qiling/                Qiling emulation tooling: the PE harness, VM

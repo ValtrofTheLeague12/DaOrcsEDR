@@ -1,6 +1,6 @@
 """Unit tests for the panel's GPU inventory merge.
 
-`panel.system.gpu()` folds two independent sources into one row per card:
+`panel.host.system.gpu()` folds two independent sources into one row per card:
 
   * `_video_controllers()` - CIM/Win32_VideoController, the inventory side
     (name, driver, mode). Read by shelling out to PowerShell.
@@ -39,7 +39,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import system  # noqa: E402
+from panel.host import system  # noqa: E402
 
 
 def _adapter(name: str, driver: str = "1.2.3") -> dict:

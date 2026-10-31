@@ -61,7 +61,7 @@ ROOT = HERE.parent
 # so this script, the panel and the analyzer agree on one location.
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
-from panel.config import cache_dir as appdata_cache  # noqa: E402
+from panel.core.config import cache_dir as appdata_cache  # noqa: E402
 
 DEFAULT_CACHE = appdata_cache() / "knowledge" / "enterprise-attack.json"
 MITRE_CTI_URL = (

@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO / "python"))
 sys.path.insert(0, str(REPO))
 
 import yara_gen  # noqa: E402
-from panel import utils  # noqa: E402
+from panel.utils import utils  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

@@ -120,7 +120,7 @@ Section 4 of the Build page composes an `int main()` - written in C or C++, as
 chosen - and compiles it into `samples/<name>.exe` with the same MSYS2 UCRT64
 gcc/g++ tree the analyzer build uses, statically linked, so the result runs
 without the sysroot's DLLs. The source is rendered from
-`python/panel/c2.j2`: the template carries the header, includes, helper
+`python/panel/samples/c2.j2`: the template carries the header, includes, helper
 functions, the generated `func_*` block and the `int main` that calls it
 (`int main(void)` in C, `int main()` in C++), ending in `return EXIT_SUCCESS`.
 The composed source pair (.c/.cpp and .exe) lands in `samples/`, which is
@@ -231,7 +231,7 @@ after the compiler succeeds:
   checkbox is disabled with that sentence, and Generate refuses before
   compiling rather than failing after. A failed pack keeps the unpacked exe.
 - **Strip the import table** zeros the PE optional header's IMPORT and IAT
-  data-directory entries (`python/panel/pe_tools.py`). This is destructive by
+  data-directory entries (`python/panel/build/pe_tools.py`). This is destructive by
   design: the Windows loader has no imports to resolve, so the file will not
   run - it crashes before `main`. It is static-analysis bait for the PE and
   YARA passes, not a runnable sample, and both the card and the Generate

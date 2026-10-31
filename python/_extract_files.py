@@ -19,7 +19,7 @@ from loguru import logger
 # analyzer spawns this script from python/, so a relative "logs" and "cache" put
 # a log tree and a cache tree inside the source repo.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from panel.config import cache_dir as appdata_cache, logs_dir as appdata_logs  # noqa: E402
+from panel.core.config import cache_dir as appdata_cache, logs_dir as appdata_logs  # noqa: E402
 
 init(autoreset=True)
 

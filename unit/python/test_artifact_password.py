@@ -33,7 +33,8 @@ sys.path.insert(0, str(REPO / "mega"))
 
 import protect  # noqa: E402
 
-from panel import analysis, config  # noqa: E402
+from panel.analysis import analysis  # noqa: E402
+from panel.core import config  # noqa: E402
 
 
 @pytest.fixture

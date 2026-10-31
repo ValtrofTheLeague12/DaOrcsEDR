@@ -123,7 +123,7 @@ knows they have found all of it:
 ```
 
 `IA_APPDATA_DIR` relocates the whole tree. The three implementations of this
-resolver — `include/core/app_paths.hpp`, `python/panel/config.py` and
+resolver — `include/core/app_paths.hpp`, `python/panel/core/config.py` and
 `admin-terminal/core.py` — are deliberately the same rule, because the analyzer,
 the panel and the terminal all read each other's output.
 

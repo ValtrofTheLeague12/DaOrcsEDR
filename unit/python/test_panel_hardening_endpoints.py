@@ -30,7 +30,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import build_checks, config, hardening  # noqa: E402
+from panel.build import build_checks, hardening  # noqa: E402
+from panel.core import config  # noqa: E402
 
 ALL_BITS = 0x0160  # HIGH_ENTROPY_VA | DYNAMIC_BASE | NX_COMPAT
 

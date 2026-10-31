@@ -43,7 +43,7 @@ if str(HERE) not in sys.path:
 # the AppData root rather than in cti-cache/ inside the working tree. The
 # resolver is imported, not reimplemented, so the analyzer, the panel and this
 # script cannot drift apart on where that is.
-from panel.config import cache_dir as appdata_cache  # noqa: E402
+from panel.core.config import cache_dir as appdata_cache  # noqa: E402
 
 # Tactic shortnames and normalise_tactic() come from the same table the STIX
 # section uses, so the two views of one capa run always agree on names.

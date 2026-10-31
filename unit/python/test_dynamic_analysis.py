@@ -17,7 +17,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import dynamic_analysis as da  # noqa: E402
+from panel.samples import dynamic_analysis as da  # noqa: E402
 
 
 @pytest.fixture()

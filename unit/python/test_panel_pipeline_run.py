@@ -31,7 +31,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import pipeline_run as pr  # noqa: E402
+from panel.pipeline import pipeline_run as pr  # noqa: E402
 
 
 # --- the stub ----------------------------------------------------------------

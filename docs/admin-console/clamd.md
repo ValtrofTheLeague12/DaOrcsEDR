@@ -133,9 +133,9 @@ directly from the host; it is one `INSTREAM` request and needs no SSH account.
 
 **The TCP path uses the operator's client unchanged.** `socket_validator.py`
 owns the interface check, the connection timeout and the socket itself; the
-panel loads it by file path (the `panel/utils/` directory is shadowed by
-`panel/utils.py`, so it is not importable as a submodule), calls
-`establish_tcp_connection()`, and speaks `INSTREAM` on the socket it returns.
+panel loads it by file path (so the operator's tool stays a standalone script
+rather than a panel submodule), calls `establish_tcp_connection()`, and speaks
+`INSTREAM` on the socket it returns.
 Its `print()` narration is captured into the job log with ANSI stripped.
 
 A request that carries a different `mode` is refused with `mode-locked` rather
@@ -159,7 +159,7 @@ upload, the in-VM scan, and the result path. The last line is the verdict -
 place (`connect-failed`, `timeout`, `no-result`, `scan-failed`), rather than
 leaving a spinner.
 
-The job lives in the shared job store (`python/panel/build.py`), so
+The job lives in the shared job store (`python/panel/build/build.py`), so
 `GET /api/build/<job_id>` follows it and a page reload reattaches with
 `GET /api/clamd/submit` instead of orphaning a running upload. One scan at a
 time: a second submission is refused with `409` while one is in progress.
