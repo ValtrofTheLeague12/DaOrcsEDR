@@ -1,6 +1,6 @@
 """Unit tests for the panel's configuration resolver.
 
-`panel.config.setting()` is three lines of string handling, and it is the single
+`panel.core.config.setting()` is three lines of string handling, and it is the single
 place the project's configuration precedence is decided: process environment,
 then the repository `.env`, then a default. Everything else - which port the
 analyzer API is on, where logs go, what the bind host is - is downstream of it.
@@ -26,7 +26,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import config  # noqa: E402
+from panel.core import config  # noqa: E402
 
 
 @pytest.fixture

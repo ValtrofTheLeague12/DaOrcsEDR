@@ -26,7 +26,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import pe_tools  # noqa: E402
+from panel.build import pe_tools  # noqa: E402
 
 
 def pe_image(*, magic=0x10B, import_entry=(0x1000, 0x28),

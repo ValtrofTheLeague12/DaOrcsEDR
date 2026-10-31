@@ -9,7 +9,7 @@ VirtualBox host-only network, its Docker bridges and the Qiling VM. A node is
 `up` because a TCP connect to it answered, not because a config file says so. A
 missing Docker daemon or a missing VirtualBox yields fewer nodes, never a 500.
 
-Hypervisor auto-detection (`python/panel/virt.py`) is reported alongside it,
+Hypervisor auto-detection (`python/panel/network/virt.py`) is reported alongside it,
 under `virt`. It probes VirtualBox, QEMU, VMware Workstation and Hyper-V and
 reports all four whether or not they are present, because "QEMU is not on this
 box" is the answer you want and silence is not. Detection is evidence-based: a
@@ -39,7 +39,7 @@ state; everything else reports what already exists.
 
 Power control itself is not reimplemented here. Names, running state, start and
 stop come from `python/qiling/_check_vm_connection.py`, and the port list and
-TCP probe come from `python/panel/netmap.py`, so the machine list and the
+TCP probe come from `python/panel/network/netmap.py`, so the machine list and the
 network map cannot disagree about what "SSH is open" means. `showvminfo` is the
 only thing this layer adds, because it is what turns a name into an address.
 

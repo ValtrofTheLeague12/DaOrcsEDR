@@ -29,7 +29,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import config, samples  # noqa: E402
+from panel.core import config  # noqa: E402
+from panel.samples import samples  # noqa: E402
 
 UPX_BYTES = b"MZ" + b"\0" * 200 + b"UPX0" + b"\0" * 64 + b"UPX1"
 
@@ -111,7 +112,7 @@ class TestTheEndpoints:
 
     def test_upload_admits_a_clean_sample_and_lists_it(self, client, repo,
                                                        monkeypatch):
-        from panel import samples as samples_mod
+        from panel.samples import samples as samples_mod
         monkeypatch.setattr(samples_mod.clamd, "scan_file",
                             lambda path, timeout=60.0: {
                                 "verdict": "clean", "signature": None,
@@ -133,7 +134,7 @@ class TestTheEndpoints:
 
     def test_upload_refuses_an_unreachable_scanner_until_explicitly_allowed(
             self, client, repo, monkeypatch):
-        from panel import samples as samples_mod
+        from panel.samples import samples as samples_mod
         monkeypatch.setattr(samples_mod.clamd, "scan_file",
                             lambda path, timeout=60.0: {
                                 "verdict": "unavailable", "signature": None,
@@ -164,7 +165,7 @@ class TestTheEndpoints:
 
     def test_the_run_gate_refuses_a_packed_sample_over_http_with_its_code(
             self, client, repo, monkeypatch):
-        from panel import pipeline_run
+        from panel.pipeline import pipeline_run
         (repo / "build-ucrt").mkdir()
         (repo / "build-ucrt" / "static_analyzer.exe").write_text("binary")
         (repo / "samples" / "packed.exe").write_bytes(UPX_BYTES)
@@ -181,7 +182,7 @@ class TestTheEndpoints:
 
     def test_allow_packed_over_http_starts_the_run_and_is_logged_as_overridden(
             self, client, repo, monkeypatch):
-        from panel import pipeline_run
+        from panel.pipeline import pipeline_run
 
         class StubProc:
             stdout = []

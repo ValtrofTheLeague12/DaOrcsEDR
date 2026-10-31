@@ -30,7 +30,7 @@ ADMIN = os.path.dirname(os.path.abspath(__file__))
 def appdata_root() -> str:
     """The one directory every generated file belongs under.
 
-    Mirrors include/core/app_paths.hpp and python/panel/config.py. The terminal,
+    Mirrors include/core/app_paths.hpp and python/panel/core/config.py. The terminal,
     the analyzer and the web panel all read each other's output, so three
     separate implementations of "where does the app put its logs" is how the
     source tree fills up with logs that no tool then reads.

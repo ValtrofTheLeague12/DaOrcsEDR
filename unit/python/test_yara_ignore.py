@@ -14,7 +14,7 @@ import textwrap
 
 import pytest
 
-from panel import utils
+from panel.utils import utils
 
 
 @pytest.fixture()

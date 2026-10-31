@@ -21,9 +21,9 @@ Pages affected: **Build** (`admin-web/src/panels/Build.tsx`) and **Analysis Conf
 | No sample-listing endpoint; `samples/` is only pruned (12 newest) | `sample_factory.py:864-876` (`SAMPLE_KEEP`) |
 | `trace.txt` written by the C++ trace layer, hard-gated by `ENABLE_TRACING` (unset ⇒ on) | `src/core/trace.cpp:22-61, 443-449` |
 | `ENABLE_TRACING` (default true) and `TRACE_FILE` already exist as explicit config keys + panel toggles | `analysis.py:155-172`, `config/analysis.yaml:49`, AnalysisConfig "Behaviour" card |
-| trace.txt is unbounded (~80 MB on disk, 512 MB mmap pre-size), never rotated; a stale file survives after tracing is disabled | `trace.cpp:151-157`, `python/panel/trace.py:22` |
+| trace.txt is unbounded (~80 MB on disk, 512 MB mmap pre-size), never rotated; a stale file survives after tracing is disabled | `trace.cpp:151-157`, `python/panel/host/trace.py:22` |
 | No upload endpoint in the panel; `UPLOAD_DIR`/`UPLOAD_MAX_BYTES` are dead constants | `config.py:106-109` |
-| ClamAV scanning only ever happens inside the VM; the panel reads result JSONs, there is no `scan_file` helper | `python/panel/clamd.py`, `python/clamd/clamd-python.py` |
+| ClamAV scanning only ever happens inside the VM; the panel reads result JSONs, there is no `scan_file` helper | `python/panel/clamd/clamd.py`, `python/clamd/clamd-python.py` |
 | Auth: one shared token + HMAC cookie, `before_request` gate over all `/api/*`, no roles | `auth.py`, `app.py:119-147` |
 
 ---
@@ -50,8 +50,8 @@ because the picker, the upload and the packed gate all lean on it.
 
 ### Backend
 
-New module-private rules in `python/panel/pipeline_run.py` (or a small shared
-`python/panel/samples.py` that T3/T4 also import). Constants in `config.py`:
+New module-private rules in `python/panel/pipeline/pipeline_run.py` (or a small shared
+`python/panel/samples/samples.py` that T3/T4 also import). Constants in `config.py`:
 
 ```python
 # config.py
@@ -319,7 +319,7 @@ POST /api/build/samples/upload          # multipart/form-data, field "file"
 413 { "ok": false, "code": "too-large", "error": "… exceeds 64 MB" }
 ```
 
-Pipeline inside the route → new `python/panel/samples.py`:
+Pipeline inside the route → new `python/panel/samples/samples.py`:
 
 1. **Name & size**: reject over `config.SAMPLE_UPLOAD_MAX_BYTES = 64 * 1024 * 1024`
    (raise from the dead `UPLOAD_MAX_BYTES` intent, `config.py:106-109`; stream
@@ -375,7 +375,7 @@ cap, extension, filename, infected, unavailable±override, happy path, lock cont
 `trace.cpp:44-49`, panel toggle on the Analysis Configuration "Behaviour" card). **Do
 not add a second flag.** What is missing is observability and lifecycle.
 
-### Backend — `python/panel/trace.py` additions
+### Backend — `python/panel/host/trace.py` additions
 
 ```python
 def status() -> dict:

@@ -41,15 +41,15 @@ def app_paths_cache_dir() -> Path:
     """The project's AppData cache root.
 
     Imported rather than reimplemented: the analyzer (include/core/app_paths.hpp),
-    the panel (panel/config.py) and this script all have to agree on where
+    the panel (panel/core/config.py) and this script all have to agree on where
     generated files live, and three separate implementations of "where is the
-    cache" is how the tree fills up again. panel/config.py imports nothing heavy,
+    cache" is how the tree fills up again. panel/core/config.py imports nothing heavy,
     and `python/` is this script's own directory, so the import cannot fail for
     a reason worth handling.
     """
     if str(HERE) not in sys.path:
         sys.path.insert(0, str(HERE))
-    from panel.config import cache_dir
+    from panel.core.config import cache_dir
 
     return cache_dir()
 sys.path.insert(0, str(HERE))

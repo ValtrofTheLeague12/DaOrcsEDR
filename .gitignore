@@ -123,17 +123,23 @@ mega/*.bak
 # into an excluded directory). Same trap that hid mega/megacmd.py.
 !python/admin_server.py
 !python/panel/
-!python/panel/*
+!python/panel/**
 
 # Scripts directly in python/. `die_scan.py` and `malapi_pipeline.py` were
 # already invisible here before this line existed - the same trap as src/ and
-# include/, with `!python/panel/*` covering only the subdirectory.
+# include/, with `!python/panel/**` covering only the subdirectory.
 !python/*.py
 # HMAC key for the panel's session cookie. Generated on first run, 0600, and
-# signing-key shaped: anything holding it can mint a session. The !python/panel/*
+# signing-key shaped: anything holding it can mint a session. The !python/panel/**
 # above re-includes the whole directory, so it has to be denied explicitly or it
 # gets committed and every install starts sharing one signing key.
 python/panel/.session-key
+python/panel/**/__pycache__/
+# Local operator scratch in the utils package. config/vm_info.json holds VM
+# credentials; vm_utility.py is an unfinished local tool that the panel never
+# imports. Neither belongs in a checkout.
+python/panel/utils/config/
+python/panel/utils/vm_utility.py
 
 # Admin orchestration panel - React front end. Source and the lockfile are
 # tracked so the build is reproducible; node_modules and dist are not. dist is

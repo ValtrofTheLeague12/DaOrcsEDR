@@ -31,7 +31,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel.analysis import ENV_BY_KEY, ENV_OPTIONS  # noqa: E402
+from panel.analysis.analysis import ENV_BY_KEY, ENV_OPTIONS  # noqa: E402
 
 # Every key in one compiled set, so the scan below reads a large concatenated
 # blob once rather than reopening 60-odd files per option.

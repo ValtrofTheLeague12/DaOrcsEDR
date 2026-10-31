@@ -31,9 +31,9 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import analysis_settings as S  # noqa: E402
-from panel import analysis as A  # noqa: E402
-from panel.analysis import ENV_BY_KEY, ENV_OPTIONS  # noqa: E402
+from panel.analysis import analysis_settings as S  # noqa: E402
+from panel.analysis import analysis as A  # noqa: E402
+from panel.analysis.analysis import ENV_BY_KEY, ENV_OPTIONS  # noqa: E402
 
 HEADER = (
     "# Global analysis settings\n"

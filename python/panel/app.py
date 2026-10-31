@@ -21,12 +21,19 @@ import sys
 import yaml
 from flask import Flask, jsonify, make_response, request, send_file
 
-from . import (analysis, analysis_settings, artifacts, auth, build,
-               build_checks, clamd, config, containers, docs, dynamic_analysis,
-               hardening, logs, netmap, pipeline_run, qiling, sample_factory,
-               sample_resources, samples, services, stats, system, trace, utils,
-               vms, vmmetrics)
-from .yamlview import jsonable as _jsonable, spans as _yaml_spans
+from .analysis import analysis, analysis_settings
+from .artifacts import artifacts
+from .build import build, build_checks, hardening
+from .clamd import clamd
+from .core import auth, config, docs
+from .core.yamlview import jsonable as _jsonable, spans as _yaml_spans
+from .host import containers, logs, services, stats, system, trace
+from .network import netmap, vms, vmmetrics
+from .pipeline import pipeline_run
+from .qiling import qiling
+from .samples import (dynamic_analysis, sample_factory, sample_resources,
+                      samples)
+from .utils import utils
 
 try:
     from flasgger import Swagger
@@ -2277,7 +2284,7 @@ def create_app() -> Flask:
               traversal, containment, existence)
         description: >
           Validates a typed sample path with the SAME rules the run gate
-          applies - python/panel/samples.py is the one implementation - and
+          applies - python/panel/samples/samples.py is the one implementation - and
           returns what the file is: size, mtime, and a packed verdict (UPX
           markers first, else whole-file entropy at the analyzer's own
           threshold). The Build page calls this before enabling Run, so a
@@ -2755,7 +2762,7 @@ def create_app() -> Flask:
 # here, so anything placed after it would be unreachable dead code nested in
 # this function rather than a helper the route above can call.
 #
-# Every YAML fact below comes out of PyYAML - through python/panel/yamlview.py,
+# Every YAML fact below comes out of PyYAML - through python/panel/core/yamlview.py,
 # which the analysis-configuration page shares, since it reads pipelines/*.yaml
 # the same way the compose viewer reads a compose file.
 

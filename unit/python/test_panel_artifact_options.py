@@ -31,7 +31,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import analysis, config  # noqa: E402
+from panel.analysis import analysis  # noqa: E402
+from panel.core import config  # noqa: E402
 
 ARTIFACTS_YAML = """\
 store_artifact: true

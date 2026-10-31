@@ -30,7 +30,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 sys.path.insert(0, str(REPO))
 
-from panel import analysis  # noqa: E402
+from panel.analysis import analysis  # noqa: E402
 
 
 CATALOG = {"available": True, "source": "test", "error": None, "items": [],

@@ -23,7 +23,7 @@ from flask import Response, jsonify
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from panel import config  # noqa: E402
+from panel.core import config  # noqa: E402
 from panel.app import create_app  # noqa: E402
 
 DIST = config.REPO / "admin-web" / "dist"

@@ -33,9 +33,9 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import config  # noqa: E402
-from panel import sample_factory as sf  # noqa: E402
-from panel import sample_resources as sr  # noqa: E402
+from panel.core import config  # noqa: E402
+from panel.samples import sample_factory as sf  # noqa: E402
+from panel.samples import sample_resources as sr  # noqa: E402
 
 
 IP_URL = "https://raw.githubusercontent.com/lab/feeds/main/ips.txt"

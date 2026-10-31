@@ -3,7 +3,7 @@
 The feature is a chain of four halves that have to agree about one thing -
 which Windows protections the analyzer is built with:
 
-    python/panel/hardening.py  reads and writes config/hardening.json, turns
+    python/panel/build/hardening.py  reads and writes config/hardening.json, turns
                                it into CMake/build.ps1 flags, and compares the
                                result against the finished PE
     CMakeLists.txt             four STATIC_ANALYZER_HARDENING_* options that
@@ -37,7 +37,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
-from panel import hardening  # noqa: E402
+from panel.build import hardening  # noqa: E402
 
 
 ALL_BITS = 0x0160  # HIGH_ENTROPY_VA | DYNAMIC_BASE | NX_COMPAT
