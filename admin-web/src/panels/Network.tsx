@@ -6,13 +6,14 @@ import { api, usePoll } from '../api'
 import Icon from '../components/Icon'
 import SubNav from '../components/SubNav'
 import NetworkMap, { NetworkLegend } from '../components/NetworkMap'
+import EndpointConfig from '../components/EndpointConfig'
 import VirtRoster from '../components/VirtRoster'
 import VboxStatusPanel from '../components/VboxStatus'
 import Loading from '../components/Loading'
 import { ago } from '../lib/format'
 import type { NetMap } from '../types'
 
-type NetTab = 'map' | 'interfaces' | 'docker' | 'hypervisors'
+type NetTab = 'map' | 'interfaces' | 'configuration' | 'docker' | 'hypervisors'
 
 function groupHostInterfaces(adapters: NetMap['host_adapters']) {
   const groups = new Map<string, NetMap['host_adapters']>()
@@ -37,6 +38,9 @@ export default function Network() {
   // fragment gets flagged as comparing against an already-exhausted literal.
   const isDocker = tab === 'docker'
   const isHypervisors = tab === 'hypervisors'
+  // The Configuration tab edits .env; it does not need the topology scan, and
+  // a scan that is slow or failing must not hide the controls underneath it.
+  const isConfiguration = tab === 'configuration'
   const interfaceGroups = data ? groupHostInterfaces(data.host_adapters) : []
 
   return (
@@ -50,18 +54,20 @@ export default function Network() {
           </p>
         </div>
         <div className="network-page-actions">
-          {data?.generated_at && (
+          {!isConfiguration && data?.generated_at && (
             <span className="font-mono text-[11px] text-default-400">
               Scanned {ago(data.generated_at)}
             </span>
           )}
-          <button
-            onClick={refresh}
-            className="network-refresh"
-          >
-            <Icon name="refresh" size={13} />
-            Rescan
-          </button>
+          {!isConfiguration && (
+            <button
+              onClick={refresh}
+              className="network-refresh"
+            >
+              <Icon name="refresh" size={13} />
+              Rescan
+            </button>
+          )}
         </div>
       </header>
 
@@ -69,6 +75,7 @@ export default function Network() {
         tabs={[
           { id: 'map', label: 'Network map', icon: 'overview' },
           { id: 'interfaces', label: 'Interfaces', icon: 'machine' },
+          { id: 'configuration', label: 'Configuration', icon: 'plug' },
           { id: 'docker', label: 'Docker networks', icon: 'containers' },
           {
             id: 'hypervisors',
@@ -90,21 +97,23 @@ export default function Network() {
         onChange={(id) => setTab(id as NetTab)}
       />
 
-      {error && (
+      {error && !isConfiguration && (
         <Alert status="danger" className="mb-4">
           <Alert.Title>Cannot read network topology</Alert.Title>
           <Alert.Description>{error}</Alert.Description>
         </Alert>
       )}
 
-      {!data && !error && (
+      {!data && !error && !isConfiguration && (
         <Loading
           label="Loading network topology…"
           hint="reading host interfaces, VirtualBox networks and Docker bridges"
         />
       )}
 
-      {data && (
+      {isConfiguration && <EndpointConfig />}
+
+      {data && !isConfiguration && (
         <section className="network-summary-grid" aria-label="Network inventory summary">
           {[
             { label: 'Host adapters', value: data.counts.adapters, icon: 'machine' as const },

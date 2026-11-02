@@ -1,0 +1,2 @@
+confluent-kafka>=2.3,<3
+pywin32>=306; sys_platform == "win32"
