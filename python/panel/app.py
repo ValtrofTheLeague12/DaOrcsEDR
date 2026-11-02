@@ -27,7 +27,7 @@ from .build import build, build_checks, hardening
 from .clamd import clamd
 from .core import auth, config, docs
 from .core.yamlview import jsonable as _jsonable, spans as _yaml_spans
-from .host import containers, logs, services, stats, system, trace
+from .host import containers, endpoints, logs, services, stats, system, trace
 from .network import netmap, vms, vmmetrics
 from .pipeline import pipeline_run
 from .qiling import qiling
@@ -2754,6 +2754,121 @@ def create_app() -> Flask:
         except Exception as exc:  # noqa: BLE001 - a status page must not 500
             return jsonify({"generated_at": None, "nodes": [], "links": [],
                             "counts": {}, "error": f"{type(exc).__name__}: {exc}"})
+
+    # --- endpoint configuration ---------------------------------------------
+
+    @app.get("/api/network/endpoints")
+    def endpoint_config():
+        """Service Endpoints, Interface Addresses and the Agent Template
+        ---
+        tags: [network]
+        responses:
+          200:
+            description: Editable and fixed endpoints, local addresses, agent config
+        description: >
+          Only the Analyzer API is editable (`SA_API_HOST` / `SA_API_PORT` in
+          .env). MalAPI and the ML scorer are listed as fixed: analysis runs
+          launch their own copies at 127.0.0.1:60000 and :60010 (src/main.cpp),
+          so a change to those two would only move the standalone service and
+          silently disagree with the next analysis.
+
+          `addresses` is read with ifaddr, so the choices are addresses this
+          host actually has. `agent` is the endpoint agent's Kafka
+          broker/topic plus a filled agent.json template; the panel cannot push
+          it to installed agents.
+        """
+        return jsonify(endpoints.snapshot())
+
+    @app.put("/api/network/endpoints/<key>")
+    def endpoint_apply(key):
+        """Change One Service Endpoint, Validate It, and Optionally Restart
+        ---
+        tags: [network]
+        parameters:
+          - name: key
+            in: path
+            required: true
+            type: string
+            description: analyzer (the only editable endpoint)
+          - name: body
+            in: body
+            required: true
+            schema:
+              type: object
+              properties:
+                host: {type: string}
+                port: {type: integer}
+                restart: {type: boolean}
+        responses:
+          200:
+            description: Saved, unchanged, or saved with a shadowing warning
+          400:
+            description: Invalid host, invalid port, or port owned by another service
+          404:
+            description: No editable endpoint under that key
+          409:
+            description: A running service could not be stopped, so nothing was written
+        description: >
+          An IP literal must belong to one of this host's interfaces (ifaddr) -
+          an address the machine does not currently have would bind in .env and
+          fail at start. The port is tested with a real bind(), not a listener
+          scan, and the service's own current port is exempt or no change could
+          ever be saved.
+
+          With `restart`, the running service is stopped BEFORE .env is
+          written, because the stop path finds its listener by the port in
+          .env; writing first would leave the old process running on a port the
+          panel no longer knows about. A failed stop aborts the save.
+        """
+        body = request.get_json(silent=True) or {}
+        try:
+            if "host" not in body or "port" not in body:
+                raise endpoints.EndpointError(
+                    "host and port are required", "invalid-host", 400)
+            result = endpoints.apply(
+                key, body["host"], body["port"],
+                restart=bool(body.get("restart", True)))
+        except endpoints.EndpointError as exc:
+            return jsonify(ok=False, error=str(exc), code=exc.code,
+                           key=key), exc.status
+        return jsonify(result), endpoints.HTTP_STATUS.get(result["code"], 200)
+
+    @app.put("/api/network/agent")
+    def agent_config_save():
+        """Set the Endpoint Agent's Kafka Broker and Topic
+        ---
+        tags: [network]
+        parameters:
+          - name: body
+            in: body
+            required: true
+            schema:
+              type: object
+              properties:
+                brokers: {type: string, description: "host:port, comma separated"}
+                topic: {type: string}
+        responses:
+          200:
+            description: Saved, with the validation warnings and the new template
+          400:
+            description: Malformed broker address or topic
+        description: >
+          Kafka is the agent's only transport, so there is no transport picker.
+          An IP literal must be one of this host's addresses - the broker runs
+          here, and an endpoint agent elsewhere can only reach an address the
+          host actually has. Reachability is reported as a warning, not a
+          refusal: configuring a broker while it is stopped is a normal setup
+          step.
+
+          Nothing on this host restarts: these two keys feed the template the
+          operator copies beside the agent executable.
+        """
+        body = request.get_json(silent=True) or {}
+        if "brokers" not in body or "topic" not in body:
+            return jsonify(ok=False, code="invalid-brokers",
+                           error="brokers and topic are required"), 400
+        result = endpoints.save_agent(body["brokers"], body["topic"])
+        return jsonify(result), 400 if not result["ok"] else 200
 
     return app
 

@@ -1,0 +1,17 @@
+{
+  "watch_dirs": [
+    "%PUBLIC%\\Downloads",
+    "%PUBLIC%\\Desktop"
+  ],
+  "scan_interval_seconds": 5,
+  "stable_seconds": 2,
+  "chunk_bytes": 262144,
+  "state_file": "%PROGRAMDATA%\\DaOrcs\\Agent\\state.sqlite3",
+  "log_file": "%PROGRAMDATA%\\DaOrcs\\Agent\\logs\\agent.log",
+  "log_level": "INFO",
+  "kafka": {
+    "bootstrap_servers": "192.168.56.1:9092",
+    "topic": "analysis-artifacts",
+    "producer_config": {}
+  }
+}
