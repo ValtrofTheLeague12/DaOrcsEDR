@@ -2376,3 +2376,107 @@ export interface AnalysisSettingsSnapshot {
   /** Keys in the file the analyzer does not read; it refuses to start on one. */
   unknown: string[]
 }
+
+// --- service endpoints and the endpoint agent ----------------------------
+
+/** An address this host actually has, as `ifaddr` reports it. */
+export interface EndpointAddress {
+  address: string
+  /** The adapter's friendly name, or "loopback". */
+  adapter: string
+  family: 'IPv4' | 'IPv6'
+  loopback: boolean
+}
+
+/**
+ * A service endpoint the Networking page may move.
+ *
+ * Only the Analyzer API qualifies: `server.py` reads these two `.env` keys
+ * itself. MalAPI and the ML scorer are launched by the analyzer at compiled
+ * addresses, so they are reported as fixed instead (see `FixedEndpoint`).
+ */
+export interface EditableEndpoint {
+  key: string
+  name: string
+  host: string
+  port: number
+  /** The `.env` keys the form writes. */
+  env: { host: string; port: string }
+  /** What the OS will be asked to bind when `host` is saved. */
+  bind: string
+  /** Consequences of the current host: a widened bind, and no auth. */
+  warnings: string[]
+}
+
+/** A service whose address the analyzer hardcodes, so it cannot be moved here. */
+export interface FixedEndpoint {
+  key: string
+  name: string
+  /** What analysis runs actually use (src/main.cpp). */
+  host: string
+  port: number
+  /** What `.env` says - may differ from what the analyzer uses. */
+  configured: { host: string; port: number }
+  ui_url: string | null
+  reason: string
+}
+
+export interface AgentValidation {
+  ok: boolean
+  errors: string[]
+  warnings: string[]
+  /** Parsed broker entries as [host, port]. */
+  brokers: [string, number][]
+  /** The port the kafka compose file publishes. */
+  compose_port: number
+}
+
+/**
+ * The endpoint agent's Kafka broker/topic plus the file to deploy. Kafka is
+ * its only transport, and the panel cannot push this file to installed agents.
+ */
+export interface AgentConfig {
+  brokers: string
+  topic: string
+  validation: AgentValidation
+  template: Record<string, unknown>
+  example_file: string | null
+  transport: 'kafka'
+  transport_note: string
+}
+
+export interface EndpointSnapshot {
+  editable: EditableEndpoint[]
+  fixed: FixedEndpoint[]
+  addresses: EndpointAddress[]
+  agent: AgentConfig
+  env_file: string
+}
+
+export interface EndpointApplyResult {
+  ok: boolean
+  key: string
+  /** saved | saved-shadowed | unchanged | invalid-host | invalid-port |
+   *  port-owned | port-held | stop-failed */
+  code: string
+  detail?: string
+  error?: string
+  previous?: { host: string; port: number }
+  changed?: { host: string; port: number } | null
+  warnings?: string[]
+  /**
+   * `.env` keys this process's environment overrides. The file is saved, but
+   * the panel keeps reading the old value until it is restarted.
+   */
+  shadowed?: string[]
+  restart?: { ok: boolean; detail: string } | null
+}
+
+export interface AgentSaveResult {
+  ok: boolean
+  code: string
+  detail?: string
+  error?: string
+  validation?: AgentValidation
+  agent?: AgentConfig
+}

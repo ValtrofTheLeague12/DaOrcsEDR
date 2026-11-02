@@ -3,6 +3,9 @@ import type {
   AnalysisConfig,
   AnalysisSettingsSnapshot,
   AnalyzerPackedStop,
+  AgentSaveResult,
+  EndpointApplyResult,
+  EndpointSnapshot,
   ArtifactExportJob,
   ArtifactsSnapshot,
   AnalyzerBuildJob,
@@ -115,6 +118,38 @@ export const api = {
   containers: () => json<ContainerList>('/api/containers'),
   // Topology of the host, its networks, VMs and containers, as a graph.
   netmap: () => json<NetMap>('/api/netmap'),
+  // Service endpoints and the endpoint agent. Only the Analyzer API can be
+  // moved from here; MalAPI and the ML scorer are launched by the analyzer at
+  // compiled addresses, so the snapshot reports them as fixed with the reason.
+  endpoints: () => json<EndpointSnapshot>('/api/network/endpoints'),
+  // The two writes below return the response BODY on 4xx instead of throwing.
+  // "Port held by pid 77" and "not an address on this host" are answers this
+  // form renders, and the generic helper would flatten them into a sentence and
+  // drop the code and validation that the UI needs.
+  applyEndpoint: async (
+    key: string, host: string, port: number, restart: boolean,
+  ) => {
+    const res = await fetch(`/api/network/endpoints/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, port, restart }),
+    })
+    return await res.json().catch(
+      () => ({ ok: false, key, code: 'failed', detail: `HTTP ${res.status}` }),
+    ) as EndpointApplyResult
+  },
+  saveAgent: async (brokers: string, topic: string) => {
+    const res = await fetch('/api/network/agent', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brokers, topic }),
+    })
+    return await res.json().catch(
+      () => ({ ok: false, code: 'failed', detail: `HTTP ${res.status}` }),
+    ) as AgentSaveResult
+  },
   // Every endpoint this lab exposes. The panel's own routes are introspected
   // from the live URL map server-side, so this is a reference that cannot drift
   // from the routes actually registered.
