@@ -93,63 +93,16 @@ The main executable is written to:
 build-ucrt/static_analyzer.exe
 ```
 
-## Podman container images
+## Compose services
 
-For full Docker Compose run, test, custom-sample, and cleanup steps, see
-[Container testing guide](../CONTAINER-TESTING.md).
+The root `compose.yaml` is a convenience stack for the CyberChef API, its web UI,
+and the Guacamole remote-desktop gateway. It does not build or run the analyzer.
+The API image is built from `Containerfile.cyberchef`; both web-facing services
+bind to loopback addresses by default. Start the stack with
+`docker compose up --build` (or a compatible `podman compose` command).
 
-`Containerfile` builds the analyzer as a native Linux CLI image for Podman running
-inside WSL. The build installs the native libraries and tools, builds LIEF and the
-analyzer, and installs the Python dashboard/API dependencies. Build and export an
-OCI archive from PowerShell:
-
-```powershell
-.\build-image.ps1
-```
-
-This creates `artifacts\static-analyzer-linux.oci.tar` and leaves the image in the
-WSL Podman image store as `localhost/static-analyzer:linux`. The analyzer writes
-reports under `/opt/static-analyzer/exports`; mount that directory and mount input
-samples read-only when running it:
-
-```powershell
-wsl.exe -- podman run --rm `
-  --userns=keep-id:uid=10001 `
-  -v /mnt/c/samples:/samples:ro `
-  -v /mnt/c/analyzer-exports:/opt/static-analyzer/exports `
-  -e CYBERCHEF_URL=http://127.0.0.1:3000 `
-  localhost/static-analyzer:linux /samples/sample.exe
-```
-
-The shareable Linux stack is in `compose.yaml`. It builds the analyzer and the
-CyberChef API server, pulls the official CyberChef web UI image, waits for the API
-health check, and runs the sample analyzer. The official `ghcr.io/gchq/cyberchef`
-image serves the web UI but does not implement the `/bake` and `/magic` API used
-by this analyzer, so Compose builds the compatible API server from the upstream
-`gchq/CyberChef-server` source using `Containerfile.cyberchef`.
-
-With Docker Compose, run `docker compose up --build`; with Podman, use a compatible
-Compose provider and run `podman compose up --build`. The CyberChef UI is available
-on port 8081, and analyzer reports are written to `artifacts/compose-exports`.
-The analyzer image defaults `CTI_SKIP=1` to avoid external CTI lookups. Curses is
-disabled; analysis is a one-shot CLI operation.
-
-`Containerfile.windows` is the separate Windows Server Core build definition. It
-installs the MSYS2 UCRT64 compiler/libraries, Python packages, Graphviz, and
-radare2, then builds the Windows executable. `compose.windows.yaml` builds and
-runs that analyzer and uses `CYBERCHEF_URL` to connect to an already-running,
-reachable CyberChef API service (default `http://host.docker.internal:3000`).
-Run it with `docker compose -f compose.windows.yaml up --build` on a Windows
-container-capable engine. Windows and Linux containers cannot be started together
-by the same engine mode; run the Linux Compose stack separately to provide the
-CyberChef API, or point `CYBERCHEF_URL` at another reachable API server.
-Podman inside WSL is Linux-only and cannot build the Windows image.
-
-For a quick resource profile while the Linux stack is running, use
-`podman stats` (or `docker stats`) in another terminal. The CLI analysis is a
-one-shot workload; compare repeat runs on the same sample and machine, and record
-elapsed time together with peak CPU and memory. Image size can be checked with
-`podman image inspect localhost/static-analyzer:linux --format '{{.Size}}'`.
+There are no analyzer `Containerfile` or Windows Compose definitions in this
+checkout. The analyzer's supported build instructions are in the section above.
 
 ## Project structure
 
@@ -234,4 +187,3 @@ Important C++ components:
 - `crash_handler` — fault reports (text + minidump) and the `std::terminate` path.
 - `logging` and `console` — logging and terminal presentation.
 - `main/` — the stage functions (`phase_*.cpp`), the report renderers (`report_*.cpp`), and the `pipeline::context` they share.
-

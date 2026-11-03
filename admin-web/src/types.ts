@@ -619,6 +619,99 @@ export interface DynamicAnalysisOption {
   selected: boolean
 }
 
+export type MemoryProfilingTarget = 'analyzer' | 'sample'
+
+export interface MemoryProfilingOption {
+  id: MemoryProfilingTarget
+  label: string
+  summary: string
+  detail: string
+}
+
+export interface VMMapInstallation {
+  installed: boolean
+  executable: string | null
+  local_install: boolean
+  analyzer_present: boolean
+  analyzer: string
+  error: string | null
+}
+
+export interface MemoryProfilingSample {
+  path: string
+  name: string
+  bytes: number
+}
+
+export interface MemoryProfilingJob {
+  id: string
+  state: 'running' | 'done' | 'failed'
+  target: MemoryProfilingTarget
+  sample: string | null
+  started_at: number | null
+  finished_at: number | null
+  exit_code: number | null
+  error: string | null
+  warning: string | null
+  command: string | null
+  container: string | null
+  output_dir: string | null
+  report_dir: string | null
+  snapshot_path: string | null
+  csv_path: string | null
+  log_line_count: number
+  log_dropped: number
+  duration_sec: number | null
+  log: string[]
+}
+
+export interface MemoryMapCategory {
+  type: string
+  size_bytes: number | null
+  committed_bytes: number | null
+  total_ws_bytes: number | null
+  private_ws_bytes: number | null
+}
+
+export interface MemoryMapRegion {
+  address: string
+  type: string
+  size_bytes: number | null
+  committed_bytes: number | null
+  total_ws_bytes: number | null
+  protection: string
+  details: string
+}
+
+export interface MemoryMapLayout {
+  process_name: string | null
+  process_id: string | null
+  totals: {
+    size_bytes: number | null
+    committed_bytes: number | null
+    private_bytes: number | null
+    total_ws_bytes: number | null
+    private_ws_bytes: number | null
+    shareable_ws_bytes: number | null
+  }
+  categories: MemoryMapCategory[]
+  regions: MemoryMapRegion[]
+  region_count: number
+  regions_truncated: boolean
+}
+
+export interface MemoryProfilingSnapshot {
+  path: string
+  exists: boolean
+  settings: { enabled: boolean; target: MemoryProfilingTarget; sample: string }
+  targets: MemoryProfilingOption[]
+  samples: MemoryProfilingSample[]
+  vmmap: VMMapInstallation
+  current: MemoryProfilingJob | null
+  last: MemoryProfilingJob | null
+  error: string | null
+}
+
 export interface DynamicAnalysisSnapshot {
   path: string
   exists: boolean

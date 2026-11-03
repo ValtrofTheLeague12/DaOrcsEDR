@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   AnalysisConfig,
   AnalysisSettingsSnapshot,
+  MemoryProfilingJob,
+  MemoryMapLayout,
+  MemoryProfilingSnapshot,
+  MemoryProfilingTarget,
   AnalyzerPackedStop,
   AgentSaveResult,
   EndpointApplyResult,
@@ -604,6 +608,52 @@ containerBuild: (project: string) =>
       body: JSON.stringify({ pipeline, enabled }),
     }),
 
+  // Panel-owned, because the analyzer's C++ config loader rejects unknown keys
+  // in config/analysis.yaml, and opening this page must not stop a run.
+  memoryProfiling: () => json<MemoryProfilingSnapshot>('/api/analysis/memory-profiling'),
+  setMemoryProfiling: (patch: {
+    enabled?: boolean
+    target?: MemoryProfilingTarget
+    sample?: string | null
+  }) =>
+    json<{ ok: boolean; snapshot: MemoryProfilingSnapshot }>(
+      '/api/analysis/memory-profiling',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      },
+    ),
+  runMemoryProfiling: (options: {
+    target?: MemoryProfilingTarget
+    sample?: string | null
+    timeout?: number
+  }) =>
+    json<{ ok: boolean; job: MemoryProfilingJob }>(
+      '/api/analysis/memory-profiling/run',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(options),
+      },
+    ),
+  runGeneratedMemoryProfiling: (executable: string) =>
+    json<{ ok: boolean; job: MemoryProfilingJob }>(
+      '/api/analysis/memory-profiling/generated',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ executable }),
+      },
+    ),
+  memoryProfilingJob: (jobId: string) =>
+    json<{ ok: boolean; job: MemoryProfilingJob }>(
+      `/api/analysis/memory-profiling/run/${encodeURIComponent(jobId)}`),
+  memoryProfilingLayout: (jobId: string) =>
+    json<{ ok: boolean; layout: MemoryMapLayout }>(
+      `/api/analysis/memory-profiling/run/${encodeURIComponent(jobId)}/layout`),
+  memoryProfilingSnapshotUrl: (jobId: string) =>
+    `/api/analysis/memory-profiling/run/${encodeURIComponent(jobId)}/snapshot`,
   savePipeline: (name: string, content: string) =>
     json<{ ok: boolean; pipeline: PipelineConfig }>('/api/analysis/pipeline', {
       method: 'POST',

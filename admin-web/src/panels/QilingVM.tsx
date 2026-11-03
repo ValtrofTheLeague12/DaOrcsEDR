@@ -4,12 +4,12 @@ import { Button } from '@heroui/react/button'
 import { Card } from '@heroui/react/card'
 import { Chip } from '@heroui/react/chip'
 import Loading from '../components/Loading'
+import Console from '../components/Console'
 import Icon, { type IconName } from '../components/Icon'
-import Checkbox from '../components/Checkbox'
 import SubNav from '../components/SubNav'
 import { StatTile } from '../components/Stat'
 import { api, usePoll } from '../api'
-import { ago, bytes, pct, shortDuration } from '../lib/format'
+import { ago, bytes } from '../lib/format'
 import type { QilingGuestMetrics, QilingVmStatus } from '../types'
 
 // ---------------------------------------------------------------------------
@@ -66,204 +66,6 @@ function tagOf(line: string): string | null {
   return m ? m[1] : null
 }
 
-// The output viewer: a read-only <pre> that behaves like a terminal pane.
-// Sticky-to-bottom is opt-in because a tail that scrolls while you are reading
-// it backwards is worse than one that does not.
-function OutputView({
-  lines,
-  empty,
-  autoScroll,
-  height = '22rem',
-}: {
-  lines: string[]
-  empty: string
-  autoScroll?: boolean
-  height?: string
-}) {
-  const [stick, setStick] = useState(true)
-  const scrolling = autoScroll ?? stick
-  return (
-    <div className="overflow-hidden rounded-lg border border-default-200 bg-default-50/60">
-      <div className="flex items-center justify-between gap-2 border-b border-default-200 px-3 py-1.5">
-        <span className="font-mono text-[10px] text-default-400">
-          {lines.length} line{lines.length === 1 ? '' : 's'}
-        </span>
-        <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-default-500">
-          <Checkbox
-            checked={scrolling}
-            onChange={(next) => setStick(next)}
-          />
-          follow tail
-        </label>
-      </div>
-      {lines.length === 0 ? (
-        <p className="py-6 text-center text-[11px] text-default-400">{empty}</p>
-      ) : (
-        <pre
-          className="overflow-auto px-3 py-2 font-mono text-[10.5px] leading-relaxed"
-          style={{ height }}
-          ref={(el) => {
-            if (el && scrolling) el.scrollTop = el.scrollHeight
-          }}
-        >
-          {lines.map((line, i) => {
-            const tag = tagOf(line)
-            const tone = tag ? TAGS[tag]?.color : undefined
-            return (
-              <div key={i} className={`whitespace-pre-wrap break-all ${tone ?? 'text-default-600'}`}>
-                {line}
-              </div>
-            )
-          })}
-        </pre>
-      )}
-    </div>
-  )
-}
-
-
-// ---------------------------------------------------------------------------
-// Qiling VM - one machine, three concerns.
-//
-// Originally this was a single scroll: actions, rootfs, performance and the
-// ClamAV guest all stacked, so nothing had emphasis and the page read as a
-// wall. ClamAV has its own panel now, and the remaining page is split by what
-// the operator is actually doing:
-//
-//   Overview    am I up, and what is the machine doing right now
-//   Emulation   the harness log every run appends to
-//   Runs        one bundle at a time, with its trace
-//
-// Three behaviours below are load-bearing and come from the actual scripts,
-// not from taste:
-//
-//  * Generate rootfs runs dll_collector.bat, which gates on `NET SESSIONS`
-//    (line 11) and exits 1 if it is not elevated. qiling_setup.py drives it
-//    through Start-Process -Verb RunAs, so a Windows UAC prompt WILL appear
-//    and the browser cannot see it. The action says so rather than pretending
-//    to be a plain button.
-//
-//  * That batch file ends `EXIT /B 0` (line 160) and never checks the result
-//    of REG SAVE, XCOPY or COPY, so its exit code proves nothing.
-//    qiling_setup.py:116-118 re-validates the tree afterwards for that
-//    reason. The UI models the action as collect -> validate, not "done".
-//
-//  * The rootfs is ~111 MB and gets uploaded to the VM, so this is a long job,
-//    not a click. Hence the job state, not a spinner.
-// ---------------------------------------------------------------------------
-
-// A single resource meter: label + value on the first line, a thin bar below.
-// Renders like the host Machine panel so CPU/RAM reads the same here.
-function Meter({
-  label,
-  value,
-  detail,
-}: {
-  label: string
-  value: number | null
-  detail?: string
-}) {
-  const p = value === null ? 0 : Math.max(0, Math.min(100, value))
-  const tone = p >= 85 ? 'bg-danger' : p >= 65 ? 'bg-warning' : 'bg-success'
-  return (
-    <div>
-      <div className="mb-1 flex items-baseline justify-between gap-2">
-        <span className="text-xs text-default-500">{label}</span>
-        <span className="font-mono text-sm tabular-nums">{value === null ? '—' : `${value}%`}</span>
-      </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-default-200">
-        <div className={`h-full ${tone}`} style={{ width: `${p}%` }} />
-      </div>
-      {detail && <div className="mt-1 font-mono text-[11px] text-default-400">{detail}</div>}
-    </div>
-  )
-}
-
-function gb(n: number | null | undefined): string {
-  if (n === null || n === undefined) return '—'
-  return `${(n / 1024 ** 3).toFixed(1)} GB`
-}
-
-// Live CPU / RAM of the running analysis VM, read from inside it over SSH.
-// When the VM is powered off or SSH times out the backend returns
-// available:false with the reason - shown as a powered-off notice, never as
-// meters sitting at 0%.
-function GuestCard({ metrics }: { metrics: QilingGuestMetrics }) {
-  if (!metrics.available) {
-    // `collected_at` is null until the shared collector has returned a sample.
-    // That is not the same as "connected but no /proc": the guest may be fine
-    // and simply not measured yet, and saying "no /proc data" would blame it.
-    const pending = metrics.collected_at == null
-    return (
-      <Card className="w-full">
-        <Card.Header className="flex items-center justify-between gap-3">
-          <Card.Title className="text-sm font-semibold">CPU &amp; Memory</Card.Title>
-          <Chip size="sm" variant="soft" color={pending ? 'accent' : metrics.reachable ? 'warning' : 'default'}>
-            {pending ? 'collecting…' : metrics.reachable ? 'no /proc data' : 'VM unreachable'}
-          </Chip>
-        </Card.Header>
-        <Card.Content>
-          <p className="text-[11px] leading-relaxed text-default-400">
-            {pending
-              ? 'The shared collector has not sampled this guest yet. It runs in the background every 15 seconds and this card fills in when the first sample lands - no SSH handshake is opened for this page.'
-              : metrics.reachable
-                ? 'Connected but the guest returned no usable /proc data.'
-                : 'Start the analysis VM to read live CPU and memory. Metrics come from inside the guest over SSH, so a powered-off VM reports nothing rather than zeros.'}
-          </p>
-          {metrics.error && (
-            <p className="mt-1.5 font-mono text-[10px] text-default-400" title={metrics.error}>
-              {metrics.error}
-            </p>
-          )}
-        </Card.Content>
-      </Card>
-    )
-  }
-  const mem = metrics.memory
-  return (
-    <Card className="w-full">
-      <Card.Header className="flex items-center justify-between gap-3">
-        <Card.Title className="text-sm font-semibold">CPU &amp; Memory</Card.Title>
-        <Chip size="sm" variant="soft" color="success">
-          {metrics.cores ?? '-'} core{metrics.cores === 1 ? '' : 's'}
-          {' · '}
-          {metrics.age_seconds == null
-            ? 'live'
-            : `sampled ${shortDuration(metrics.age_seconds)} ago`}
-        </Chip>
-      </Card.Header>
-      <Card.Content className="flex flex-col gap-4">
-        <Meter
-          label="Memory"
-          value={mem.percent}
-          detail={`${gb(mem.used_bytes)} used of ${gb(mem.total_bytes)} · ${gb(mem.available_bytes)} free`}
-        />
-        <div className="grid grid-cols-3 gap-x-6 gap-y-1 border-t border-default-100 pt-2">
-          {(
-            [
-              ['load 1m', metrics.load['1']?.toFixed(2) ?? '—'],
-              ['load 5m', metrics.load['5']?.toFixed(2) ?? '—'],
-              ['load 15m', metrics.load['15']?.toFixed(2) ?? '—'],
-              ['swap', mem.swap_total_bytes ? `${gb(mem.swap_used_bytes)} / ${gb(mem.swap_total_bytes)}` : 'none'],
-              ['disk /', metrics.disk.percent === null ? '—' : pct(metrics.disk.percent)],
-              ['disk free', gb(metrics.disk.free_bytes)],
-            ] as [string, string][]
-          ).map(([k, v]) => (
-            <div key={k} className="flex items-baseline justify-between gap-2">
-              <span className="text-[11px] text-default-500">{k}</span>
-              <span className="truncate font-mono text-[11px]">{v}</span>
-            </div>
-          ))}
-        </div>
-        {metrics.uptime_seconds !== null && (
-          <p className="font-mono text-[10px] text-default-400">
-            guest uptime {shortDuration(metrics.uptime_seconds)}
-          </p>
-        )}
-      </Card.Content>
-    </Card>
-  )
-}
 
 // The VM status checks: VBoxManage, registration, power, TCP. Same facts the
 // admin-terminal Qiling VM Control screen shows, so the panel agrees with it.
@@ -308,15 +110,111 @@ function StatusChecks({ status }: { status: QilingVmStatus }) {
   )
 }
 
-export default function QilingVM() {
+function GuestResources({
+  metrics,
+  onRefresh,
+  onOpenProfiler,
+}: {
+  metrics: QilingGuestMetrics | null
+  onRefresh: () => void
+  onOpenProfiler: () => void
+}) {
+  const memoryPercent = metrics?.memory.percent
+  const diskPercent = metrics?.disk.percent
+  const meters = [
+    {
+      label: 'Memory',
+      value: metrics?.memory.used_bytes,
+      total: metrics?.memory.total_bytes,
+      percent: memoryPercent,
+    },
+    {
+      label: 'Disk',
+      value: metrics?.disk.used_bytes,
+      total: metrics?.disk.total_bytes,
+      percent: diskPercent,
+    },
+  ]
+
+  return (
+    <Card className="mt-4 w-full">
+      <Card.Header className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <Card.Title className="text-sm font-semibold">Qiling VM resources</Card.Title>
+          <p className="mt-0.5 text-[11px] text-default-500">
+            Live guest metrics · separate from the Windows analyzer process
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onPress={onRefresh}>Refresh</Button>
+      </Card.Header>
+      <Card.Content>
+        {metrics?.available ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {meters.map((meter) => (
+              <div key={meter.label}>
+                <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+                  <span className="text-default-600">{meter.label}</span>
+                  <span className="font-mono text-default-500">
+                    {bytes(meter.value, 0)} / {bytes(meter.total, 0)}
+                    {meter.percent !== null && meter.percent !== undefined
+                      ? ` · ${Math.round(meter.percent)}%` : ''}
+                  </span>
+                </div>
+                <div
+                  className="h-2 overflow-hidden rounded-full bg-default-200"
+                  role="meter"
+                  aria-label={`Qiling guest ${meter.label.toLowerCase()} usage`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={meter.percent ?? 0}
+                >
+                  <div
+                    className="h-full rounded-full bg-accent transition-[width]"
+                    style={{ width: `${Math.min(100, Math.max(0, meter.percent ?? 0))}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+            <div className="flex items-center justify-between text-xs sm:col-span-2">
+              <span className="text-default-600">System load · {metrics.cores ?? '—'} cores</span>
+              <span className="font-mono text-default-500">
+                {metrics.load['1'] !== null ? metrics.load['1'].toFixed(2) : '—'}
+                {' / '}
+                {metrics.load['5'] !== null ? metrics.load['5'].toFixed(2) : '—'}
+                {' / '}
+                {metrics.load['15'] !== null ? metrics.load['15'].toFixed(2) : '—'}
+                {' · 1 / 5 / 15 min'}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-default-500">
+            {metrics?.error || 'Guest metrics are not available yet. The VM must be running and reachable.'}
+          </p>
+        )}
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-default-100 pt-2">
+          <p className="text-[10px] text-default-400">
+            VMMap captures the Windows analyzer/sample on the panel host, not this guest.
+          </p>
+          <Button size="sm" variant="ghost" onPress={onOpenProfiler}>
+            Windows process profiler
+          </Button>
+        </div>
+      </Card.Content>
+    </Card>
+  )
+}
+
+export default function QilingVM({ onOpenProfiler }: { onOpenProfiler: () => void }) {
   const { data, error, loading, refresh } = usePoll(api.qilingRuns, INTERVAL)
+  const { data: guestMetrics, refresh: refreshGuestMetrics } =
+    usePoll(api.qilingVmMetrics, 15000)
   const [selected, setSelected] = useState<string | null>(null)
   // Check Status / Generate Rootfs are on-demand, not auto-polled: each status
   // check spawns VBoxManage and each rootfs build pops a UAC prompt, so they
   // fire only when clicked and then join the normal refresh cadence.
   const [status, setStatus] = useState<QilingVmStatus | null>(null)
   const [statusBusy, setStatusBusy] = useState(false)
-  const [vmMetrics, setVmMetrics] = useState<QilingGuestMetrics | null>(null)
   const [rootfsJob, setRootfsJob] = useState<{ id: string; state: string; detail: string } | null>(null)
   const [rootfsBusy, setRootfsBusy] = useState(false)
   // Three concerns, three screens. Stacked they were one long scroll where the
@@ -333,7 +231,6 @@ export default function QilingVM() {
     try {
       const s = await api.qilingStatus()
       setStatus(s)
-      setVmMetrics(await api.qilingVmMetrics())
     } finally {
       setStatusBusy(false)
     }
@@ -356,20 +253,6 @@ export default function QilingVM() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Once a probe has run, keep the CPU / memory card fresh while it is on
-  // screen. This is cheap now: the endpoint reads vmmetrics' background sample
-  // rather than opening its own SSH session, so a 15 s poll costs one cached
-  // JSON read instead of a handshake per tick.
-  useEffect(() => {
-    if (!status || tab !== 'overview') return
-    const id = window.setInterval(() => {
-      void api.qilingVmMetrics().then(setVmMetrics).catch(() => {
-        // A dropped poll is not a failure; the next tick tries again.
-      })
-    }, 15000)
-    return () => window.clearInterval(id)
-  }, [status, tab])
-
   if (loading && !data) {
     return (
       <Loading
@@ -381,20 +264,40 @@ export default function QilingVM() {
 
   return (
     <>
-      <div className="mb-6 flex items-baseline justify-between gap-4">
-        <h2 className="page-title">Qiling</h2>
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-[11px] text-default-400">
-            {data?.vm.ip ? `${data.vm.ip}:${data.vm.port} · ${data.harness.version}` : 'emulation harness'}
-          </span>
-          <Button size="sm" variant="outline" onPress={checkStatus} isDisabled={statusBusy}>
-            {statusBusy ? 'Checking…' : 'Check Status'}
-          </Button>
-          <Button size="sm" variant="outline" onPress={generateRootfs} isDisabled={rootfsBusy}>
-            {rootfsBusy ? 'Starting…' : 'Generate Rootfs'}
-          </Button>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-4 border-b border-default-200 pb-4">
+        <div className="min-w-0">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="eyebrow">DYNAMIC ANALYSIS</span>
+            {status && (
+              <Chip
+                size="sm"
+                variant="soft"
+                color={status.ok ? 'success' : 'warning'}
+              >
+                {status.ok ? 'Environment ready' : 'Needs attention'}
+              </Chip>
+            )}
+          </div>
+          <h2 className="page-title">Qiling analysis</h2>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-default-500">
+            Inspect the emulation VM, guest harness output, and saved run
+            bundles. Samples execute in the configured analysis VM.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-default-400">
+            <span>{data?.vm.name || 'VM not configured'}</span>
+            <span>{data?.vm.ip ? `${data.vm.ip}:${data.vm.port}` : 'endpoint unavailable'}</span>
+            <span>{data?.harness.version || 'harness unavailable'}</span>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onPress={refresh}>
-            Refresh
+            Refresh data
+          </Button>
+          <Button size="sm" variant="outline" onPress={checkStatus} isDisabled={statusBusy}>
+            {statusBusy ? 'Checking…' : 'Check VM'}
+          </Button>
+          <Button size="sm" variant="primary" onPress={generateRootfs} isDisabled={rootfsBusy}>
+            {rootfsBusy ? 'Starting…' : 'Build rootfs'}
           </Button>
         </div>
       </div>
@@ -422,9 +325,9 @@ export default function QilingVM() {
         <Alert status="warning" className="mb-4">
           <Alert.Title>Root filesystem incomplete</Alert.Title>
           <Alert.Description>
-            Both x86 and x64 trees are required. Generate it from the admin
-            terminal (Qiling setup), which runs the DLL collector elevated and
-            re-validates the tree afterwards.
+            Both x86 and x64 trees are required. Use <b>Build rootfs</b> above;
+            Windows may show a UAC prompt on the machine running the panel.
+            The browser cannot display that prompt.
           </Alert.Description>
         </Alert>
       )}
@@ -442,7 +345,7 @@ export default function QilingVM() {
         onChange={(id) => setTab(id as 'overview' | 'output' | 'runs')}
       />
 
-      {/* --- overview: headline tiles + VM health --------------------------- */}
+      {/* --- overview: summary, VM health, and rootfs ----------------------- */}
       {tab === 'overview' && (
         <>
           {data && (
@@ -476,24 +379,115 @@ export default function QilingVM() {
             </div>
           )}
 
-          <p className="section-label mb-2 mt-6">Analysis VM</p>
-          {(status || vmMetrics) ? (
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              {status && <StatusChecks status={status} />}
-              {vmMetrics && <GuestCard metrics={vmMetrics} />}
+          <GuestResources
+            metrics={guestMetrics}
+            onRefresh={refreshGuestMetrics}
+            onOpenProfiler={onOpenProfiler}
+          />
+
+          <div className="mb-2 mt-6 flex items-center justify-between gap-3">
+            <div>
+              <p className="section-label">Environment</p>
+              <p className="mt-0.5 text-[11px] text-default-400">
+                VM connectivity and the files required by the guest harness
+              </p>
             </div>
-          ) : (
-            <Card className="w-full">
-              <Card.Content>
-                <p className="text-[11px] leading-relaxed text-default-400">
-                  No probe has run yet this session. <b>Check Status</b> reads
-                  the VM’s power and SSH reachability, and the CPU / memory card
-                  comes from the collector the Statistics page already runs in
-                  the background - it is served from cache, not a fresh SSH
-                  handshake.
-                </p>
-              </Card.Content>
-            </Card>
+            {status && (
+              <span className="font-mono text-[10px] text-default-400">
+                checked {ago(status.checked_at)}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.1fr_0.9fr]">
+            {status ? (
+              <StatusChecks status={status} />
+            ) : (
+              <Card className="w-full">
+                <Card.Content className="flex min-h-32 flex-col items-center justify-center gap-2 text-center">
+                  <Icon name="qiling" size={19} className="text-default-400" />
+                  <p className="text-xs font-medium">VM status has not been checked</p>
+                  <p className="max-w-sm text-[11px] text-default-400">
+                    Check registration, power state, and SSH reachability.
+                  </p>
+                  <Button size="sm" variant="outline" onPress={checkStatus} isDisabled={statusBusy}>
+                    {statusBusy ? 'Checking…' : 'Check VM'}
+                  </Button>
+                </Card.Content>
+              </Card>
+            )}
+
+            {data && (
+              <Card className="w-full">
+                <Card.Header className="flex items-center justify-between gap-3">
+                  <div>
+                    <Card.Title className="text-sm font-semibold">Guest readiness</Card.Title>
+                    <p className="mt-0.5 text-[10px] text-default-400">
+                      Root filesystem and harness deployment
+                    </p>
+                  </div>
+                  <Chip size="sm" variant="soft" color={data.rootfs.complete && data.harness.present ? 'success' : 'warning'}>
+                    {data.rootfs.complete && data.harness.present ? 'ready' : 'incomplete'}
+                  </Chip>
+                </Card.Header>
+                <Card.Content className="flex flex-col gap-3">
+                  <div className="rounded-lg border border-default-100 bg-default-50/70 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <span className="text-xs font-medium">Root filesystem</span>
+                      <span className="font-mono text-[10px] text-default-500">
+                        {bytes(data.rootfs.archive_bytes, 0)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {data.rootfs.trees.map((tree) => (
+                        <div key={tree.arch} className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-[10px] text-default-500">{tree.arch}</span>
+                          <span className={tree.complete ? 'text-[10px] text-success' : 'text-[10px] text-warning'}>
+                            {tree.complete ? `${tree.files} files` : 'missing'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-b border-default-100 pb-2">
+                    <span className="text-[11px] text-default-500">Harness</span>
+                    <span className="font-mono text-[10px] text-default-600">
+                      {data.harness.present ? data.harness.version : 'not found'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[11px] text-default-500">Guest service</span>
+                    <span className="truncate font-mono text-[10px] text-default-600">
+                      {data.harness.service}
+                    </span>
+                  </div>
+                </Card.Content>
+              </Card>
+            )}
+          </div>
+
+          {data && logLines.length > 0 && (
+            <div className="mt-3">
+              <Console
+                title="Recent guest activity"
+                subtitle="config/systemd/qilin-service/artifacts/qilin-service.log"
+                icon="terminal"
+                meta={`${logLines.length} lines`}
+                actions={
+                  <Button size="sm" variant="outline" onPress={refresh}>
+                    Refresh
+                  </Button>
+                }
+                lines={logLines}
+                lineClass={(line) => {
+                  const tag = tagOf(line)
+                  return tag ? (TAGS[tag]?.color ?? '') : 'text-default-600'
+                }}
+                numbered
+                size="short"
+                ariaLabel="Qiling service log tail"
+                empty="No service log yet."
+              />
+            </div>
           )}
         </>
       )}
@@ -501,13 +495,28 @@ export default function QilingVM() {
       {/* --- emulation output ---------------------------------------------- */}
       {tab === 'output' && data && (
         <>
-          <OutputView
+          <Console
+            title="Emulation output"
+            subtitle="tail of config/systemd/qilin-service/artifacts/qilin-service.log"
+            icon="terminal"
+            status={{ label: `${logLines.length} lines`, tone: 'default' }}
+            meta={`${bytes(data.service_log.bytes, 0)}`}
+            actions={
+              <Button size="sm" variant="outline" onPress={refresh}>
+                Refresh
+              </Button>
+            }
             lines={logLines}
+            lineClass={(line) => {
+              const tag = tagOf(line)
+              return tag ? (TAGS[tag]?.color ?? '') : 'text-default-600'
+            }}
+            numbered
+            copyText={logLines.join('\n')}
+            size="tall"
+            ariaLabel="Qiling emulation output"
             empty="No service log yet. The harness writes [dump] / [sweep] / [ioc] / [summary] lines here on every run."
           />
-          <p className="mt-1.5 font-mono text-[10px] text-default-400">
-            tail of config/systemd/qilin-service/artifacts/qilin-service.log
-          </p>
         </>
       )}
 
@@ -605,23 +614,18 @@ export default function QilingVM() {
                     </Card>
                   )}
 
-                  <Card className="w-full">
-                    <Card.Header className="flex items-center justify-between">
-                      <Card.Title className="text-sm font-semibold">
-                        Run trace
-                        <span className="ml-2 font-mono text-[10px] font-normal text-default-400">
-                          trace.log inside the bundle
-                        </span>
-                      </Card.Title>
-                    </Card.Header>
-                    <Card.Content>
-                      <OutputView
-                        lines={active.trace_tail}
-                        empty="This bundle has no trace.log."
-                        height="16rem"
-                      />
-                    </Card.Content>
-                  </Card>
+                  <Console
+                    title="Run trace"
+                    subtitle="trace.log inside the bundle"
+                    icon="terminal"
+                    meta={`${active.trace_tail.length} lines`}
+                    lines={active.trace_tail}
+                    numbered
+                    copyText={active.trace_tail.join('\n')}
+                    size="short"
+                    ariaLabel="Run trace"
+                    empty="This bundle has no trace.log."
+                  />
                 </>
               )}
             </div>
@@ -642,4 +646,3 @@ export default function QilingVM() {
     </>
   )
 }
-

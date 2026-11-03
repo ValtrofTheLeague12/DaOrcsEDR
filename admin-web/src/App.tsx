@@ -1,11 +1,9 @@
-﻿import { lazy, Suspense, useEffect, useState } from 'react'
-import { Chip } from '@heroui/react/chip'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { api, auth, usePoll } from './api'
 import Icon, { type IconName } from './components/Icon'
 import PanelBoundary from './components/PanelBoundary'
 import Login from './panels/Login'
 import ThemeToggle from './components/ThemeToggle'
-import { Placeholder } from './components/ServiceCard'
 import { VM_TARGETS } from './lib/vms'
 
 // Every panel is split out of the entry chunk.
@@ -42,21 +40,27 @@ const QilingVM = lazy(() => import('./panels/QilingVM'))
 const PipelinesConfig = lazy(() => import('./panels/PipelinesConfig'))
 const AnalysisConfig = lazy(() => import('./panels/AnalysisConfig'))
 const DynamicAnalysisConfig = lazy(() => import('./panels/DynamicAnalysisConfig'))
+const MemoryProfiling = lazy(() => import('./panels/MemoryProfiling'))
 
 // Exported so panels can accept an `onNavigate` prop without importing the
 // whole App module graph - the type is all they need.
 export type PanelId =
   | 'overview' | 'docs' | 'stats' | 'system' | 'network' | 'logs' | 'artifacts'
-  | 'pipelines' | 'analysis' | 'build' | 'model' | 'utils'
+  | 'pipelines' | 'analysis' | 'build' | 'utils' | 'memory-profiling'
   | 'containers'
-  | 'dynamic-analysis' | 'vm' | 'qiling-vm' | 'cape-vm' | 'clamd' | 'qiling'
+  | 'dynamic-analysis' | 'vm' | 'qiling-vm' | 'clamd' | 'qiling'
 
 interface NavEntry {
   id: PanelId
   label: string
   icon: IconName
-  slice?: string
 }
+
+const BUILT: PanelId[] = [
+  'stats', 'overview', 'docs', 'system', 'network', 'artifacts', 'pipelines',
+  'analysis', 'dynamic-analysis', 'build', 'utils', 'containers', 'logs', 'vm',
+  'qiling-vm', 'qiling', 'clamd', 'memory-profiling',
+]
 
 // The virtual-machine section is generated from lib/vms.ts, so bringing a new
 // sandbox online is an entry in that registry rather than an edit here. That
@@ -69,12 +73,12 @@ interface NavEntry {
 // Analysis, next to the policy that governs them, and this group is machines
 // only.
 const MACHINE_NAV: NavEntry[] = VM_TARGETS
-  .filter((t) => !t.hostedOn)
-  .map((t) => ({ id: t.id as PanelId, label: t.label, icon: t.icon, slice: t.slice }))
+  .filter((t) => !t.hostedOn && BUILT.includes(t.id as PanelId))
+  .map((t) => ({ id: t.id as PanelId, label: t.label, icon: t.icon }))
 
 const GUEST_NAV: NavEntry[] = VM_TARGETS
-  .filter((t) => t.hostedOn)
-  .map((t) => ({ id: t.id as PanelId, label: t.label, icon: t.icon, slice: t.slice }))
+  .filter((t) => t.hostedOn && BUILT.includes(t.id as PanelId))
+  .map((t) => ({ id: t.id as PanelId, label: t.label, icon: t.icon }))
 
 // Grouped so each concern has a home.
 const NAV: { group: string; items: NavEntry[] }[] = [
@@ -106,7 +110,6 @@ const NAV: { group: string; items: NavEntry[] }[] = [
       { id: 'pipelines', label: 'Pipelines Configuration', icon: 'analyze' },
       { id: 'artifacts', label: 'Artifacts', icon: 'artifacts' },
       { id: 'build', label: 'Build', icon: 'build' },
-      { id: 'model', label: 'Model', icon: 'model', slice: 'slice 6' },
     ],
   },
   {
@@ -126,6 +129,7 @@ const NAV: { group: string; items: NavEntry[] }[] = [
     group: 'Maintenance',
     items: [
       { id: 'utils', label: 'Utils', icon: 'wrench' },
+      { id: 'memory-profiling', label: 'Memory profiling', icon: 'stats' },
     ],
   },
   {
@@ -142,12 +146,6 @@ const ALL_ITEMS = NAV.flatMap((g) => g.items)
 const TITLES: Record<PanelId, string> = Object.fromEntries(
   ALL_ITEMS.map((i) => [i.id, i.label]),
 ) as Record<PanelId, string>
-
-const BUILT: PanelId[] = [
-  'stats', 'overview', 'docs', 'system', 'network', 'artifacts', 'pipelines',
-  'analysis', 'dynamic-analysis', 'build', 'utils', 'containers', 'logs', 'vm',
-  'qiling-vm', 'qiling', 'clamd',
-]
 
 // Shown while a panel's chunk is in flight.
 //
@@ -177,7 +175,6 @@ export default function App() {
   const [state, setState] = useState<Awaited<ReturnType<typeof auth.state>> | null>(null)
 
   const cfg = usePoll(api.config, 60000)
-  const active = ALL_ITEMS.find((i) => i.id === panel)
 
   const check = () =>
     auth
@@ -236,15 +233,10 @@ export default function App() {
                       key={it.id}
                       onClick={() => setPanel(it.id)}
                       className={`nav-item ${panel === it.id ? 'active' : ''}`}
-                      title={it.slice ? `${it.label} — planned for ${it.slice}` : it.label}
+                      title={it.label}
                     >
                       <Icon name={it.icon} size={15} />
                       <span className="flex-1 truncate">{it.label}</span>
-                      {it.slice && (
-                        <span className="metric font-mono text-[9px] text-default-400">
-                          {it.slice.replace('slice ', 's')}
-                        </span>
-                      )}
                     </button>
                   ))}
                 </div>
@@ -279,36 +271,24 @@ export default function App() {
           <PanelBoundary label={TITLES[panel]}>
             <Suspense fallback={<PanelFallback label={TITLES[panel]} />}>
             {panel === 'stats' && <Stats />}
-            {panel === 'overview' && <Overview />}
+            {panel === 'overview' && <Overview onNavigate={setPanel} />}
             {panel === 'docs' && <Documentation />}
             {panel === 'system' && <System />}
             {panel === 'network' && <Network />}
             {panel === 'logs' && <Logs />}
             {panel === 'artifacts' && <Artifacts />}
             {panel === 'analysis' && <AnalysisConfig />}
+            {panel === 'memory-profiling' && <MemoryProfiling />}
             {panel === 'dynamic-analysis' && <DynamicAnalysisConfig />}
             {panel === 'pipelines' && <PipelinesConfig />}
             {panel === 'build' && <Build onNavigate={setPanel} />}
             {panel === 'utils' && <Utils />}
             {panel === 'containers' && <Containers />}
             {panel === 'vm' && <VM />}
-            {(panel === 'qiling-vm' || panel === 'qiling') && <QilingVM />}
-            {panel === 'clamd' && <Clamd onNavigate={setPanel} />}
-            {!BUILT.includes(panel) && (
-              <>
-                <div className="mb-6 flex items-baseline justify-between gap-4">
-                  <h1 className="page-title">{TITLES[panel]}</h1>
-                  {active?.slice && (
-                    <Chip size="sm" variant="soft" color="accent">
-                      {active.slice}
-                    </Chip>
-                  )}
-                </div>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  <Placeholder title={TITLES[panel]} slice={active?.slice ?? ''} />
-                </div>
-              </>
+            {(panel === 'qiling-vm' || panel === 'qiling') && (
+              <QilingVM onOpenProfiler={() => setPanel('memory-profiling')} />
             )}
+            {panel === 'clamd' && <Clamd onNavigate={setPanel} />}
           </Suspense>
           </PanelBoundary>
         </main>
