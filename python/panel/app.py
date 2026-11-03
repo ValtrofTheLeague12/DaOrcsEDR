@@ -21,7 +21,7 @@ import sys
 import yaml
 from flask import Flask, jsonify, make_response, request, send_file
 
-from .analysis import analysis, analysis_settings
+from .analysis import analysis, analysis_settings, memory_profiling
 from .artifacts import artifacts
 from .build import build, build_checks, hardening
 from .clamd import clamd
@@ -526,6 +526,215 @@ def create_app() -> Flask:
         except OSError as exc:
             return _bad(exc, 500)
         return jsonify(ok=True, settings=result)
+
+    @app.get("/api/analysis/memory-profiling")
+    def get_memory_profiling():
+        """Memory Profiling Option
+        ---
+        tags: [analysis]
+        responses:
+          200:
+            description: >
+              The stored option, the two targets, the files under the sample
+              roots, VMMap and analyzer readiness, and the current or last
+              profile job.
+        description: >
+          config/memory_profiling.json, a panel-owned setting. It is not a key
+          in config/analysis.yaml because the analyzer's C++ reader rejects
+          unknown keys there, and opening this page must not be able to stop
+          the next analysis from starting.
+
+          `vmmap` reports whether Sysinternals VMMap and the Windows analyzer
+          executable are available.
+        """
+        try:
+            return jsonify(memory_profiling.snapshot(config.REPO))
+        except (ValueError, OSError) as exc:
+            return _bad(exc, 400)
+
+    @app.put("/api/analysis/memory-profiling")
+    def put_memory_profiling():
+        """Set the Memory Profiling Option
+        ---
+        tags: [analysis]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                enabled: {type: boolean}
+                target:
+                  type: string
+                  enum: [analyzer, sample]
+                sample:
+                  type: string
+                  description: Repo-relative sample path, for the sample target.
+              example: {"enabled": true, "target": "analyzer"}
+        responses:
+          200:
+            description: The option as it now stands on disk
+          400:
+            description: A non-object body, an unknown key or an invalid value
+        description: >
+          Rewrites config/memory_profiling.json whole (temp + rename). The file
+          is panel-owned, so this never touches config/analysis.yaml or a
+          pipeline. Selecting a target does not start anything: the profile is
+          an           explicit action, because profiling a full analysis can take
+          minutes.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        try:
+            result = memory_profiling.write(config.REPO, body)
+        except ValueError as exc:
+            return _bad(exc)
+        except OSError as exc:
+            return _bad(exc, 500)
+        return jsonify(ok=True, settings=result,
+                       snapshot=memory_profiling.snapshot(config.REPO))
+
+    @app.post("/api/analysis/memory-profiling/run")
+    def run_memory_profiling():
+        """Start a Memory Profile
+        ---
+        tags: [analysis]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: false
+            schema:
+              type: object
+              properties:
+                target:
+                  type: string
+                  enum: [analyzer, sample]
+                sample:
+                  type: string
+                  description: Repo-relative path under a sample root.
+                timeout: {type: integer}
+        responses:
+          200:
+            description: The profile job to poll
+          400:
+            description: A bad target, sample or timeout
+          409:
+            description: Another memory profile is already running
+        description: >
+          Starts the Windows analyzer or selected Windows executable and asks
+          VMMap to save a process memory-map snapshot as a background job.
+          Snapshots land under
+          exports/memory_profiling/.
+        """
+        body = request.get_json(silent=True)
+        if body is None:
+            body = {}
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        result = memory_profiling.start(
+            config.REPO,
+            target=body.get("target"),
+            sample=body.get("sample"),
+            timeout=body.get("timeout"),
+        )
+        if not result.get("ok"):
+            return jsonify(result), 409 if result.get("job_id") else 400
+        return jsonify(result)
+
+    @app.post("/api/analysis/memory-profiling/generated")
+    def run_generated_memory_profiling():
+        """Capture a VMMap snapshot of the generated Windows executable."""
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        result = memory_profiling.start_generated(
+            config.REPO,
+            executable=body.get("executable"),
+            timeout=body.get("timeout"),
+        )
+        if not result.get("ok"):
+            return jsonify(result), 409 if result.get("job_id") else 400
+        return jsonify(result)
+
+    @app.get("/api/analysis/memory-profiling/run/<job_id>")
+    def memory_profiling_job(job_id: str):
+        """Memory Profile Job
+        ---
+        tags: [analysis]
+        parameters:
+          - in: path
+            name: job_id
+            required: true
+            type: string
+        responses:
+          200:
+            description: The job's state, bounded log and output directory
+          404:
+            description: No such job (or it aged out)
+        description: >
+          Polled by the Analysis Configuration page while a profile runs. The
+          job keeps its report directory on disk after the log
+          scrollback is pruned, so a finished profile stays readable.
+        """
+        result = memory_profiling.job(job_id)
+        if result is None:
+            return jsonify(ok=False, error="no such memory-profile job"), 404
+        return jsonify(ok=True, job=result)
+
+    @app.get("/api/analysis/memory-profiling/run/<job_id>/layout")
+    def memory_profiling_layout(job_id: str):
+        """Return a parsed VMMap memory layout
+        ---
+        tags: [analysis]
+        parameters:
+          - in: path
+            name: job_id
+            required: true
+            type: string
+        responses:
+          200:
+            description: Category totals and address-ordered process regions
+          404:
+            description: No such memory-profile job
+          409:
+            description: The CSV export is unavailable or invalid
+        """
+        result = memory_profiling.layout(job_id)
+        if result is None:
+            return jsonify(ok=False, error="no such memory-profile job"), 404
+        if result.get("error"):
+            return jsonify(ok=False, error=result["error"]), 409
+        return jsonify(ok=True, layout=result["layout"])
+
+    @app.get("/api/analysis/memory-profiling/run/<job_id>/snapshot")
+    def memory_profiling_snapshot_file(job_id: str):
+        """Download a native VMMap snapshot
+        ---
+        tags: [analysis]
+        parameters:
+          - in: path
+            name: job_id
+            required: true
+            type: string
+        responses:
+          200:
+            description: Native VMMap .mmp file
+          404:
+            description: No job or snapshot file exists
+        """
+        result = memory_profiling.job(job_id)
+        if result is None:
+            return jsonify(ok=False, error="no such memory-profile job"), 404
+        path = memory_profiling.snapshot_file(job_id)
+        if path is None:
+            return jsonify(ok=False, error="the VMMap snapshot is not available"), 404
+        return send_file(path, as_attachment=True,
+                         download_name=f"vmmap-{job_id}.mmp",
+                         mimetype="application/octet-stream")
 
     @app.post("/api/analysis/artifact-options")
     def set_artifact_options():

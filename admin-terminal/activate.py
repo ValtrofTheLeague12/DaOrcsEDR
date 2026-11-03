@@ -67,7 +67,7 @@ def _docker_state() -> tuple[str, str]:
 
 
 def _docker_compose_file() -> str | None:
-    """Root compose file for CyberChef (see CONTAINER-TESTING.md)."""
+    """Find the root Compose file used by the optional services."""
     for name in ("docker-compose.yml", "docker-compose.yaml",
                  "compose.yml", "compose.yaml"):
         path = os.path.join(core.REPO, name)
@@ -110,7 +110,7 @@ def _starter_list() -> list[Starter]:
             "cyberchef", "CyberChef", [], core.REPO, ready=0.0,
             needs="__missing__",
             hint="compose file + Containerfile.cyberchef missing "
-                 "(see CONTAINER-TESTING.md)"))
+                 "(see docs/building.md)"))
     if compose:
         out.append(Starter(
             "guacamole", "Guacamole",
@@ -120,7 +120,7 @@ def _starter_list() -> list[Starter]:
         out.append(Starter(
             "guacamole", "Guacamole", [], core.REPO, ready=0.0,
             needs="__missing__",
-            hint="compose.yaml missing (see CONTAINER-TESTING.md)"))
+            hint="compose.yaml missing (see docs/building.md)"))
     out.append(Starter(
         "kafka", "Kafka broker",
         ["docker", "compose", "-f",

@@ -5,10 +5,12 @@ import Icon from '../components/Icon'
 import Loading from '../components/Loading'
 import CodeBlock from '../components/CodeBlock'
 import Checkbox from '../components/Checkbox'
+import MemoryLayout from '../components/MemoryLayout'
 import { bytes } from '../lib/format'
 import { parseLine, TONE_CLASS } from '../lib/logColor'
 import type {
-  EagleState, SampleFactoryCatalog, SamplePreview, SampleShapeOptions,
+  EagleState, MemoryProfilingJob, MemoryProfilingSnapshot,
+  SampleFactoryCatalog, SamplePreview, SampleShapeOptions,
 } from '../types'
 
 // ---------------------------------------------------------------------------
@@ -171,6 +173,11 @@ export default function SampleFactoryCard({
   const [packUpx, setPackUpx] = useState(false)
   const [virtualize, setVirtualize] = useState(false)
   const [writeMakefile, setWriteMakefile] = useState(false)
+  const [profileGenerated, setProfileGenerated] = useState(false)
+  const [memoryProfiling, setMemoryProfiling] =
+    useState<MemoryProfilingSnapshot | null>(null)
+  const [profileJob, setProfileJob] = useState<MemoryProfilingJob | null>(null)
+  const [profileError, setProfileError] = useState<string | null>(null)
 
   const [preview, setPreview] = useState<SamplePreview | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -197,6 +204,37 @@ export default function SampleFactoryCard({
       })
       .catch((e) => setCatalogError(e instanceof Error ? e.message : String(e)))
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    void api.memoryProfiling()
+      .then((snapshot) => {
+        setMemoryProfiling(snapshot)
+        const latest = snapshot.current ?? snapshot.last
+        if (latest?.target === 'sample') setProfileJob(latest)
+      })
+      .catch((e) => setProfileError(
+        e instanceof Error ? e.message : String(e),
+      ))
+  }, [])
+
+  useEffect(() => {
+    if (!profileJob || profileJob.state !== 'running') return
+    let cancelled = false
+    const id = window.setInterval(async () => {
+      try {
+        const res = await api.memoryProfilingJob(profileJob.id)
+        if (!cancelled) setProfileJob(res.job)
+      } catch (e) {
+        if (!cancelled) {
+          setProfileError(e instanceof Error ? e.message : String(e))
+        }
+      }
+    }, 1500)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [profileJob])
 
   const templates = useMemo(
     () => catalog?.templates?.filter((t) => t.language === language) ?? [],
@@ -365,6 +403,8 @@ export default function SampleFactoryCard({
     if (!preview || preview.seed == null) return
     setGenerating(true)
     setResult(null)
+    setProfileError(null)
+    setProfileJob(null)
     try {
       const res = await api.generateSample(language, templateId, features, {
         name: nameValue || undefined,
@@ -407,6 +447,18 @@ export default function SampleFactoryCard({
           virtualized: res.virtualized,
         })
         if (res.exe) onGenerated(res.exe)
+        if (profileGenerated) {
+          if (!res.exe) {
+            setProfileError('The generated executable path was not returned.')
+          } else {
+            try {
+              const profile = await api.runGeneratedMemoryProfiling(res.exe)
+              setProfileJob(profile.job)
+            } catch (e) {
+              setProfileError(e instanceof Error ? e.message : String(e))
+            }
+          }
+        }
       } else {
         setResult({
           ok: false,
@@ -424,7 +476,7 @@ export default function SampleFactoryCard({
       setGenerating(false)
     }
   }, [language, templateId, features, nameValue, encoding, sleepValue, packUpx,
-      virtualize, writeMakefile, preview, onGenerated, shape])
+      virtualize, writeMakefile, profileGenerated, preview, onGenerated, shape])
 
   if (catalogError && !catalog) {
     return (
@@ -953,6 +1005,33 @@ export default function SampleFactoryCard({
                 flags. Rebuild with <code>make -f samples/&lt;name&gt;.mk</code>.
               </span>
             </label>
+
+            <label
+              className={'factory-feature ' + (profileGenerated ? 'is-checked' : '')
+                + (memoryProfiling?.settings.enabled
+                  && memoryProfiling.vmmap.installed
+                  ? '' : ' is-disabled')}
+              title={memoryProfiling?.settings.enabled
+                && memoryProfiling.vmmap.installed
+                ? 'Run the generated Windows executable and capture its VMMap snapshot'
+                : 'Enable Memory profiling and install VMMap in Maintenance'}
+            >
+              <Checkbox
+                checked={profileGenerated}
+                disabled={!memoryProfiling?.settings.enabled
+                  || !memoryProfiling.vmmap.installed}
+                onChange={() => setProfileGenerated((v) => !v)}
+              />
+              <span className="factory-feature-name">
+                Capture generated executable with VMMap
+              </span>
+              <span className="factory-feature-note">
+                {memoryProfiling?.settings.enabled
+                  && memoryProfiling.vmmap.installed
+                  ? 'Runs the generated Windows executable and captures a process memory-map snapshot in exports/memory_profiling/. VMMap does not trace allocations by function.'
+                  : 'First enable Memory profiling and install VMMap under Maintenance → Memory profiling.'}
+              </span>
+            </label>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -1005,6 +1084,62 @@ export default function SampleFactoryCard({
             command, paths and compiler log appear below after the first run.
           </p>
         </div>
+
+        {profileError && (
+          <Alert status="danger">
+            <Alert.Title>The generated executable was not profiled</Alert.Title>
+            <Alert.Description>{profileError}</Alert.Description>
+          </Alert>
+        )}
+
+        {profileJob && (
+          <div className="factory-panel">
+            <div className="factory-panel-head">
+              <p className="factory-step-label">Memory profile</p>
+              <span className="factory-panel-note">
+                {profileJob.sample}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip
+                size="sm"
+                variant="soft"
+                color={profileJob.state === 'running'
+                  ? 'accent'
+                  : profileJob.state === 'failed' ? 'danger'
+                    : profileJob.warning ? 'warning' : 'success'}
+              >
+                {profileJob.state === 'running'
+                  ? 'capturing'
+                  : profileJob.state === 'failed'
+                    ? 'capture failed'
+                    : profileJob.warning ? 'captured · target warning' : 'captured'}
+              </Chip>
+              {profileJob.duration_sec !== null && (
+                <span className="text-[11px] text-default-400">
+                  {profileJob.duration_sec}s
+                </span>
+              )}
+              {profileJob.report_dir && (
+                <code className="break-all font-mono text-[10px] text-default-400">
+                  {profileJob.report_dir}
+                </code>
+              )}
+            </div>
+            {profileJob.error && (
+              <p className="mt-2 text-[11px] text-danger">{profileJob.error}</p>
+            )}
+            {profileJob.warning && (
+              <p className="mt-2 text-[11px] text-warning">{profileJob.warning}</p>
+            )}
+            <pre className="mt-2 max-h-72 overflow-auto rounded bg-default-100 p-2 font-mono text-[10px] leading-relaxed">
+              {profileJob.log.length > 0
+                ? profileJob.log.join('\n')
+                : 'waiting for output…'}
+            </pre>
+            <MemoryLayout job={profileJob} />
+          </div>
+        )}
 
         {result && (
           <div className="factory-panel">

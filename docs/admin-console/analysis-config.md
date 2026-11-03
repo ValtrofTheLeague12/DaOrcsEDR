@@ -121,8 +121,8 @@ The page also carries two cards that are *not* `config/analysis.yaml`:
 - **Hardening** edits `config/hardening.json` — the four compiler protection
   switches — and its values reach a build, not a run.
 
-Both are here because they answer the same standing question the rest of the
-page does (*how is this machine's analysis configured?*). See
+Hardening is here because it answers the same standing question the rest of
+the page does (*how is this machine's analysis configured?*). See
 [build.md § Binary hardening](build.md#binary-hardening) for the hardening
 settings themselves and the requested-vs-present comparison.
 
@@ -134,6 +134,12 @@ Two consequences worth stating, because the files are easy to conflate:
 - Clearing a key here hands it back to **Pipelines Configuration**. That rule
   covers `analysis.yaml` and `artifacts.yaml` keys only; the hardening switches
   have no second location to fall back to, and are simply on or off.
+
+Memory profiling is managed from **Maintenance → Memory profiling** because
+VMMap is an optional diagnostic tool, not an analyzer run-time setting. It
+captures a selected Windows executable or runs the analyzer on one. The page
+shows the VMMap setup status, capture controls, category totals, and address
+regions; the native snapshot can be downloaded for inspection in VMMap.
 
 ## Where it is read
 
