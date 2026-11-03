@@ -24,7 +24,7 @@ export default function MemoryProfiling() {
       const snapshot = await api.memoryProfiling()
       setMemory(snapshot)
       setJob(snapshot.current ?? snapshot.last)
-      setError(null)
+      setError(snapshot.error)
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc))
     }
