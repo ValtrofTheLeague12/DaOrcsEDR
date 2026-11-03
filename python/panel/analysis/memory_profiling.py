@@ -248,6 +248,8 @@ def _is_windows_executable(path: Path) -> bool:
 
 def _resolve_sample(repo: Path, sample: str) -> tuple[Path | None, str | None]:
     """A file selected from the sample roots, or the refusal sentence."""
+    if not isinstance(sample, str):
+        return None, "sample must be a string"
     if not sample or not sample.strip():
         return None, "no sample selected"
     if sample.strip().startswith("--"):
