@@ -493,8 +493,9 @@ def _run_profile(job_id: str, repo: Path, target: str,
         return
 
     try:
-        for line in target_log.read_text(encoding="utf-8", errors="replace").splitlines():
-            _append(job_id, line)
+        with target_log.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                _append(job_id, line.rstrip("\r\n"))
     except OSError as exc:
         _append(job_id, f"could not read target log: {exc}")
     if returncode != 0:
