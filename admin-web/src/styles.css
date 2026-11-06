@@ -91,6 +91,730 @@
   --color-default-900: var(--foreground);
 }
 
+/* --- threat-intelligence evidence workspace ------------------------------ */
+
+.threat-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.threat-header,
+.threat-header-actions,
+.threat-card-header,
+.threat-inspector-actions,
+.threat-queue-actions,
+.threat-report-strip,
+.threat-file-heading,
+.threat-link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.threat-header {
+  align-items: flex-start;
+}
+
+.threat-header-actions {
+  flex-shrink: 0;
+}
+
+.threat-api-section {
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
+  border: 1px solid var(--console-border);
+  border-radius: .9rem;
+  padding: 1rem;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  box-shadow: var(--console-shadow);
+}
+
+.threat-api-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.threat-api-heading h2 {
+  margin-top: .2rem;
+  color: var(--foreground);
+  font-size: .95rem;
+  font-weight: 600;
+}
+
+.threat-api-heading p:last-child {
+  margin-top: .3rem;
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.threat-api-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .7rem;
+}
+
+.threat-api-card {
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  background: color-mix(in oklab, var(--surface) 85%, transparent);
+}
+
+.threat-api-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: .5rem;
+}
+
+.threat-api-env,
+.threat-api-card-content > p,
+.threat-api-requirement {
+  color: var(--muted);
+  font-size: .63rem;
+}
+
+.threat-api-env {
+  margin-top: .2rem;
+  font-family: var(--font-mono);
+}
+
+.threat-api-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+
+.threat-api-requirement {
+  color: var(--accent);
+}
+
+.threat-api-input-label {
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.threat-api-card-content input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  border-radius: .45rem;
+  padding: .5rem .6rem;
+  color: var(--foreground);
+  background: var(--surface);
+  font: .68rem var(--font-mono);
+}
+
+.threat-api-card-content input:focus {
+  outline: 1px solid var(--accent);
+}
+
+.threat-api-actions {
+  display: flex;
+  gap: .45rem;
+}
+
+.threat-api-clear {
+  color: var(--muted);
+}
+
+.threat-server-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  border: 1px solid var(--console-border);
+  border-radius: .9rem;
+  padding: 1rem;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  box-shadow: var(--console-shadow);
+}
+
+.threat-server-heading,
+.threat-catalog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.threat-catalog-counts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+
+.threat-server-heading h2,
+.threat-catalog-heading h3 {
+  margin-top: .2rem;
+  color: var(--foreground);
+  font-size: .9rem;
+  font-weight: 600;
+}
+
+.threat-server-heading p:last-child,
+.threat-catalog-heading p {
+  margin-top: .3rem;
+  color: var(--muted);
+  font-size: .67rem;
+}
+
+.threat-generate-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: .45rem;
+}
+
+.threat-server-config {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, .55fr) auto;
+  align-items: end;
+  gap: .75rem;
+  border: 1px solid var(--console-border);
+  border-radius: .7rem;
+  padding: .8rem;
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+}
+
+.threat-server-config label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .35rem;
+}
+
+.threat-server-config label > span {
+  color: var(--foreground);
+  font-size: .67rem;
+  font-weight: 500;
+}
+
+.threat-server-config label > input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  border-radius: .45rem;
+  padding: .5rem .6rem;
+  color: var(--foreground);
+  background: var(--surface);
+  font: .7rem var(--font-mono);
+}
+
+.threat-server-config label > input:focus {
+  outline: 1px solid var(--accent);
+}
+
+.threat-server-config small {
+  color: var(--muted);
+  font-size: .58rem;
+}
+
+.threat-server-config-actions {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.threat-generation-output {
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-radius: .65rem;
+  background: color-mix(in oklab, var(--surface) 72%, #000);
+}
+
+.threat-generation-output-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  border-bottom: 1px solid var(--console-border);
+  padding: .55rem .75rem;
+  color: var(--muted);
+  font-size: .63rem;
+}
+
+.threat-generation-output pre {
+  max-height: 12rem;
+  overflow: auto;
+  padding: .75rem;
+  color: var(--foreground);
+  font: .64rem/1.65 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.threat-catalog {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .65rem;
+}
+
+.threat-catalog-table-wrap {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--console-border);
+  border-radius: .65rem;
+}
+
+.threat-catalog-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: .65rem;
+}
+
+.threat-catalog-table th,
+.threat-catalog-table td {
+  max-width: 19rem;
+  border-bottom: 1px solid var(--console-border);
+  padding: .65rem .75rem;
+  vertical-align: middle;
+}
+
+.threat-catalog-table th {
+  position: sticky;
+  top: 0;
+  color: var(--muted);
+  background: var(--surface-secondary);
+  font-size: .6rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.threat-catalog-table td {
+  overflow: hidden;
+  color: var(--foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-catalog-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.threat-catalog-table code {
+  font: .6rem var(--font-mono);
+}
+
+.threat-catalog-table a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.threat-catalog-inclusion {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.threat-catalog-inclusion input {
+  accent-color: var(--accent);
+}
+
+.threat-catalog-muted,
+.threat-catalog-empty {
+  color: var(--muted) !important;
+}
+
+.threat-catalog-empty {
+  padding: 1.25rem !important;
+  text-align: center;
+}
+
+.threat-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .75rem;
+}
+
+.threat-metric {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+  border: 1px solid var(--console-border);
+  border-radius: .85rem;
+  padding: .9rem 1rem;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  box-shadow: var(--console-shadow);
+}
+
+.threat-metric strong {
+  overflow: hidden;
+  color: var(--foreground);
+  font: 600 1.35rem var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-metric > span:last-child {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: .68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-selected-name {
+  font-size: .9rem !important;
+}
+
+.threat-workspace {
+  display: grid;
+  grid-template-columns: minmax(300px, .85fr) minmax(0, 1.4fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.threat-browser,
+.threat-inspector {
+  min-width: 0;
+}
+
+.threat-inspector-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.threat-search {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  border: 1px solid var(--console-border);
+  border-radius: .65rem;
+  padding: .55rem .7rem;
+  color: var(--muted);
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+}
+
+.threat-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--foreground);
+  background: transparent;
+  font-size: .75rem;
+}
+
+.threat-queue-actions {
+  min-height: 2rem;
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.threat-bundle-list,
+.threat-file-list {
+  display: flex;
+  max-height: 36rem;
+  flex-direction: column;
+  gap: .45rem;
+  overflow: auto;
+  padding-right: .15rem;
+}
+
+.threat-bundle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .55rem;
+  border: 1px solid var(--console-border);
+  border-radius: .7rem;
+  padding: .65rem;
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+  transition: border-color .16s ease, background .16s ease;
+}
+
+.threat-bundle.active {
+  border-color: color-mix(in oklab, var(--accent) 56%, var(--console-border));
+  background: color-mix(in oklab, var(--surface) 82%, var(--accent) 18%);
+}
+
+.threat-bundle-check {
+  display: grid;
+  width: 1.5rem;
+  height: 1.8rem;
+  place-items: center;
+  cursor: pointer;
+}
+
+.threat-bundle-check input {
+  accent-color: var(--accent);
+}
+
+.threat-bundle-select {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .2rem;
+  text-align: left;
+}
+
+.threat-bundle-name,
+.threat-bundle-meta,
+.threat-bundle-files {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-bundle-name {
+  color: var(--foreground);
+  font: 500 .75rem var(--font-mono);
+}
+
+.threat-bundle-meta,
+.threat-bundle-files {
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.threat-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem;
+}
+
+.threat-detail-grid > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .25rem;
+  border-radius: .6rem;
+  padding: .65rem .75rem;
+  background: color-mix(in oklab, var(--surface-secondary) 72%, transparent);
+}
+
+.threat-detail-grid span,
+.threat-file-heading span {
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.threat-detail-grid strong {
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+  font: 500 .68rem var(--font-mono);
+}
+
+.threat-report-strip {
+  border-top: 1px solid var(--console-border);
+  padding-top: .8rem;
+}
+
+.threat-report-list {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+}
+
+.threat-report-item,
+.threat-file-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .55rem;
+  border: 1px solid var(--console-border);
+  border-radius: .55rem;
+  padding: .5rem .65rem;
+  color: var(--foreground);
+  text-align: left;
+  font-size: .68rem;
+}
+
+.threat-report-item {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.threat-report-item:hover,
+.threat-file-row button:hover,
+.threat-file-open:hover {
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--console-border));
+}
+
+.threat-report-item span:nth-child(2),
+.threat-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-report-item span:last-child,
+.threat-file-size {
+  color: var(--muted);
+  font: .62rem var(--font-mono);
+}
+
+.threat-file-heading {
+  padding: .3rem 0;
+}
+
+.threat-file-heading span:last-child {
+  overflow: hidden;
+  max-width: 60%;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-file-row {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.threat-file-row button,
+.threat-file-open {
+  border: 1px solid var(--console-border);
+  border-radius: .35rem;
+  padding: .15rem .4rem;
+  color: var(--accent);
+  font-size: .62rem;
+}
+
+.threat-file-open {
+  text-decoration: none;
+}
+
+.threat-empty-inspector {
+  display: flex;
+  min-height: 15rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .8rem;
+  color: var(--muted);
+  text-align: center;
+  font-size: .75rem;
+}
+
+.threat-progress {
+  border-left: 2px solid var(--accent);
+  padding: .3rem .65rem;
+  color: var(--accent);
+  font: .7rem var(--font-mono);
+}
+
+.threat-link-row {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  border: 1px solid var(--console-border);
+  border-radius: .7rem;
+  padding: .65rem .8rem;
+}
+
+.threat-link-row a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--accent);
+  font: .68rem var(--font-mono);
+  text-decoration: underline;
+}
+
+.threat-report-overlay {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  padding: clamp(.5rem, 3vw, 2rem);
+  place-items: center;
+  background: color-mix(in oklab, #000 76%, transparent);
+  backdrop-filter: blur(7px);
+}
+
+.threat-report-window {
+  display: flex;
+  width: min(100%, 90rem);
+  height: min(100%, 58rem);
+  min-height: 20rem;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-radius: .9rem;
+  background: var(--surface);
+  box-shadow: 0 24px 80px #0008;
+}
+
+.threat-report-window-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--console-border);
+  padding: .75rem 1rem;
+}
+
+.threat-report-frame {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  background: white;
+}
+
+@media (max-width: 900px) {
+  .threat-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threat-api-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .threat-server-config {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .threat-server-config-actions {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+  }
+
+  .threat-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .threat-header {
+    flex-direction: column;
+  }
+
+  .threat-api-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threat-server-heading,
+  .threat-catalog-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .threat-server-config {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threat-server-config-actions {
+    grid-column: auto;
+  }
+
+  .threat-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threat-file-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 /* --- accent spectrum ------------------------------------------------------
  *
  * The console was built on a single blue accent, which is why large parts of
@@ -363,6 +1087,11 @@ button.stat-tile:focus-visible {
   overscroll-behavior: contain;
 }
 
+.nav-group:not([data-group=""]) {
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--console-border);
+}
+
 /* --- nav ----------------------------------------------------------------- */
 
 /* The active marker is a bar, not a background swap - it survives the eye
@@ -527,6 +1256,10 @@ html {
 
 .app-main {
   min-width: 0;
+}
+
+.app-main {
+  min-width: 0;
   background:
     radial-gradient(46rem 22rem at 50% -14rem,
       color-mix(in oklab, var(--accent) 5%, transparent), transparent 72%),
@@ -606,6 +1339,55 @@ html {
   border-color: color-mix(in oklab, var(--tile-tone, var(--accent)) 32%, var(--console-border));
   box-shadow: 0 16px 36px -28px color-mix(in oklab, var(--tile-tone, var(--accent)) 80%, transparent);
 }
+
+/* Start / Stop sits inside the card but is not part of "click the card to
+   expand": the row stops propagation, and it is drawn as its own strip so the
+   two click targets never look like one. Only the three Python services get
+   this row; the backend's allowlist decides which. */
+.service-control {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.55rem;
+  background: linear-gradient(
+    120deg,
+    color-mix(in oklab, var(--tile-tone, var(--accent)) 8%, transparent),
+    transparent 62%
+  );
+}
+
+.service-control-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* The outcome of the last action. Pre-wrapped because a failed start carries
+   three different kinds of line - the sentence, the log path, and that log's
+   last line - and collapsing them into one run-on sentence helps nobody. */
+.service-notice {
+  max-height: 6.5rem;
+  overflow: auto;
+  padding: 0.4rem 0.55rem;
+  border-radius: 0.45rem;
+  border-left: 2px solid var(--tone);
+  background: color-mix(in oklab, var(--tone) 8%, transparent);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: color-mix(in oklab, var(--tone) 70%, var(--foreground));
+}
+
+.service-notice.is-success { --tone: var(--success); }
+.service-notice.is-warning { --tone: var(--warning); }
 
 /* Numbers. Tabular figures are not cosmetic here - the tiles, the tables and the
    meters are all read by comparing columns, and proportional digits make a
@@ -3934,41 +4716,6 @@ select.field {
   gap: 0.35rem 0.5rem;
 }
 
-/* The argv the Run button spawns. Before a run it is a preview built from the
-   two selectors; after start it is the server's exact job.command, with the
-   absolute executable and the resolved sample path. One line, scrollable
-   rather than wrapped: a command that wraps is harder to compare with a
-   terminal, and it should never force the card wider. */
-.build-command {
-  display: flex;
-  align-items: baseline;
-  gap: 0.55rem;
-  min-width: 0;
-  margin-bottom: 0.55rem;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
-  border-radius: 0.55rem;
-  background: color-mix(in oklab, var(--foreground) 3%, transparent);
-}
-
-.build-command-label {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 0.6rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.build-command code {
-  min-width: 0;
-  overflow-x: auto;
-  color: var(--foreground);
-  font-family: var(--mono);
-  font-size: 0.66rem;
-  white-space: pre;
-}
-
 /* --- the duration limit --------------------------------------------------- */
 
 /* A compact label + number + unit. The input is deliberately narrow: it holds a
@@ -4051,22 +4798,17 @@ select.field {
   .run-cursor { animation: none; }
 }
 
-/* The cursor-off mode. Same monospace identity as the log so switching
-   between the two modes does not re-typeset the text under you. */
-.run-textarea {
-  width: 100%;
-  min-height: min(58vh, 46rem);
-  resize: vertical;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
-  border-radius: 0.5rem;
-  background: color-mix(in oklab, #000 25%, var(--surface));
-  color: var(--foreground);
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre;
-  overflow: auto;
+/* The cursor-off (static) view. Same renderer as the live one - the ANSI
+   colours stay - but no line-number gutter, so selecting a block copies clean
+   text. Focusable so the keyboard can scroll it without following the tail. */
+.build-log-static {
+  cursor: text;
+  user-select: text;
+}
+
+.build-log-static:focus-visible {
+  outline: 1px solid color-mix(in oklab, var(--accent) 55%, transparent);
+  outline-offset: 2px;
 }
 
 .build-log-line {
@@ -4687,6 +5429,13 @@ textarea:focus-visible {
   .nav-scroll > div {
     flex: 0 0 11rem;
     scroll-snap-align: start;
+  }
+
+  .nav-group:not([data-group=""]) {
+    padding-top: 0;
+    padding-right: 0.75rem;
+    border-top: 0;
+    border-right: 1px solid var(--console-border);
   }
 
   .app-main {

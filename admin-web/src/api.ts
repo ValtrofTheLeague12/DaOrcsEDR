@@ -1,13 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AnalysisConfig,
   AnalysisSettingsSnapshot,
+  MemoryProfilingJob,
+  MemoryMapLayout,
+  MemoryProfilingSnapshot,
+  MemoryProfilingTarget,
+  ShareSettings,
   AnalyzerPackedStop,
   AgentSaveResult,
+  ArtifactExportJob,
+  ArtifactSettings,
+  ArtifactsSnapshot,
   EndpointApplyResult,
   EndpointSnapshot,
-  ArtifactExportJob,
-  ArtifactsSnapshot,
   AnalyzerBuildJob,
   PipelineRunState,
   BuildHardening,
@@ -30,11 +36,14 @@ import type {
   DepRefresh,
   DynamicAnalysisSnapshot,
   DynamicTransport,
+  EvidenceFiles,
   ClamdResults,
   ClamdResultDocument,
+  ClamdPing,
   ClamdStatus,
   ClamdSubmitJob,
   ClamdSubmitStart,
+  CTISettings,
   ComposeFile,
   ContainerList,
   DocsCatalog,
@@ -46,9 +55,14 @@ import type {
   PanelConfig,
   PipelineConfig,
   QilingGuestMetrics,
+  QilingPing,
   QilingRootfsJob,
   QilingRuns,
+  QilingSubmitInfo,
+  QilingSubmitJob,
+  QilingSubmitStart,
   QilingVmStatus,
+  ServiceActionResult,
   Stats,
   SystemInfo,
   TraceMetrics,
@@ -94,6 +108,16 @@ export const auth = {
 
 export const api = {
   overview: () => json<Overview>('/api/overview'),
+  // Start/stop the three Python services the panel supervises. `key` is an
+  // allowlist entry (analyzer | malapi | ml); anything else 404s before a
+  // process is spawned. Long because `start` waits for the health check it
+  // will be shown on - a "started" that the next poll contradicts is worse
+  // than a slow answer.
+  serviceAction: (key: string, action: 'start' | 'stop') =>
+    json<ServiceActionResult>(
+      `/api/services/${encodeURIComponent(key)}/${action}`,
+      { method: 'POST' },
+    ),
   config: () => json<PanelConfig>('/api/config'),
   // Pipelines, the phase catalog and the artifact/MEGA upload options - what the
   // analyzer will do, read from the YAML the analyzer itself reads. Static
@@ -160,6 +184,11 @@ export const api = {
   // panel/utils/socket_validator.py. It returns a job handle because an SFTP
   // deploy outlives an HTTP request.
   clamdStatus: () => json<ClamdStatus>('/api/clamd/status'),
+  /**
+   * Ask the guest whether clamav is running, through the VM utility server.
+   * On demand only: this opens a socket, so the 10s status poll does not do it.
+   */
+  clamdPing: () => json<ClamdPing>('/api/clamd/ping', { method: 'POST' }),
   clamdResults: () => json<ClamdResults>('/api/clamd/results'),
   /** One result document, unmodified, for the JSON viewer. */
   clamdResult: (name: string) =>
@@ -190,11 +219,11 @@ export const api = {
   // The one transport a sample under dynamic analysis may use. Read on page
   // load and after a save, not polled: it is a standing policy, not telemetry.
   dynamicAnalysis: () => json<DynamicAnalysisSnapshot>('/api/dynamic-analysis/config'),
-  setDynamicAnalysis: (communication: DynamicTransport) =>
+  setDynamicAnalysis: (patch: { communication?: DynamicTransport; socket_timeout?: number }) =>
     json<DynamicAnalysisSnapshot>('/api/dynamic-analysis/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ communication }),
+      body: JSON.stringify(patch),
     }),
   // Qiling emulation runs: summary.json + trace tail read out of each result
   // zip, plus rootfs/harness state. Also read-only.
@@ -211,6 +240,36 @@ export const api = {
   qilingRootfsJob: (jobId: string) =>
     json<QilingRootfsJob & { state: string; complete?: boolean; rootfs?: unknown }>(
       `/api/qiling/rootfs/${encodeURIComponent(jobId)}`),
+  /**
+   * The transport the Dynamic Analysis page selected, whether it can run, and
+   * the run in progress (if any) so a reload reattaches instead of showing an
+   * idle button over a live upload.
+   */
+  qilingSubmitInfo: () => json<QilingSubmitInfo>('/api/qiling/submit'),
+  /** Ask the guest whether the Qiling service is alive, via the utility server. */
+  qilingPing: () => json<QilingPing>('/api/qiling/ping', { method: 'POST' }),
+  /** Poll a Qiling submission through the shared build job store. */
+  qilingJob: (jobId: string) =>
+    json<QilingSubmitJob>(`/api/build/${encodeURIComponent(jobId)}`),
+  /**
+   * Upload one PE and run it with Qiling. There is no transport argument: it is
+   * read from config/dynamic_analysis.json, so this page cannot submit down a
+   * path the Dynamic Analysis page does not record. The refusal payload is
+   * returned rather than thrown so the caller can show `code`-specific wording.
+   */
+  qilingSubmit: async (
+    file: File, timeout?: number, maxInsn?: number,
+  ): Promise<QilingSubmitStart> => {
+    const form = new FormData()
+    form.append('file', file)
+    if (timeout !== undefined) form.append('timeout', String(timeout))
+    if (maxInsn !== undefined) form.append('max_insn', String(maxInsn))
+    const res = await fetch('/api/qiling/submit', {
+      method: 'POST', credentials: 'same-origin', body: form,
+    })
+    return await res.json().catch(
+      () => ({ ok: false, error: `HTTP ${res.status}` })) as QilingSubmitStart
+  },
   // project/service come from the allowlist the backend parses out of the
   // compose files, never from free text - a crafted URL to a 404, not a
   // docker command against an arbitrary container.
@@ -233,15 +292,26 @@ containerBuild: (project: string) =>
       `/api/containers/${encodeURIComponent(project)}/compose`,
     ),
   // Local evidence bundles, their MEGA copies, and the effective throughput
-  // between consecutive uploads. Uploading stays a CLI action; recovery is
-  // exposed separately because it downloads and verifies an existing bundle.
-  // `refresh` bypasses the server's 5-minute MEGA cache - the Rescan button
-  // needs to see an upload that just happened, not one from five minutes ago.
-  artifacts: (remoteRoot = '/', refresh = false) =>
-    json<ArtifactsSnapshot>(
-      `/api/artifacts?remote_root=${encodeURIComponent(remoteRoot)}` +
-        (refresh ? '&refresh=1' : ''),
-    ),
+  // between consecutive uploads. Recovery and export are exposed separately:
+  // recover downloads and verifies a remote bundle, export protects and pushes
+  // a local one. `refresh` bypasses the server's 5-minute MEGA cache - the
+  // Rescan button needs to see an upload that just happened, not one from five
+  // minutes ago.
+  artifacts: (remoteRoot?: string, refresh = false) => {
+    const query = new URLSearchParams()
+    if (remoteRoot) query.set('remote_root', remoteRoot)
+    if (refresh) query.set('refresh', '1')
+    const suffix = query.toString()
+    return json<ArtifactsSnapshot>(`/api/artifacts${suffix ? `?${suffix}` : ''}`)
+  },
+  artifactSettings: () => json<ArtifactSettings>('/api/artifacts/settings'),
+  ctiSettings: () => json<CTISettings>('/api/threat-intelligence/apis'),
+  saveCtiSettings: (keys: Record<string, string | null>) =>
+    json<CTISettings>('/api/threat-intelligence/apis', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys }),
+    }),
   artifactArchiveUrl: (name: string) =>
     `/api/artifacts/local/${encodeURIComponent(name)}/archive`,
   recoverArtifact: (name: string, remoteRoot = '/') =>
@@ -250,6 +320,18 @@ containerBuild: (project: string) =>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, remote_root: remoteRoot }),
     }),
+  restoreArtifact: (name: string) =>
+    json<{ ok: boolean; name: string; directory: string; detail: string }>(
+      '/api/artifacts/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }),
+  evidenceFiles: (name: string) =>
+    json<EvidenceFiles>(`/api/artifacts/local/${encodeURIComponent(name)}/evidence`),
+  evidenceFileUrl: (name: string, path: string) =>
+    `/api/artifacts/local/${encodeURIComponent(name)}/evidence/` +
+    path.split('/').map(encodeURIComponent).join('/'),
   // The mirror of recover: push a bundle that is on disk up to MEGA. Job-based,
   // because sealing a large bundle and pushing it takes minutes and the log is
   // the useful part. Gated server-side on `upload_artifacts` in
@@ -262,6 +344,16 @@ containerBuild: (project: string) =>
     }),
   artifactExportJob: (jobId: string) =>
     json<ArtifactExportJob>(`/api/artifacts/export/${encodeURIComponent(jobId)}`),
+  /** Get (creating if needed) the public MEGA folder link for a remote bundle. */
+  artifactLink: (name: string, remoteRoot = '/') =>
+    json<{ ok: boolean; link: string; remote_path: string; account: string }>(
+      '/api/artifacts/link',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, remote_root: remoteRoot }),
+      },
+    ),
   // Every registered VirtualBox machine with its address and live services.
   // One showvminfo per machine, so this is heavier than the netmap poll. Guest
   // metrics are already attached per machine from the cached SSH/SFTP
@@ -536,6 +628,65 @@ containerBuild: (project: string) =>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     }),
+  // config/memory_profiling.json: the VMMap option and its target.
+  // Panel-owned, because the analyzer's C++ config loader rejects unknown keys
+  // in config/analysis.yaml, and opening this page must not stop a run.
+  memoryProfiling: () => json<MemoryProfilingSnapshot>('/api/analysis/memory-profiling'),
+  setMemoryProfiling: (patch: {
+    enabled?: boolean
+    target?: MemoryProfilingTarget
+    sample?: string | null
+    keep_open?: boolean
+  }) =>
+    json<{ ok: boolean; snapshot: MemoryProfilingSnapshot }>(
+      '/api/analysis/memory-profiling',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      },
+    ),
+  runMemoryProfiling: (options: {
+    target?: MemoryProfilingTarget
+    sample?: string | null
+    timeout?: number
+  }) =>
+    json<{ ok: boolean; job: MemoryProfilingJob }>(
+      '/api/analysis/memory-profiling/run',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(options),
+      },
+    ),
+  runGeneratedMemoryProfiling: (executable: string) =>
+    json<{ ok: boolean; job: MemoryProfilingJob }>(
+      '/api/analysis/memory-profiling/generated',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ executable }),
+      },
+    ),
+  memoryProfilingJob: (jobId: string) =>
+    json<{ ok: boolean; job: MemoryProfilingJob }>(
+      `/api/analysis/memory-profiling/run/${encodeURIComponent(jobId)}`),
+  memoryProfilingLayout: (jobId: string) =>
+    json<{ ok: boolean; layout: MemoryMapLayout }>(
+      `/api/analysis/memory-profiling/run/${encodeURIComponent(jobId)}/layout`),
+  memoryProfilingSnapshotUrl: (jobId: string) =>
+    `/api/analysis/memory-profiling/run/${encodeURIComponent(jobId)}/snapshot`,
+  memoryProfilingCsvUrl: (jobId: string) =>
+    `/api/analysis/memory-profiling/run/${encodeURIComponent(jobId)}/csv`,
+  // config/share.json: the expiry applied to links created from Artifacts.
+  // Panel-owned, because the analyzer never publishes a link.
+  shareSettings: () => json<ShareSettings>('/api/analysis/share-settings'),
+  setShareSettings: (linkExpire: string | null) =>
+    json<{ ok: boolean; share: ShareSettings }>('/api/analysis/share-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ link_expire: linkExpire }),
+    }),
   setArtifactOptions: (options: {
     store_artifact?: boolean
     upload_artifacts?: boolean
@@ -570,14 +721,18 @@ containerBuild: (project: string) =>
       },
     ),
   /** The generated value is returned exactly once; the page shows it with a
-   *  copy button and nothing ever echoes it again afterwards. */
-  generateBundlePassword: (length?: number) =>
+   *  copy button and nothing ever echoes it again afterwards. `mode` selects
+   *  the panel's PasswordGenerator: random characters or words + a tag. */
+  generateBundlePassword: (length?: number, mode?: 'random' | 'stale') =>
     json<{ ok: boolean; password: string; shown_once: boolean; present: boolean; path: string }>(
       '/api/artifacts/bundle-password/generate',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(length ? { length } : {}),
+        body: JSON.stringify({
+          ...(length ? { length } : {}),
+          ...(mode ? { mode } : {}),
+        }),
       },
     ),
   clearBundlePassword: () =>
@@ -665,5 +820,6 @@ export function usePoll<T>(
     // `tick` is the manual-refresh lever.
   }, [intervalMs, tick])
 
-  return { data, error, loading, refresh: () => setTick((t) => t + 1) }
+  const refresh = useCallback(() => setTick((t) => t + 1), [])
+  return { data, error, loading, refresh }
 }

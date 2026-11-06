@@ -1,0 +1,6 @@
+bcrypt
+colorama
+supabase
+faker
+requests
+Flask

@@ -35,7 +35,7 @@ hundred lines. Start at **[docs/README.md](docs/README.md)**.
 | [Qiling analysis VM](docs/qiling-vm.md) | The emulated VM and its rootfs |
 | [Failure handling and recovery](docs/failure-and-recovery.md) | Exit codes, stopping and resuming a run, faults |
 | [Results](docs/results.md) | HTML dashboard, STIX/ATT&CK, assembly collection |
-| [Building](docs/building.md) | Requirements, the build, containers, layout, tests |
+| [Building](docs/building.md) | Requirements, the build, Compose services, layout, tests |
 | [Security](docs/security.md) | Scope and responsible use |
 | [Troubleshooting](docs/troubleshooting.md) | Common failures |
 
@@ -52,12 +52,19 @@ currently green.
 
 ## Repository layout
 
-`src/` and `include/` hold the analyzer; `python/` the services it shells out
-to; `admin-web/` the console; `admin-terminal/` the TUI; `mega/` encrypted
-evidence storage; `pipelines/` and `config/` the run configuration;
-`unit/` and `tests/` the two test tiers. The full annotated tree is in
-[docs/building.md](docs/building.md#project-structure).
+| Area | Paths |
+| --- | --- |
+| Analyzer and build | `src/`, `include/`, `CMakeLists.txt`, `CMakePresets.json`, `build.ps1` |
+| Operator interfaces | `admin-web/`, `python/panel/`, `admin-terminal/`, `admin-panel.ps1` |
+| Services and integrations | `python/`, `agent/`, `ml/`, `mega/`, `python/qiling/`, `python/clamd/` |
+| Configuration and detection content | `config/`, `pipelines/`, `capa-rules/`, `capa-sigs/`, `yara-rules/`, `data/` |
+| Documentation and tests | `docs/`, `unit/`, `tests/`, `tools/`, `COMMANDS.md` |
+| Local output | `build-ucrt/`, `exports/`, `logs/`, `artifacts/`, `ressources/` |
 
-`yarGen-Go/`, `malt/`, `ml/`, `kafka-agent/` and `yara-rules/` are vendored and
-maintained through the [Utils](docs/admin-console/utils.md) page rather than by
-hand.
+These are existing paths used by build scripts and runtime configuration; the
+grouping is by responsibility, not by a new directory layout. See
+[docs/building.md](docs/building.md#project-structure) for the detailed tree.
+
+Vendored integrations and rules such as `yarGen-Go/`, `malt/`, `kafka-agent/`,
+and `yara-rules/` are maintained through the [Utils](docs/admin-console/utils.md)
+page rather than by hand.

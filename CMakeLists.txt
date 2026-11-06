@@ -696,18 +696,6 @@ install(FILES
         "${CMAKE_SOURCE_DIR}/mega/credential.py"
         DESTINATION bin/mega)
 
-add_executable(static_analyzer_cminer
-    "${CMAKE_SOURCE_DIR}/tools/cminer/main.cpp"
-)
-target_compile_features(static_analyzer_cminer PRIVATE cxx_std_20)
-target_compile_options(static_analyzer_cminer PRIVATE
-    $<$<CONFIG:Release>:-O2>
-    -Wall -Wextra -Wpedantic
-)
-set_target_properties(static_analyzer_cminer PROPERTIES
-    OUTPUT_NAME "static-analyzer-cminer"
-)
-install(TARGETS static_analyzer_cminer RUNTIME DESTINATION bin)
 
 target_compile_options(static_analyzer PRIVATE
     $<$<CONFIG:Release>:-O2>

@@ -72,6 +72,90 @@ class BundleError(RuntimeError):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Colour
+#
+# The analyzer prints ANSI colour on every path, including when stdout is a
+# pipe: the console log in the admin panel parses those escapes and paints the
+# line, and a run redirected to a file keeps the same bytes a terminal showed.
+# The uploader is the last thing a run does, so its narration being the only
+# grey block at the end of a coloured log looked like a failure to report - not
+# a deliberate style. It follows the same rule, with the standard opt-outs:
+# NO_COLOR (any value) and --color never turn it off, --color always forces it.
+# ---------------------------------------------------------------------------
+_ANSI = {
+    "reset": "\x1b[0m",
+    "bold": "\x1b[1m",
+    "red": "\x1b[31m",
+    "green": "\x1b[32m",
+    "yellow": "\x1b[33m",
+    "cyan": "\x1b[36m",
+    "grey": "\x1b[90m",
+}
+
+_color_enabled = True
+
+
+def _resolve_color(mode: str) -> bool:
+    """Whether narration should carry ANSI, from --color and the environment."""
+    if mode == "never" or os.environ.get("NO_COLOR") is not None:
+        return False
+    if mode == "always":
+        return True
+    force = os.environ.get("FORCE_COLOR")
+    if force is not None and force.strip().lower() not in ("", "0", "false", "no", "off"):
+        return True
+    if os.environ.get("TERM", "").lower() == "dumb":
+        return False
+    return sys.stdout.isatty()
+
+
+def paint(text: str, *names: str) -> str:
+    if not _color_enabled or not names:
+        return text
+    prefix = "".join(_ANSI.get(name, "") for name in names)
+    return f"{prefix}{text}{_ANSI['reset']}"
+
+
+def _enable_windows_vt() -> None:
+    """Turn on virtual-terminal processing for a real Windows console.
+
+    A pipe or a redirected file needs no help; this is only for the operator
+    running the uploader directly in cmd.exe, where ANSI would otherwise be
+    printed as literal ``[32m`` text. Best-effort: a console that refuses the
+    mode still gets plain output rather than an exception.
+    """
+    if os.name != "nt" or not _color_enabled:
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        for device in (-11, -12):  # STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+            handle = kernel32.GetStdHandle(device)
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:  # noqa: BLE001 - colour must never break an upload
+        pass
+
+
+def step(message: str) -> None:
+    print(f"{paint('[+]', 'green')} {message}")
+
+
+def note(message: str) -> None:
+    print(f"{paint('[*]', 'cyan')} {message}")
+
+
+def warn(message: str) -> None:
+    print(paint(message, "yellow"), file=sys.stderr)
+
+
+def fail(message: str) -> None:
+    print(paint(message, "red"), file=sys.stderr)
+
+
 def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
     h = hashlib.sha256()
     with path.open("rb") as fh:
@@ -351,7 +435,7 @@ def sealed_email() -> str | None:
         return None
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--artifact", required=True,
@@ -379,31 +463,64 @@ def main() -> int:
     ap.add_argument("--expect-account", default=None,
                     help="refuse to upload unless MEGAcmd is logged in as this "
                          "address (default: the email in the sealed credential)")
-    args = ap.parse_args()
+    ap.add_argument("--color", choices=("auto", "always", "never"), default="always",
+                    help="colour the uploader's narration (default: always, so a "
+                         "captured pipeline log keeps its colour; NO_COLOR also "
+                         "turns it off)")
+
+    # Compatibility with an analyzer built before protection became a password
+    # zip: that binary passes --recipient/--admin-key because the bundle used to
+    # be sealed to an X25519 key. The flags no longer describe anything, but
+    # rejecting them turned every upload from such a binary into a usage error
+    # after the bundle had already been built. Accept and ignore them here; the
+    # scheme is decided by --encrypt/--no-encrypt and the operator password file.
+    ap.add_argument("--recipient", choices=("user", "admin"), default=None,
+                    help=argparse.SUPPRESS)
+    ap.add_argument("--admin-key", default=None, help=argparse.SUPPRESS)
+    return ap
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
+
+
+def main() -> int:
+    args = parse_args()
+
+    global _color_enabled
+    _color_enabled = _resolve_color(args.color)
+    _enable_windows_vt()
 
     artifact = args.artifact.strip()
     if not artifact or "/" in artifact or "\\" in artifact or artifact.startswith("."):
-        print("upload: --artifact must be a plain name", file=sys.stderr)
+        fail("upload: --artifact must be a plain name")
         return 2
+
+    if args.encrypt and (args.recipient is not None or args.admin_key is not None):
+        # Only when protection is actually selected: an older analyzer also
+        # passes --recipient on plain uploads, where it is equally inert and
+        # saying so would be noise.
+        note("legacy --recipient/--admin-key accepted but ignored: bundles are "
+             "password-protected, not sealed to a key")
 
     source = Path(args.source) if args.source else REPO_ROOT / "exports" / f"{artifact}_analysis"
     if not source.is_dir():
-        print(f"upload: no evidence directory at {source}", file=sys.stderr)
+        fail(f"upload: no evidence directory at {source}")
         return 2
 
     out_dir = Path(args.out_root) / f"{artifact}_artifact"
     archive = out_dir / f"{artifact}_evidence.tar.gz"
 
     try:
-        print(f"[+] archiving {source}")
+        step(f"archiving {source}")
         files, raw_bytes, archive_bytes = build_archive(source, archive)
-        print(f"[+] {archive.name}: {files} files, {raw_bytes} bytes source -> {archive_bytes} bytes")
+        step(f"{archive.name}: {files} files, {raw_bytes} bytes source -> {archive_bytes} bytes")
 
         digest = sha256_file(archive)
         members = [(str(rel).replace("\\", "/"), p.stat().st_size)
                    for p, rel in collect(source)]
 
-        print(f"[+] sha256  {digest}")
+        step(f"sha256  {digest}")
 
         # Protection happens before the manifest and README are written, because
         # both have to record what the protected bytes hash to. Writing them
@@ -417,24 +534,24 @@ def main() -> int:
                 password = protect.read_password(
                     Path(args.password_file) if args.password_file else None)
             except protect.PasswordError as exc:
-                print(f"upload: could not protect the bundle: {exc}", file=sys.stderr)
-                print("        Refusing to upload the unprotected archive.", file=sys.stderr)
+                fail(f"upload: could not protect the bundle: {exc}")
+                warn("        Refusing to upload the unprotected archive.")
                 return 4
             password_file_hint = (Path(args.password_file)
                                   if args.password_file else protect.password_file())
-            print(f"[+] zipping {archive.name} under a password "
-                  f"(password file: {password_file_hint})")
+            step(f"zipping {archive.name} under a password "
+                 f"(password file: {password_file_hint})")
             try:
                 encryption = protect.zip_bundle(archive, out_zip, password)
             except protect.PasswordError as exc:
                 # A failed protection must stop the upload. Falling through to
                 # "upload the plaintext anyway" is the one outcome that would
                 # silently undo the protection the operator asked for.
-                print(f"upload: could not protect the bundle: {exc}", file=sys.stderr)
-                print("        Refusing to upload the unprotected archive.", file=sys.stderr)
+                fail(f"upload: could not protect the bundle: {exc}")
+                warn("        Refusing to upload the unprotected archive.")
                 return 4
-            print(f"[+] protected  {encryption['sealed_file']} "
-                  f"({encryption['sealed_bytes']} bytes, {encryption['algorithm']})")
+            step(f"protected  {encryption['sealed_file']} "
+                 f"({encryption['sealed_bytes']} bytes, {encryption['algorithm']})")
 
         # What actually goes to the remote, and the digest that describes it.
         if encryption:
@@ -458,7 +575,7 @@ def main() -> int:
                               raw_bytes, archive_bytes, encryption)
         manifest = write_manifest(out_dir, artifact, source, archive, digest,
                                   members, encryption)
-        print(f"[+] wrote   {readme.name}, {manifest.name}, {shipped_name}.sha256")
+        step(f"wrote   {readme.name}, {manifest.name}, {shipped_name}.sha256")
 
         if args.dry_run:
             again = out_dir / f"{artifact}_evidence.recheck.tar.gz"
@@ -466,27 +583,26 @@ def main() -> int:
             again_digest = sha256_file(again)
             again.unlink()
             if again_digest != digest:
-                print(f"upload: NOT deterministic ({again_digest} != {digest})", file=sys.stderr)
+                fail(f"upload: NOT deterministic ({again_digest} != {digest})")
                 return 1
-            print("[+] reproducible: rebuild produced the identical sha256")
+            step("reproducible: rebuild produced the identical sha256")
     except BundleError as exc:
-        print(f"upload: {exc}", file=sys.stderr)
+        fail(f"upload: {exc}")
         return 1
 
     if args.no_upload:
-        print("[+] --no-upload: bundle is local only"
-              + (f" (protected as {encryption['sealed_file']})" if encryption else ""))
+        step("--no-upload: bundle is local only"
+             + (f" (protected as {encryption['sealed_file']})" if encryption else ""))
         return 0
 
     remote_root = args.remote_root or "/"
     if not find_megacmd():
         print("", file=sys.stderr)
-        print("upload: the MEGAcmd CLI is not available, so the bundle was NOT "
-              "uploaded.", file=sys.stderr)
-        print("        The bundle above is complete and verified; nothing was lost.",
-              file=sys.stderr)
+        fail("upload: the MEGAcmd CLI is not available, so the bundle was NOT "
+             "uploaded.")
+        warn("        The bundle above is complete and verified; nothing was lost.")
         for line in megacmd.missing_message().splitlines():
-            print("        " + line, file=sys.stderr)
+            print(paint("        " + line, "grey"), file=sys.stderr)
         return 3
 
     # A wrong-account upload would file evidence under the wrong MEGA. The
@@ -496,38 +612,34 @@ def main() -> int:
     if expected:
         live = megacmd.whoami()
         if live is None:
-            print("upload: MEGAcmd has no usable session. Run: python mega/login.py --mega",
-                  file=sys.stderr)
+            fail("upload: MEGAcmd has no usable session. Run: python mega/login.py --mega")
             return 1
         if live.lower() != expected.lower():
-            print(f"upload: MEGAcmd is logged in as {live}, not {expected}.",
-                  file=sys.stderr)
-            print("        Refusing to upload. Fix the session and re-run.",
-                  file=sys.stderr)
+            fail(f"upload: MEGAcmd is logged in as {live}, not {expected}.")
+            warn("        Refusing to upload. Fix the session and re-run.")
             return 1
-        print(f"[+] session {live}")
+        step(f"session {live}")
 
     expected_remote = f"{remote_root.rstrip('/')}/{artifact}_artifact".replace("//", "/")
     stage = None
     try:
-        print(f"[+] uploading {out_dir.name}/ -> {expected_remote}"
-              + (f"  (protected: {shipped_name})" if encryption else ""))
+        step(f"uploading {out_dir.name}/ -> {expected_remote}"
+             + (f"  (protected: {shipped_name})" if encryption else ""))
         to_send, stage = stage_for_upload(out_dir, artifact, shipped, shipped_name, encryption)
         landed = upload_megacmd(to_send, remote_root, args.timeout)
         if not remote_exists(landed):
-            print(f"upload: MEGAcmd reported success but {landed} is not there.",
-                  file=sys.stderr)
+            fail(f"upload: MEGAcmd reported success but {landed} is not there.")
             return 1
-        print(f"[+] uploaded: {landed}")
+        step(f"uploaded: {landed}")
         if encryption:
-            print(f"[+] protected: {encryption['sealed_file']} goes to remote; "
-                  f"{archive.name} never left this host")
+            step(f"protected: {encryption['sealed_file']} goes to remote; "
+                 f"{archive.name} never left this host")
         return 0
     except megacmd.MegaError as exc:
-        print(f"upload: {exc}", file=sys.stderr)
+        fail(f"upload: {exc}")
         return 1
     except BundleError as exc:
-        print(f"upload: {exc}", file=sys.stderr)
+        fail(f"upload: {exc}")
         return 1
     finally:
         if stage is not None:

@@ -35,6 +35,43 @@ export interface Probe {
   trend: { samples: number; ms: (number | null)[] }
   /** Routing facts for host:port - interface, CIDR, class, port band. */
   net: NetFacts
+  /**
+   * True for the three Python services this panel can start and stop itself
+   * (Analyzer API, MalAPI, ML scorer). Containers and VMs are controlled from
+   * their own pages, so their cards get no buttons.
+   */
+  control: boolean
+  /**
+   * Why Start would be refused right now - an empty string when it is
+   * startable. Server-computed so the button cannot promise a start the
+   * backend will decline ("ml/model.txt is missing").
+   */
+  control_blocked: string
+  /**
+   * The compose unit behind this card, when it is a container: which project
+   * and which service name. Null for the services this panel runs itself, and
+   * for anything that is not docker (the VM). The card links to the Containers
+   * page when this is set.
+   */
+  container: { project: string; service: string } | null
+}
+
+/** One start/stop action, as the launcher reports it. */
+export interface ServiceActionResult {
+  ok: boolean
+  key: string
+  action: 'start' | 'stop'
+  /** started | already-running | stopped | blocked | port-held | busy |
+   *  not-running | not-ours | timeout | exited | spawn-failed | stop-failed */
+  code: string
+  /** The sentence to show: what happened, or why it did not. */
+  detail: string
+  pid: number | null
+  log: string | null
+  /** Milliseconds from spawn to the endpoint answering. */
+  ms: number | null
+  /** Last lines of the start log, for a failure. */
+  tail: string[]
 }
 
 export interface Overview {
@@ -197,8 +234,7 @@ export interface LogTail {
   truncated?: boolean
   empty?: boolean
   error?: string
-  // How many SGR escape sequences the server removed before sending. Reported
-  // so the viewer can say so rather than silently dropping data.
+  // Legacy field. Current log tails preserve ANSI sequences for browser rendering.
   ansi_stripped?: number
   // True for .jsonl and .json logs, which get structured rendering.
   jsonl?: boolean
@@ -415,6 +451,8 @@ export interface ArtifactExportJob {
   dropped: number
   exit_code: number | null
   elapsed: number
+  /** Public MEGA folder link created when the upload finished, if it worked. */
+  link?: string | null
 }
 
 // --- clamav (guest on the Qiling VM) --------------------------------------
@@ -609,6 +647,111 @@ export interface AnalysisConfig {
   checked_at: number
 }
 
+export type MemoryProfilingTarget = 'analyzer' | 'sample'
+
+export interface MemoryProfilingOption {
+  id: MemoryProfilingTarget
+  label: string
+  summary: string
+  detail: string
+}
+
+export interface VMMapInstallation {
+  installed: boolean
+  executable: string | null
+  local_install: boolean
+  analyzer_present: boolean
+  analyzer: string
+  error: string | null
+}
+
+export interface MemoryProfilingSample {
+  path: string
+  name: string
+  bytes: number
+}
+
+export interface MemoryProfilingJob {
+  id: string
+  state: 'running' | 'done' | 'failed'
+  target: MemoryProfilingTarget
+  sample: string | null
+  started_at: number | null
+  finished_at: number | null
+  exit_code: number | null
+  error: string | null
+  warning: string | null
+  command: string | null
+  container: string | null
+  output_dir: string | null
+  report_dir: string | null
+  snapshot_path: string | null
+  csv_path: string | null
+  keep_open: boolean
+  log_line_count: number
+  log_dropped: number
+  duration_sec: number | null
+  log: string[]
+  /** stdout/stderr of the profiled analyzer or sample, kept separately from
+   *  VMMap's own console output. */
+  target_log: string[]
+}
+
+export interface MemoryMapCategory {
+  type: string
+  size_bytes: number | null
+  committed_bytes: number | null
+  total_ws_bytes: number | null
+  private_ws_bytes: number | null
+}
+
+export interface MemoryMapRegion {
+  address: string
+  type: string
+  size_bytes: number | null
+  committed_bytes: number | null
+  total_ws_bytes: number | null
+  protection: string
+  details: string
+  children: MemoryMapRegion[]
+}
+
+export interface MemoryMapLayout {
+  process_name: string | null
+  process_id: string | null
+  totals: {
+    size_bytes: number | null
+    committed_bytes: number | null
+    private_bytes: number | null
+    total_ws_bytes: number | null
+    private_ws_bytes: number | null
+    shareable_ws_bytes: number | null
+  }
+  categories: MemoryMapCategory[]
+  regions: MemoryMapRegion[]
+  root_count: number
+  region_count: number
+  region_total: number
+  regions_truncated: boolean
+}
+
+export interface MemoryProfilingSnapshot {
+  path: string
+  exists: boolean
+  settings: {
+    enabled: boolean
+    target: MemoryProfilingTarget
+    sample: string
+    keep_open: boolean
+  }
+  targets: MemoryProfilingOption[]
+  samples: MemoryProfilingSample[]
+  vmmap: VMMapInstallation
+  current: MemoryProfilingJob | null
+  last: MemoryProfilingJob | null
+  error: string | null
+}
+
 export type DynamicTransport = 'tcp' | 'sftp'
 
 export interface DynamicAnalysisOption {
@@ -625,7 +768,7 @@ export interface DynamicAnalysisSnapshot {
   /** last write, unix seconds; null when the file has never been written */
   modified: number | null
   options: DynamicAnalysisOption[]
-  settings: { communication: DynamicTransport }
+  settings: { communication: DynamicTransport; socket_timeout: number }
   default: DynamicTransport
   error: string | null
 }
@@ -674,13 +817,39 @@ export interface ClamdCommunication {
   error: string | null
 }
 
+/** One service ping through the VM utility protocol (vm_utility.py). */
+export interface ClamdPing {
+  /** The utility server answered the request. */
+  ok: boolean
+  /** The guest's own verdict on the clamav service. */
+  alive: boolean
+  /** tcp://VM_IP:port of the VM utility server. */
+  endpoint: string
+  /** Human-readable evidence from the utility server. */
+  detail: string
+  /** systemd's state word, when the server provided one. */
+  state: string
+  /** Round-trip time in seconds. */
+  seconds: number
+  /** When the ping ran (epoch seconds). */
+  checked_at: number
+  /** The utility server's reply, verbatim. */
+  response: unknown
+  error: string | null
+  code?: string | null
+}
+
 export interface ClamdStatus {
   /** Whether the selected transport can run right now. */
   ready?: boolean
-  /** A daemon answered (TCP PING). False for SFTP: not probed here. */
+  /**
+   * The selected transport's socket opened (TCP connect). SFTP is not probed
+   * here. Service health is the separate on-demand ping.
+   */
   reachable: boolean
   mode: string
   endpoint: string
+  /** Older payloads carried clamd's VERSION; the status check no longer asks. */
   version: string
   vm: { ip: string; host: string; port: number }
   checks: ClamdCheck[]
@@ -805,8 +974,18 @@ export interface QilingRuns {
   rootfs: {
     archive_present: boolean
     archive_bytes: number
+    /** Absolute path of the packaged rootfs archive. */
+    archive?: string
     complete: boolean
-    trees: { arch: string; files: number; complete: boolean }[]
+    trees: {
+      arch: string
+      files: number
+      /** Sum of the tree's file sizes, so the card can show where the bytes are. */
+      bytes?: number
+      /** Absolute path of this architecture's Windows tree. */
+      path?: string
+      complete: boolean
+    }[]
   }
   harness: {
     present: boolean
@@ -827,6 +1006,27 @@ export interface QilingVmCheck {
   name: string
   ok: boolean
   detail: string
+}
+
+/** One step of the connection test, with the sentence it announced. */
+export interface QilingConnectionCheck extends QilingVmCheck {
+  advisory?: boolean
+  echo?: string
+  icon?: string
+}
+
+/** The guest's own answer to a service ping. */
+export interface QilingPing {
+  ok: boolean
+  alive: boolean
+  endpoint: string
+  checked_at: number
+  seconds: number
+  detail: string
+  state: string
+  error: string | null
+  code: string | null
+  response: unknown
 }
 
 export interface QilingVmStatus {
@@ -867,6 +1067,82 @@ export interface QilingRootfsJob {
   state: 'queued' | 'running' | 'done' | 'error'
   already_running: boolean
   detail: string
+}
+
+/** One way to move a sample to Qiling, with the reason it cannot be used. */
+export interface QilingTransport {
+  id: string
+  available: boolean
+  reason: string | null
+  /** The script or client that does the work, shown so it is never a black box. */
+  path: string
+  /** Every file the transport needs, so a missing one is visible by name. */
+  files?: string[]
+  detail: string
+}
+
+export interface QilingCommunication {
+  mode: DynamicTransport
+  path: string
+  error: string | null
+}
+
+/** The job handle a Qiling submission returns. */
+export interface QilingSubmitStart {
+  ok: boolean
+  job_id?: string
+  mode?: DynamicTransport
+  filename?: string
+  bytes?: number
+  sha256?: string
+  code?: string
+  error?: string
+  limit_bytes?: number
+}
+
+export interface QilingRunRow {
+  id: string
+  label: string
+  state: 'pending' | 'running' | 'passed' | 'failed'
+  detail: string | null
+  duration: number | null
+  report_file?: string | null
+  bytes?: number | null
+  architecture?: string | null
+  sha256?: string
+}
+
+/** A Qiling submission polled through the shared job endpoint. */
+export interface QilingSubmitJob extends Omit<AnalyzerBuildJob, 'results' | 'kind'> {
+  kind?: 'qiling'
+  mode?: DynamicTransport
+  results?: QilingRunRow[]
+}
+
+export interface QilingSubmitInfo {
+  communication: QilingCommunication
+  transports: Record<'sftp' | 'tcp', QilingTransport>
+  default_transport: DynamicTransport
+  /** The harness's systemd service type, e.g. oneshot. */
+  mode: string
+  /** The address the selected transport dials. */
+  endpoint: string
+  checked_at: number
+  /** The selected transport's connection-test steps. */
+  checks: QilingConnectionCheck[]
+  /** The connection test as a transcript, rendered in a Console. */
+  output: string[]
+  note: string
+  vm: { ip: string; host: string; port: number }
+  ready: boolean
+  /** The run in progress, or the most recent one, so a reload reattaches. */
+  current: QilingSubmitJob | null
+  limits?: {
+    max_bytes: number
+    timeout: [number, number]
+    max_insn: [number, number]
+  }
+  error?: string
 }
 
 // --- network map -----------------------------------------------------------
@@ -979,11 +1255,17 @@ export interface RemoteBundle {
   date_text: string | null
   file_count: number
   files: { name: string | null; bytes: number; date: string | null }[]
+  /** Existing public MEGA folder link, or null when the bundle is not shared. */
+  link?: string | null
 }
 
 export interface RemoteState {
   /** False when MEGAcmd is missing, logged out, or the listing failed. */
   available: boolean
+  /** False when the configured root is absent on MEGA (not an account failure). */
+  root_exists?: boolean
+  /** True while an expired or explicitly refreshed listing is being probed. */
+  refreshing?: boolean
   reason: string | null
   account: string | null
   remote_root: string
@@ -1044,15 +1326,16 @@ export interface HistoryBundle {
   first_seen?: number
   last_seen?: number
   generated_at?: number | null
+  /** Set while the bundle is still on MEGA and has been exported publicly. */
+  link?: string | null
 }
 
 /**
- * A bundle from either end, with `where` saying which.
- *
- * The Remote tab lists these rather than remote-only, because an empty MEGA
- * account is the normal state of a lab that bundles locally and has not
- * uploaded yet - and "no artifacts" next to a bundle sitting on disk is the
- * most misleading thing this page could show.
+ * The merged view: every current local and remote bundle, with `where` saying
+ * which. It is not a "remote" list - render `ArtifactsSnapshot.remote.bundles`
+ * (or filter `where !== 'local'`) for what MEGA is actually holding, and keep
+ * the local-only rows in the Local tab. Historical uploads are kept in the
+ * transfer history and are not rendered as live files.
  */
 export interface UnifiedBundle extends HistoryBundle {
   where: 'both' | 'local' | 'remote' | 'remembered'
@@ -1078,6 +1361,9 @@ export interface ArtifactsSnapshot {
     updated_at: number | null
   }
   transfer: TransferSummary | null
+  /** Merged local+remote view, one row per name, `where` marks the side(s).
+   *  Optional: a panel server predating the merged view omits it, and the UI
+   *  falls back to `history.bundles` rather than rendering an empty tab. */
   unified?: UnifiedBundle[]
   unified_counts?: { both: number; local: number; remote: number; remembered: number }
   diff: {
@@ -1086,6 +1372,41 @@ export interface ArtifactsSnapshot {
     both: string[]
   }
   error?: string
+}
+
+export interface ArtifactSettings {
+  mega_upload: boolean
+  mega_encrypt: boolean
+  artifacts: { remote_root: string }
+  bundle_password: { present: boolean }
+}
+
+export interface EvidenceFile {
+  path: string
+  bytes: number
+  html: boolean
+  url: string
+}
+
+export interface EvidenceFiles {
+  name: string
+  directory: string
+  files: EvidenceFile[]
+  truncated: boolean
+}
+
+export interface CTIProviderSetting {
+  id: string
+  name: string
+  env: string
+  optional: boolean
+  description: string
+  configured: boolean
+}
+
+export interface CTISettings {
+  providers: CTIProviderSetting[]
+  source: string
 }
 
 /**
@@ -2375,6 +2696,25 @@ export interface AnalysisSettingsSnapshot {
   settings: AnalysisSetting[]
   /** Keys in the file the analyzer does not read; it refuses to start on one. */
   unknown: string[]
+}
+
+/**
+ * `config/share.json`: the expiry applied to public MEGA links the panel
+ * creates. Panel-owned rather than an analysis.yaml key - the analyzer never
+ * publishes a link.
+ *
+ * `summary` is the duration in words ("7 days"); `error` is set when the file
+ * is unreadable or holds an invalid duration, and link creation then refuses
+ * instead of silently creating a permanent link.
+ */
+export interface ShareSettings {
+  path: string
+  exists: boolean
+  link_expire: string
+  summary: string
+  error: string | null
+  units: { value: string; label: string }[]
+  example: string
 }
 
 // --- service endpoints and the endpoint agent ----------------------------

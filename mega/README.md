@@ -152,6 +152,7 @@ python mega/upload.py --artifact quick_test
 python mega/upload.py --artifact quick_test --no-upload      # bundle only
 python mega/upload.py --artifact quick_test --remote-root /Cases/2026-10
 python mega/upload.py --artifact quick_test --expect-account a@b.com
+python mega/upload.py --artifact quick_test --encrypt         # password zip, then upload
 ```
 
 | flag | |
@@ -163,10 +164,19 @@ python mega/upload.py --artifact quick_test --expect-account a@b.com
 | `--no-upload` | build and verify, skip MEGA |
 | `--dry-run` | also rebuild and prove the checksum reproduces |
 | `--timeout` | seconds allowed for the upload |
+| `--encrypt` / `--no-encrypt` | protect the archive with the operator password file, or upload it as-is |
+| `--password-file` | password file override (default outside the repo, or `IA_BUNDLE_PASSWORD_FILE`) |
 | `--expect-account` | refuse to upload under the wrong MEGA account |
+| `--color` | `always` (default), `auto`, or `never`; `NO_COLOR` also disables ANSI |
 
 Exit codes: `0` ok, `1` failed, `2` bad arguments or missing evidence, `3`
-bundled fine but MEGAcmd was unavailable, `4` not used by upload.
+bundled fine but MEGAcmd was unavailable, `4` protection was requested but the
+password file or `pyzipper` was unavailable (nothing is uploaded in that case).
+
+`--recipient` and `--admin-key` are accepted but ignored: they belonged to the
+old X25519 sealing scheme. An analyzer built before the switch still passes
+them, and failing the whole run over an obsolete argument would lose a bundle
+that was already built.
 
 `--expect-account` defaults to the email inside the sealed credential, so the
 wrong-account guard is on by default rather than something you have to remember
@@ -201,6 +211,65 @@ python mega/list.py --all                            # every folder, not just bu
 ```
 
 Exit codes: `0` ok, `1` MEGAcmd failed, `2` no usable session, `3` no MEGAcmd.
+
+## share.py
+
+The `mega-export` side, for bundles that are already on MEGA: public links in,
+public links out.
+
+```bash
+python mega/share.py                              # every current export
+python mega/share.py --remote-root /Cases/2026-10 # just the ones under a folder
+python mega/share.py /quick_test_artifact         # that link only, read-only
+python mega/share.py --create /quick_test_artifact
+python mega/share.py --delete /quick_test_artifact
+python mega/share.py --json
+```
+
+Exit codes: `0` ok, `1` MEGAcmd failed, `2` no session or bad arguments,
+`3` no MEGAcmd, `4` the node is not exported (nothing to show or revoke).
+
+`--create` is idempotent: an existing export is read and reused, and `export
+-a -f` only runs when there is none. `upload.py` and the panel's Export button
+call the same `megacmd.public_link` at the end of a successful upload. Listing
+a page only ever reads existing links, so opening the panel cannot publish
+evidence.
+
+MEGAcmd answers "nothing exported" with a normal exit rather than an error -
+53 when reading, 54 when deleting - so those two are treated as answers, not
+failures.
+
+The URL carries the folder's decryption key in its fragment, which makes it the
+capability: anyone holding it can download the bundle. A bundle uploaded with
+`--encrypt` still needs its AES password; an unprotected one is exactly as
+exposed as the link. `--delete` revokes it for everyone immediately.
+
+### Link expiry
+
+A link can be created with an expiry, so shared evidence does not stay exposed
+forever:
+
+```bash
+python mega/share.py --create --expire 7d /quick_test_artifact
+python mega/share.py --create --permanent /quick_test_artifact
+```
+
+`--expire` takes MEGA's own duration grammar - `s` seconds, `M` minutes, `h`
+hours, `d` days, `m` months, `y` years, combinable, e.g. `12h` or `1m12d3h`.
+The case matters: `M` is minutes and `m` is months.
+
+With neither flag, `--create` uses `config/share.json`'s `link_expire`, the
+same setting the panel's **Analysis Configuration** page edits
+(`{"link_expire": ""}` means permanent). A file that cannot be read stops the
+create with exit `2` rather than publishing a permanent link; `--permanent`
+is the explicit override. An expiry applies only when a link is **created**;
+MEGA cannot modify an export in place, so an existing link keeps whatever it
+already had. Revoke and recreate one to change it.
+
+MEGA only permits an expiry on PRO accounts. On a free account `export -a`
+prints `Only PRO users can set an expiry time for links` and creates no link;
+the panel surfaces that reason instead of falling back to a permanent link.
+
 
 ## recover.py
 
@@ -261,6 +330,10 @@ whole `mega/` tree. Verified by test, not by inspection.
   Upload lands at `<remote-root>/<artifact>_artifact`, list reads it back,
   recover downloads it and re-derives the digest, and a deliberately corrupted
   archive is rejected with exit 4. The wrong-account guard refuses to upload.
+- **Public links are exercised live too.** `share.py --create` publishes a
+  folder link, a second `--create` reports the same link as existing, and
+  `--delete` revokes it. The panel reads an existing link without creating one,
+  and creates one only from the explicit button or at the end of an export.
 - **The GPG roundtrip is still not exercised.** `gpg` is not installed on this
   machine. The decryption, validation and error paths are tested; the
   `gpg --decrypt` invocation itself is not.

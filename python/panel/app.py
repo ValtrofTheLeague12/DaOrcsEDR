@@ -17,23 +17,29 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import shutil
+import tempfile
+import threading
+from pathlib import Path
 
 import yaml
 from flask import Flask, jsonify, make_response, request, send_file
 
-from .analysis import analysis, analysis_settings
-from .artifacts import artifacts
+from .analysis import analysis, analysis_settings, memory_profiling
+from .analysis import cti_settings
+from .artifacts import artifacts, share_settings
 from .build import build, build_checks, hardening
 from .clamd import clamd
 from .core import auth, config, docs
 from .core.yamlview import jsonable as _jsonable, spans as _yaml_spans
-from .host import containers, endpoints, logs, services, stats, system, trace
+from .host import (containers, endpoints, launcher, logs, services, stats,
+                   system, trace)
 from .network import netmap, vms, vmmetrics
 from .pipeline import pipeline_run
 from .qiling import qiling
 from .samples import (dynamic_analysis, sample_factory, sample_resources,
                       samples)
-from .utils import utils
+from .utils import password_generator, utils
 
 try:
     from flasgger import Swagger
@@ -47,6 +53,7 @@ _PUBLIC = {"/api/health", "/api/auth/state", "/api/auth/login"}
 
 def create_app() -> Flask:
     app = Flask(__name__)
+    artifact_restore_lock = threading.Lock()
 
     # OpenAPI, generated from the LIVE url map rather than from a hand-written
     # spec, so it cannot describe a route that was deleted or miss one that was
@@ -243,6 +250,56 @@ def create_app() -> Flask:
             description: Per-service up/down, latency and resolved endpoints"""
         return jsonify(services.overview())
 
+    @app.post("/api/services/<key>/<action>")
+    def control_service(key, action):
+        """Start or Stop One of the Python Services
+        ---
+        tags: [services]
+        parameters:
+          - name: key
+            in: path
+            required: true
+            type: string
+            description: analyzer, malapi or ml
+          - name: action
+            in: path
+            required: true
+            type: string
+            description: start or stop
+        responses:
+          200:
+            description: Started, stopped, or already in that state
+          400:
+            description: Action is not start or stop
+          404:
+            description: Service has no start/stop rule
+          409:
+            description: Refused - blocked, port held, busy or nothing running
+          502:
+            description: Spawned but did not answer, or could not stop it
+        description: >
+          Only the three Python services the panel supervises have a rule:
+          the Analyzer API, MalAPI and the ML scorer. Containers and VMs are
+          controlled by their own routes, and any other key is a 404 before a
+          process is considered - the allowlist lives in launcher.UNIT_KEYS,
+          not in the URL.
+
+          `start` waits for the endpoint the Services card actually probes, so
+          a 200 means the card will be green on the next read, not merely that
+          a process was forked. `stop` refuses to kill a listener whose command
+          line does not look like that service, because a port being busy and a
+          port being *ours* are different facts.
+        """
+        try:
+            if action not in ("start", "stop"):
+                return jsonify(ok=False, error="action must be start or stop",
+                               code="bad-action", key=key, action=action), 400
+            result = launcher.control(key, action)
+        except launcher.ControlError as exc:
+            return jsonify(ok=False, error=str(exc), code=exc.code,
+                           key=key, action=action), exc.status
+        return jsonify(result), launcher.HTTP_STATUS.get(result["code"], 200)
+
     @app.get("/api/system")
     def system_info():
         """Host CPU, Memory, GPU, Disks and Top Processes
@@ -292,7 +349,7 @@ def create_app() -> Flask:
             description: How many lines to return from the end of the file
         responses:
           200:
-            description: Last N lines, ANSI stripped
+            description: Last N lines, preserving ANSI color sequences
           400:
             description: lines was not an integer"""
         # Cap the request-controlled line count server-side; max_bytes is the
@@ -527,6 +584,309 @@ def create_app() -> Flask:
             return _bad(exc, 500)
         return jsonify(ok=True, settings=result)
 
+    @app.get("/api/analysis/share-settings")
+    def get_share_settings():
+        """Public MEGA Link Settings
+        ---
+        tags: [analysis]
+        responses:
+          200:
+            description: config/share.json's link expiry, with a summary and the
+              duration units the UI offers
+        description: >
+          The expiry applied to public MEGA links the panel creates (Artifacts
+          > Get MEGA link, and the end of an Export to MEGA job). A panel-owned
+          setting: the analyzer never publishes a link, so this is not a key in
+          config/analysis.yaml.
+
+          An empty value means permanent links. A broken file is reported in
+          `error` and makes link creation refuse rather than silently fall back
+          to permanent.
+        """
+        return jsonify(share_settings.snapshot(config.REPO))
+
+    @app.put("/api/analysis/share-settings")
+    def put_share_settings():
+        """Set or Clear the Public Link Expiry
+        ---
+        tags: [analysis]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                link_expire:
+                  type: string
+                  description: >
+                    A MEGA time delay: s, M (minutes), h, d, m (months), y,
+                    combinable, e.g. 12h or 1m12d3h. null or "" makes links
+                    permanent.
+        responses:
+          200:
+            description: The setting as it now stands on disk
+          400:
+            description: An unknown key or an invalid duration
+          500:
+            description: The file exists but could not be written
+        description: >
+          Applies when a link is created. An existing export keeps its expiry:
+          MEGA cannot modify an export in place, so changing this does not
+          rewrite links that are already out.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        try:
+            result = share_settings.write(config.REPO, body)
+        except ValueError as exc:
+            return _bad(exc)
+        except OSError as exc:
+            return _bad(exc, 500)
+        return jsonify(ok=True, share=result)
+
+    @app.get("/api/analysis/memory-profiling")
+    def get_memory_profiling():
+        """Memory Profiling Option
+        ---
+        tags: [analysis]
+        responses:
+          200:
+            description: >
+              The stored option, the two targets, the files under the sample
+              roots, VMMap and analyzer readiness, and the current or last
+              profile job.
+        description: >
+          config/memory_profiling.json, a panel-owned setting. It is not a key
+          in config/analysis.yaml because the analyzer's C++ reader rejects
+          unknown keys there, and opening this page must not be able to stop
+          the next analysis from starting.
+
+          `vmmap` reports whether Sysinternals VMMap and the Windows analyzer
+          executable are available.
+        """
+        try:
+            return jsonify(memory_profiling.snapshot(config.REPO))
+        except (ValueError, OSError) as exc:
+            return _bad(exc, 400)
+
+    @app.put("/api/analysis/memory-profiling")
+    def put_memory_profiling():
+        """Set the Memory Profiling Option
+        ---
+        tags: [analysis]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                enabled: {type: boolean}
+                target:
+                  type: string
+                  enum: [analyzer, sample]
+                sample:
+                  type: string
+                  description: Repo-relative sample path, for the sample target.
+                keep_open:
+                  type: boolean
+                  description: >
+                    Open the saved .mmp in VMMap's GUI after a successful
+                    capture and leave the GUI running.
+              example: {"enabled": true, "target": "analyzer", "keep_open": false}
+        responses:
+          200:
+            description: The option as it now stands on disk
+          400:
+            description: A non-object body, an unknown key or an invalid value
+        description: >
+          Rewrites config/memory_profiling.json whole (temp + rename). The file
+          is panel-owned, so this never touches config/analysis.yaml or a
+          pipeline. Selecting a target does not start anything: the profile is
+          an           explicit action, because profiling a full analysis can take
+          minutes.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        try:
+            result = memory_profiling.write(config.REPO, body)
+        except ValueError as exc:
+            return _bad(exc)
+        except OSError as exc:
+            return _bad(exc, 500)
+        return jsonify(ok=True, settings=result,
+                       snapshot=memory_profiling.snapshot(config.REPO))
+
+    @app.post("/api/analysis/memory-profiling/run")
+    def run_memory_profiling():
+        """Start a Memory Profile
+        ---
+        tags: [analysis]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: false
+            schema:
+              type: object
+              properties:
+                target:
+                  type: string
+                  enum: [analyzer, sample]
+                sample:
+                  type: string
+                  description: Repo-relative path under a sample root.
+                timeout: {type: integer}
+        responses:
+          200:
+            description: The profile job to poll
+          400:
+            description: A bad target, sample or timeout
+          409:
+            description: Another memory profile is already running
+        description: >
+          Starts the Windows analyzer or selected Windows executable and asks
+          VMMap to save a process memory-map snapshot as a background job.
+          Snapshots land under
+          exports/memory_profiling/.
+        """
+        body = request.get_json(silent=True)
+        if body is None:
+            body = {}
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        result = memory_profiling.start(
+            config.REPO,
+            target=body.get("target"),
+            sample=body.get("sample"),
+            timeout=body.get("timeout"),
+        )
+        if not result.get("ok"):
+            return jsonify(result), 409 if result.get("job_id") else 400
+        return jsonify(result)
+
+    @app.post("/api/analysis/memory-profiling/generated")
+    def run_generated_memory_profiling():
+        """Capture a VMMap snapshot of the generated Windows executable."""
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        result = memory_profiling.start_generated(
+            config.REPO,
+            executable=body.get("executable"),
+            timeout=body.get("timeout"),
+        )
+        if not result.get("ok"):
+            return jsonify(result), 409 if result.get("job_id") else 400
+        return jsonify(result)
+
+    @app.get("/api/analysis/memory-profiling/run/<job_id>")
+    def memory_profiling_job(job_id: str):
+        """Memory Profile Job
+        ---
+        tags: [analysis]
+        parameters:
+          - in: path
+            name: job_id
+            required: true
+            type: string
+        responses:
+          200:
+            description: The job's state, bounded log and output directory
+          404:
+            description: No such job (or it aged out)
+        description: >
+          Polled by the Analysis Configuration page while a profile runs. The
+          job keeps its report directory on disk after the log
+          scrollback is pruned, so a finished profile stays readable.
+        """
+        result = memory_profiling.job(job_id)
+        if result is None:
+            return jsonify(ok=False, error="no such memory-profile job"), 404
+        return jsonify(ok=True, job=result)
+
+    @app.get("/api/analysis/memory-profiling/run/<job_id>/layout")
+    def memory_profiling_layout(job_id: str):
+        """Return a parsed VMMap memory layout
+        ---
+        tags: [analysis]
+        parameters:
+          - in: path
+            name: job_id
+            required: true
+            type: string
+        responses:
+          200:
+            description: Category totals and nested process regions
+          404:
+            description: No such memory-profile job
+          409:
+            description: The CSV export is unavailable or invalid
+        """
+        result = memory_profiling.layout(job_id)
+        if result is None:
+            return jsonify(ok=False, error="no such memory-profile job"), 404
+        if result.get("error"):
+            return jsonify(ok=False, error=result["error"]), 409
+        return jsonify(ok=True, layout=result["layout"])
+
+    @app.get("/api/analysis/memory-profiling/run/<job_id>/snapshot")
+    def memory_profiling_snapshot_file(job_id: str):
+        """Download a native VMMap snapshot
+        ---
+        tags: [analysis]
+        parameters:
+          - in: path
+            name: job_id
+            required: true
+            type: string
+        responses:
+          200:
+            description: Native VMMap .mmp file
+          404:
+            description: No job or snapshot file exists
+        """
+        result = memory_profiling.job(job_id)
+        if result is None:
+            return jsonify(ok=False, error="no such memory-profile job"), 404
+        path = memory_profiling.snapshot_file(job_id)
+        if path is None:
+            return jsonify(ok=False, error="the VMMap snapshot is not available"), 404
+        return send_file(path, as_attachment=True,
+                         download_name=f"vmmap-{job_id}.mmp",
+                         mimetype="application/octet-stream")
+
+    @app.get("/api/analysis/memory-profiling/run/<job_id>/csv")
+    def memory_profiling_csv_file(job_id: str):
+        """Download the VMMap CSV memory map
+        ---
+        tags: [analysis]
+        parameters:
+          - in: path
+            name: job_id
+            required: true
+            type: string
+        responses:
+          200:
+            description: VMMap CSV export, including the summary and address regions
+          404:
+            description: No job or CSV export exists
+        """
+        result = memory_profiling.job(job_id)
+        if result is None:
+            return jsonify(ok=False, error="no such memory-profile job"), 404
+        path = memory_profiling.csv_file(job_id)
+        if path is None:
+            return jsonify(ok=False, error="the VMMap CSV export is not available"), 404
+        return send_file(path, as_attachment=True,
+                         download_name=f"vmmap-{job_id}.csv",
+                         mimetype="text/csv")
+
     @app.post("/api/analysis/artifact-options")
     def set_artifact_options():
         """Change the Bundle and MEGA Upload Options
@@ -642,22 +1002,31 @@ def create_app() -> Flask:
               type: object
               properties:
                 length: {type: integer, description: "12-128 chars, default 24"}
+                mode:
+                  type: string
+                  enum: [random, stale]
+                  description: >
+                    random = printable characters from a CSPRNG (default);
+                    stale = words plus a random tag, easier to retype.
         responses:
           200:
             description: The generated value, this one time
           400:
-            description: A length outside 12..128
+            description: A length outside 12..128, or an unknown mode
         description: >
-          Generates a random URL-safe password under crypto-grade randomness,
-          stores it in the password file, and returns it EXACTLY ONCE. The page
-          shows it with a copy button while it is on screen and never again;
-          there is no second read, and no recovery if it is lost without being
-          stored somewhere real. That is the same trade every password here
-          makes, said out loud instead of hidden.
+          Generates a password with the panel's PasswordGenerator (random or
+          stale mode) under crypto-grade randomness, stores it in the password
+          file, and returns it EXACTLY ONCE. The page shows it with a copy
+          button while it is on screen and never again; there is no second
+          read, and no recovery if it is lost without being stored somewhere
+          real. That is the same trade every password here makes, said out
+          loud instead of hidden.
         """
         body = request.get_json(silent=True) or {}
         result = analysis._bundle_password_generate(
-            body.get("length") if isinstance(body, dict) else 24)
+            body.get("length", password_generator.DEFAULT_PASSWORD_LENGTH)
+            if isinstance(body, dict) else password_generator.DEFAULT_PASSWORD_LENGTH,
+            body.get("mode") if isinstance(body, dict) else None)
         if not result.get("ok"):
             return jsonify(result), 400
         return jsonify(result)
@@ -1016,6 +1385,72 @@ def create_app() -> Flask:
 
     # --- evidence artifacts (local bundles + MEGA) ----------------------------
 
+    @app.get("/api/threat-intelligence/apis")
+    def threat_intelligence_api_settings():
+        """Static Analyzer Threat-Intelligence Provider Status
+        ---
+        tags: [threat-intelligence]
+        responses:
+          200:
+            description: Provider metadata and saved-key state; secret values are never returned
+          500:
+            description: CTI settings could not be read
+        """
+        try:
+            return jsonify(cti_settings.status())
+        except cti_settings.CTISettingsError as exc:
+            return jsonify(error=str(exc)), 500
+
+    @app.put("/api/threat-intelligence/apis")
+    def update_threat_intelligence_api_settings():
+        """Save or Clear Static Analyzer Provider API Keys
+        ---
+        tags: [threat-intelligence]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required: [keys]
+              properties:
+                keys:
+                  type: object
+                  description: Provider ID to key text; null explicitly clears a saved key
+        responses:
+          200:
+            description: Updated provider status without returning credential values
+          400:
+            description: Invalid provider or key value
+          500:
+            description: Settings could not be saved securely
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or "keys" not in body:
+            return jsonify(error="request must contain a keys object"), 400
+        try:
+            return jsonify(cti_settings.update(body["keys"]))
+        except cti_settings.CTISettingsError as exc:
+            return jsonify(error=str(exc)), 400
+        except (OSError, subprocess.SubprocessError):
+            return jsonify(error="CTI settings could not be saved securely"), 500
+
+    @app.get("/api/artifacts/settings")
+    def artifact_settings():
+        """Effective MEGA settings used by the Artifacts dashboard
+        ---
+        tags: [artifacts]
+        responses:
+          200:
+            description: Effective upload settings, destination and password state
+        description: >
+          Reads only the artifact settings; it does not resolve or launch the
+          analyzer's phase catalog. The Artifacts page uses this lightweight
+          endpoint so MEGA settings do not wait on unrelated pipeline metadata.
+        """
+        return jsonify(analysis.artifact_settings())
+
     @app.get("/api/artifacts")
     def artifacts_bundles():
         """Local Evidence Tarballs and Their MEGA Copies
@@ -1047,11 +1482,11 @@ def create_app() -> Flask:
           action is available separately for downloading and verifying an
           existing remote bundle.
 
-          The remote half is a third-party call and degrades to
-          `available: false` with a reason rather than failing the request -
-          MEGAcmd missing, no session and timeout are all ordinary states. It
-          runs under a wall-clock budget so a slow MEGA cannot hold the request
-          open; a truncated answer says so instead of looking complete.
+          The remote half is a third-party call and refreshes in the background,
+          so a slow MEGA cannot hold the page request open. While it runs,
+          `remote.refreshing` is true and the page polls for the result.
+          MEGAcmd missing, no session and timeout degrade to `available: false`
+          with a reason; a truncated answer says so instead of looking complete.
 
           The rate is an upper bound, not a measured line rate: MEGAcmd records
           when an upload finished and nothing records when it started, so the
@@ -1063,9 +1498,13 @@ def create_app() -> Flask:
           upload that just happened rather than one from five minutes ago.
         """
         try:
+            remote_root = request.args.get("remote_root")
+            if remote_root is None:
+                remote_root = analysis.artifact_remote_root()
             return jsonify(artifacts.snapshot(
-                request.args.get("remote_root", "/"),
+                remote_root,
                 request.args.get("refresh") == "1",
+                background_remote=True,
             ))
         except Exception as exc:  # noqa: BLE001 - a status page must not 500
             return jsonify({"generated_at": None, "local": None, "remote": None,
@@ -1104,6 +1543,227 @@ def create_app() -> Flask:
             download_name=archive.name,
             mimetype="application/gzip",
         )
+
+    @app.post("/api/artifacts/restore")
+    def artifact_restore():
+        """Verify and Extract a Recovered Evidence Bundle
+        ---
+        tags: [artifacts]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+        responses:
+          200:
+            description: Bundle verified and extracted
+          400:
+            description: Invalid artifact name
+          404:
+            description: The local bundle has not been recovered
+          409:
+            description: A restored copy already exists or another restore is running
+          502:
+            description: Verification or extraction failed
+          504:
+            description: Extraction exceeded its time limit
+        description: >
+          Uses mega/restore.py's local verify-only path, so the digest is checked
+          before extraction and archive members are checked for traversal. The
+          restored tree is moved into exports/<name>_recovered only after the
+          script succeeds; partial output stays in a temporary directory.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="request body must be a JSON object"), 400
+        raw_name = body.get("name")
+        if not isinstance(raw_name, str):
+            return jsonify(ok=False, error="artifact name must be a string"), 400
+        name = raw_name.strip()
+        if not artifacts.valid_name(name):
+            return jsonify(ok=False, error="invalid artifact name"), 400
+        if not artifact_restore_lock.acquire(blocking=False):
+            return jsonify(ok=False, error="another artifact restore is running"), 409
+
+        staging = None
+        try:
+            exports = (config.REPO / "exports").resolve()
+            bundle = (exports / f"{name}{artifacts.BUNDLE_SUFFIX}").resolve()
+            try:
+                bundle.relative_to(exports)
+            except ValueError:
+                return jsonify(ok=False, error="invalid artifact path"), 400
+            if not artifacts.local_archive(name) or not bundle.is_dir():
+                return jsonify(ok=False, error="local evidence bundle not found; recover it first"), 404
+
+            destination = exports / f"{name}_recovered"
+            if destination.exists():
+                return jsonify(ok=False, error="a restored copy already exists"), 409
+
+            exports.mkdir(parents=True, exist_ok=True)
+            staging = Path(tempfile.mkdtemp(prefix=f".{name}-restore-", dir=exports))
+            command = [
+                sys.executable,
+                str(config.REPO / "mega" / "restore.py"),
+                "--verify-only",
+                "--bundle", str(bundle),
+                "--artifact", name,
+                "--dest", str(staging),
+            ]
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=config.REPO,
+                    capture_output=True,
+                    text=True,
+                    timeout=1800,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                return jsonify(ok=False, error="bundle verification and extraction timed out"), 504
+            except OSError as exc:
+                return jsonify(ok=False, error=f"could not start bundle restore: {exc}"), 502
+
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout).strip()
+                return jsonify(
+                    ok=False,
+                    error=detail[-4000:] or f"bundle restore failed (exit {result.returncode})",
+                ), 502
+            if destination.exists():
+                return jsonify(ok=False, error="a restored copy appeared during extraction"), 409
+            staging.rename(destination)
+            staging = None
+            return jsonify(
+                ok=True,
+                name=name,
+                directory=str(destination),
+                detail=(result.stdout or "Bundle verified and extracted.").strip()[-4000:],
+            )
+        finally:
+            if staging is not None:
+                shutil.rmtree(staging, ignore_errors=True)
+            artifact_restore_lock.release()
+
+    @app.get("/api/artifacts/local/<name>/evidence")
+    def artifact_evidence_files(name: str):
+        """List Files in a Verified, Restored Evidence Bundle
+        ---
+        tags: [artifacts]
+        parameters:
+          - name: name
+            in: path
+            required: true
+            type: string
+            description: Plain artifact name, without the _artifact suffix
+        responses:
+          200:
+            description: Relative file paths and sizes in the restored evidence tree
+          400:
+            description: Invalid artifact name
+          404:
+            description: No restored evidence tree exists
+        description: >
+          Lists only regular files beneath exports/<name>_recovered. Paths are
+          relative and are served through the matching evidence-file route,
+          which checks containment again before opening a file.
+        """
+        if not artifacts.valid_name(name):
+            return jsonify(ok=False, error="invalid artifact name"), 400
+        exports = (config.REPO / "exports").resolve()
+        root = (exports / f"{name}_recovered").resolve()
+        try:
+            root.relative_to(exports)
+        except ValueError:
+            return jsonify(ok=False, error="invalid artifact path"), 400
+        if not root.is_dir():
+            return jsonify(ok=False, error="restored evidence not found"), 404
+
+        files = []
+        truncated = False
+        for path in sorted(root.rglob("*")):
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                resolved = path.resolve()
+                resolved.relative_to(root)
+                relative = path.relative_to(root).as_posix()
+                size = resolved.stat().st_size
+            except (OSError, ValueError):
+                continue
+            if len(files) >= 5000:
+                truncated = True
+                break
+            files.append({
+                "path": relative,
+                "bytes": size,
+                "html": path.suffix.lower() in (".html", ".htm"),
+                "url": f"/api/artifacts/local/{name}/evidence/{relative}",
+            })
+        return jsonify(name=name, directory=str(root), files=files, truncated=truncated)
+
+    @app.get("/api/artifacts/local/<name>/evidence/<path:relative_path>")
+    def artifact_evidence_file(name: str, relative_path: str):
+        """Open a File from a Restored Evidence Bundle
+        ---
+        tags: [artifacts]
+        parameters:
+          - name: name
+            in: path
+            required: true
+            type: string
+          - name: relative_path
+            in: path
+            required: true
+            type: string
+        responses:
+          200:
+            description: Evidence file; HTML reports are sandboxed by response policy
+          400:
+            description: Invalid artifact name or relative path
+          404:
+            description: Evidence file not found
+        description: >
+          A client path is accepted only when its resolved target remains under
+          the selected restored evidence directory. HTML is rendered with a
+          restrictive CSP sandbox: inline report scripts may run, but network
+          access, forms, plugins and parent-origin access are blocked.
+        """
+        if not artifacts.valid_name(name):
+            return jsonify(ok=False, error="invalid artifact name"), 400
+        relative = Path(relative_path)
+        if relative.is_absolute() or any(part in ("", ".", "..") for part in relative.parts):
+            return jsonify(ok=False, error="invalid evidence path"), 400
+        exports = (config.REPO / "exports").resolve()
+        root = (exports / f"{name}_recovered").resolve()
+        candidate = root / relative
+        if candidate.is_symlink():
+            return jsonify(ok=False, error="evidence file not found"), 404
+        target = candidate.resolve()
+        try:
+            root.relative_to(exports)
+            target.relative_to(root)
+        except ValueError:
+            return jsonify(ok=False, error="invalid evidence path"), 400
+        if not target.is_file():
+            return jsonify(ok=False, error="evidence file not found"), 404
+
+        response = send_file(target, as_attachment=False, conditional=True)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Cache-Control"] = "no-store"
+        if target.suffix.lower() in (".html", ".htm"):
+            response.headers["Content-Security-Policy"] = (
+                "sandbox allow-scripts; default-src 'none'; "
+                "script-src 'unsafe-inline'; style-src 'unsafe-inline' data:; "
+                "img-src 'self' data: blob:; font-src data:; connect-src 'none'; "
+                "object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
+            )
+        return response
 
     @app.post("/api/artifacts/recover")
     def artifact_recover():
@@ -1155,8 +1815,8 @@ def create_app() -> Flask:
         remote_root = raw_remote_root.strip() or "/"
         if not artifacts.valid_name(name):
             return jsonify(error="invalid artifact name"), 400
-        if (not remote_root.startswith("/") or "\\" in remote_root
-                or "\x00" in remote_root
+        if (not remote_root or remote_root.startswith("-")
+                or "\\" in remote_root or "\x00" in remote_root
                 or any(part == ".." for part in remote_root.split("/"))):
             return jsonify(error="invalid MEGA remote root"), 400
 
@@ -1257,6 +1917,66 @@ def create_app() -> Flask:
                 status = 404
             return jsonify(ok=False, **info), status
         return jsonify(ok=True, **info), 202
+
+    @app.post("/api/artifacts/link")
+    def artifact_link():
+        """Get or Create a Public MEGA Link for a Remote Bundle
+        ---
+        tags: [artifacts]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                remote_root: {type: string}
+        responses:
+          200:
+            description: The public link, clickable in a browser
+          400:
+            description: Invalid artifact name or MEGA root
+          404:
+            description: The bundle is not on MEGA under that root
+          502:
+            description: MEGAcmd could not create or read the link
+          503:
+            description: MEGAcmd is missing or has no session
+        description: >
+          Returns the bundle folder's public https://mega.nz link, creating the
+          export if it does not exist yet. The URL carries MEGA's decryption key
+          in its fragment, so it is the whole capability: when the bundle was
+          not password-protected, anyone who receives it can download the
+          evidence. The page shows it with a copy button for that reason.
+
+          The links are also attached to GET /api/artifacts bundles that were
+          already exported; this route exists for bundles that were not, and for
+          the explicit "share this" action.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        raw_name = body.get("name")
+        if not isinstance(raw_name, str):
+            return jsonify(ok=False, error="artifact name must be a string"), 400
+        result = artifacts.link_for(raw_name.strip(),
+                                    str(body.get("remote_root") or "/"))
+        if result.get("ok"):
+            return jsonify(result)
+        error = str(result.get("error") or "")
+        if error.startswith("invalid"):
+            status = 400
+        elif "not on MEGA" in error:
+            status = 404
+        elif "MEGAcmd" in error or "session" in error:
+            status = 503
+        else:
+            status = 502
+        return jsonify(result), status
+
 
     @app.get("/api/artifacts/export/<job_id>")
     def artifact_export_job(job_id: str):
@@ -2486,14 +3206,37 @@ def create_app() -> Flask:
           paramiko. No SSH session is opened; a status poll must stay cheap.
 
           When TCP is selected the checks go through
-          panel/utils/socket_validator.py, which opens the socket, and then ask
-          clamd for PING and VERSION on it. A daemon that does not answer is a
-          transport that cannot scan, which is what `ready` reports.
+          panel/utils/socket_validator.py, which opens the socket the transport
+          actually dials. That proves the path can run; whether the ClamAV
+          service itself is alive is the explicit POST /api/clamd/ping, which
+          asks the guest through panel/utils/vm_utility.py.
         """
         try:
             return jsonify(clamd.status())
         except Exception as exc:  # noqa: BLE001 - a status page must not 500
             return jsonify({"reachable": False, "ok": False, "checks": [],
+                            "error": f"{type(exc).__name__}: {exc}"})
+
+    @app.post("/api/clamd/ping")
+    def clamd_ping():
+        """Ping the ClamAV Service Through the VM Utility Server
+        ---
+        tags: [clamav]
+        responses:
+          200:
+            description: >-
+              `ok` says the utility server answered; `alive` is the service's
+              own verdict. `response` is the utility server's reply verbatim.
+        description: >
+          Opens the VM utility socket with panel/utils/socket_validator.py and
+          calls VirtualUtility.ping_service(Service.CLAMD_SERVICE) in
+          panel/utils/vm_utility.py. This asks the guest whether clamav is
+          running; it sends no clamd command and opens no SSH session.
+        """
+        try:
+            return jsonify(clamd.ping())
+        except Exception as exc:  # noqa: BLE001 - a status probe must not 500
+            return jsonify({"ok": False, "alive": False, "detail": str(exc),
                             "error": f"{type(exc).__name__}: {exc}"})
 
     @app.get("/api/clamd/results")
@@ -2729,6 +3472,119 @@ def create_app() -> Flask:
         if job is None:
             return jsonify(error="unknown job id"), 404
         return jsonify(job)
+
+    @app.get("/api/qiling/submit")
+    def qiling_submit_info():
+        """Qiling Submission Transport and Last Run
+        ---
+        tags: [qiling]
+        responses:
+          200:
+            description: Selected transport, availability and current/last job
+        description: >
+          The transport is read from config/dynamic_analysis.json - the same
+          choice the Dynamic Analysis page writes. SFTP runs
+          admin-terminal/qiling_upload.py; TCP uses panel/utils/vm_utility.py
+          through the operator's socket client. The page reads this to decide
+          whether the Submit button can run, and to reattach after a reload.
+        """
+        try:
+            return jsonify(qiling.submission_info())
+        except Exception as exc:  # noqa: BLE001 - a status page must not 500
+            return jsonify({"error": f"{type(exc).__name__}: {exc}",
+                            "ready": False, "current": None})
+
+    @app.post("/api/qiling/submit")
+    def qiling_submit():
+        """Submit a Sample to Qiling
+        ---
+        tags: [qiling]
+        consumes: [multipart/form-data]
+        parameters:
+          - in: formData
+            name: file
+            required: true
+            type: file
+            description: Windows PE executable (25 MiB limit)
+          - in: formData
+            name: timeout
+            required: false
+            type: integer
+            description: Emulation time limit in seconds (1-600, default 60)
+          - in: formData
+            name: max_insn
+            required: false
+            type: integer
+            description: Instruction limit (1-100000000, default 1000000)
+          - in: formData
+            name: mode
+            required: false
+            type: string
+            enum: [sftp, tcp]
+            description: >
+              Optional, and only to be refused when it disagrees. The transport
+              is read from config/dynamic_analysis.json; sending a different
+              mode is a 400 (mode-locked).
+        responses:
+          202:
+            description: Job handle; poll /api/build/<job_id> for the output log
+          400:
+            description: >
+              Refused with a machine-readable `code`: config-error,
+              mode-locked, bad-mode, transport-unavailable, bad-name, empty,
+              stage-failed, bad-limit
+          409:
+            description: A Qiling run is already in progress
+          413:
+            description: The sample exceeds SUBMIT_MAX_BYTES
+        description: >
+          Runs the sample on the analysis VM and writes one
+          *_qiling_out.zip under qiling_dlls/results/. Both transports use the
+          repo's existing tooling as-is; the panel reimplements neither.
+        """
+        upload = request.files.get("file")
+        if upload is None or not (upload.filename or "").strip():
+            return jsonify({"ok": False, "code": "no-file",
+                            "error": "send multipart/form-data with a 'file' "
+                                     "field naming the sample"}), 400
+        mode = (request.form.get("mode") or "").strip().lower() or None
+        timeout = request.form.get("timeout")
+        max_insn = request.form.get("max_insn")
+        try:
+            result = qiling.start_submit(
+                upload.filename, upload.stream, mode,
+                timeout if timeout not in (None, "") else None,
+                max_insn if max_insn not in (None, "") else None)
+        except Exception as exc:  # noqa: BLE001 - report, never 500 silently
+            return jsonify({"ok": False,
+                            "error": f"{type(exc).__name__}: {exc}"}), 500
+        if result.get("ok"):
+            return jsonify(result), 202
+        if "already" in str(result.get("error")):
+            return jsonify(result), 409
+        return jsonify(result), 413 if result.get("code") == "too-large" else 400
+
+    @app.post("/api/qiling/ping")
+    def qiling_ping():
+        """Ping the Qiling Service Through the VM Utility Server
+        ---
+        tags: [qiling]
+        responses:
+          200:
+            description: >-
+              `ok` says the utility server answered; `alive` is the service's
+              own verdict. `response` is the utility server's reply verbatim.
+        description: >
+          Opens the VM utility socket with panel/utils/socket_validator.py and
+          calls VirtualUtility.ping_service(Service.QILING_SERVICE) in
+          panel/utils/vm_utility.py. This asks the guest whether the Qiling
+          service is running; it opens no SSH session.
+        """
+        try:
+            return jsonify(qiling.ping())
+        except Exception as exc:  # noqa: BLE001 - a status probe must not 500
+            return jsonify({"ok": False, "alive": False, "detail": str(exc),
+                            "error": f"{type(exc).__name__}: {exc}"})
 
     # --- network map --------------------------------------------------------
 
