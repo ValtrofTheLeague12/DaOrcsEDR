@@ -3,6 +3,7 @@ import { Alert } from '@heroui/react/alert'
 import { Card } from '@heroui/react/card'
 import { Chip } from '@heroui/react/chip'
 import { api, usePoll } from '../api'
+import CopyButton from '../components/CopyButton'
 import Icon from '../components/Icon'
 import JobLog from '../components/JobLog'
 import Loading from '../components/Loading'
@@ -270,16 +271,54 @@ function BundleTimelineNote({
 
 function LocalList({
   bundles,
+  remoteNames,
+  remoteRoot,
+  uploadEnabled,
+  encryptEnabled,
+  passwordReady,
+  onExportStarted,
   historyPath,
   historyWritten,
   historyAt,
 }: {
   bundles: LocalBundle[]
+  /** Names MEGA is listing right now. A local bundle in this set is already
+   *  remote, so offering an export would re-upload the same bytes. */
+  remoteNames: Set<string>
+  remoteRoot: string
+  uploadEnabled: boolean
+  encryptEnabled: boolean
+  passwordReady: boolean
+  /** Hand the job to the page, which owns the log modal: a running upload must
+   *  not be tied to a list the operator can page away from. */
+  onExportStarted: (job: { jobId: string; name: string }) => void
   historyPath: string
   historyWritten: boolean
   historyAt: number | null
 }) {
   const paged = usePaged(bundles)
+  const [exporting, setExporting] = useState<string | null>(null)
+  const [exportError, setExportError] = useState<{ name: string; message: string } | null>(null)
+
+  // The mirror of RemoteList's recover: push what is on disk up to MEGA. It is
+  // a job, not a request, because protecting a large bundle and pushing it over
+  // a consumer link takes minutes - and the log is the part worth watching.
+  const exportBundle = async (name: string) => {
+    setExporting(name)
+    setExportError(null)
+    try {
+      const res = await api.exportArtifact(name, remoteRoot)
+      onExportStarted({ jobId: res.job_id, name })
+    } catch (error) {
+      setExportError({
+        name,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setExporting(null)
+    }
+  }
+
   return (
     <Card className="w-full">
       <Card.Header className="flex flex-wrap items-center justify-between gap-3">
@@ -290,6 +329,17 @@ function LocalList({
         <Chip size="sm" variant="soft">{bundles.length} found</Chip>
       </Card.Header>
       <Card.Content className="flex flex-col gap-2">
+        {!uploadEnabled && (
+          <Alert status="warning">
+            <Alert.Title>Export is disabled</Alert.Title>
+            <Alert.Description>
+              The upload toggle is off - whoever decided it is shown on{' '}
+              <strong>Analysis Configuration → MEGA upload</strong>, whose{' '}
+              <code className="font-mono">MEGA_*</code> settings win over{' '}
+              <code className="font-mono">config/artifacts.yaml</code> where both are set.
+            </Alert.Description>
+          </Alert>
+        )}
         {bundles.length === 0 ? (
           <p className="artifact-list-empty">No evidence bundles found in <code>exports/</code>.</p>
         ) : (
@@ -330,6 +380,28 @@ function LocalList({
                               <span aria-hidden="true">↗</span>
                             </a>
                           )}
+                          {remoteNames.has(bundle.name) ? (
+                            <Chip size="sm" variant="soft" color="success">on MEGA</Chip>
+                          ) : bundle.present && (
+                            <button
+                              type="button"
+                              className="artifact-action"
+                              title={uploadEnabled
+                                ? (encryptEnabled
+                                  ? (passwordReady
+                                    ? `Protect this bundle with the operator password and upload it to MEGA ${remoteRoot}`
+                                    : `Cannot protect yet: no bundle password is set - set or generate one on the Analysis Configuration page first`)
+                                  : `Upload this bundle to MEGA ${remoteRoot} UNPROTECTED`)
+                                : 'Uploading is disabled - see the Analysis Configuration page, MEGA upload group'}
+                              onClick={() => void exportBundle(bundle.name)}
+                              disabled={exporting !== null || !uploadEnabled || (encryptEnabled && !passwordReady)}
+                            >
+                              {exporting === bundle.name
+                                ? 'Exporting…'
+                                : encryptEnabled ? 'Export to MEGA' : 'Export unprotected'}
+                              <span aria-hidden="true">↑</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                       <div className="artifact-bundle-details">
@@ -338,6 +410,12 @@ function LocalList({
                         <span>Archive modified</span>
                         <span className="font-mono">{ago(bundle.modified)}</span>
                       </div>
+                      {exportError?.name === bundle.name && (
+                        <Alert status="danger" className="mt-2">
+                          <Alert.Title>Export failed</Alert.Title>
+                          <Alert.Description>{exportError.message}</Alert.Description>
+                        </Alert>
+                      )}
                     </div>
                   </div>
                 )
@@ -364,42 +442,57 @@ function RemoteList({
   bundles,
   truncated,
   notExamined,
+  refreshing,
+  rootExists,
   remoteRoot,
   onRecovered,
   historyPath,
   historyWritten,
   historyAt,
-  uploadEnabled,
-  onExportStarted,
   encryptEnabled,
-  passwordReady,
 }: {
   bundles: UnifiedBundle[]
   truncated: string | null
   notExamined: number
+  refreshing: boolean
+  rootExists: boolean
   remoteRoot: string
   onRecovered: () => void
   historyPath: string
   historyWritten: boolean
   historyAt: number | null
-  /** Whether config/artifacts.yaml permits pushing evidence to MEGA at all.
-   *  Read once here rather than per bundle so a disabled account shows one
-   *  explanation instead of a button per row that all fail the same way. */
-  uploadEnabled: boolean
-  /** Whether exports are password-protected first. */
+  /** Whether exports are password-protected first; decides how a bundle is
+   *  described when it is opened on MEGA. */
   encryptEnabled: boolean
-  /** Whether the operator password file exists, when encryptEnabled. */
-  passwordReady: boolean
-  /** Hand the job to the page, which owns the log modal: a running upload must
-   *  not be tied to a list the operator can page away from. */
-  onExportStarted: (job: { jobId: string; name: string }) => void
 }) {
   const paged = usePaged(bundles)
-  const missing = bundles.filter((bundle) => !bundle.present).length
   const [recovering, setRecovering] = useState<string | null>(null)
   const [recoverError, setRecoverError] = useState<{ name: string; message: string } | null>(null)
-  const [exporting, setExporting] = useState<string | null>(null)
-  const [exportError, setExportError] = useState<{ name: string; message: string } | null>(null)
+  // Links created from this page, keyed by bundle. A bundle that was exported
+  // earlier carries its link in the listing; this map covers the ones created
+  // by the button below without waiting for the next remote poll.
+  const [links, setLinks] = useState<Record<string, string>>({})
+  const [linkBusy, setLinkBusy] = useState<string | null>(null)
+  const [linkError, setLinkError] = useState<{ name: string; message: string } | null>(null)
+
+  const linkOf = (bundle: UnifiedBundle): string | null =>
+    links[bundle.name] ?? bundle.link ?? null
+
+  const requestLink = async (name: string) => {
+    setLinkBusy(name)
+    setLinkError(null)
+    try {
+      const res = await api.artifactLink(name, remoteRoot)
+      setLinks((prev) => ({ ...prev, [name]: res.link }))
+    } catch (error) {
+      setLinkError({
+        name,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setLinkBusy(null)
+    }
+  }
 
   const recover = async (name: string) => {
     setRecovering(name)
@@ -417,57 +510,42 @@ function RemoteList({
     }
   }
 
-  // The mirror of recover: push what is on disk up to MEGA. It is a job, not a
-  // request, because protecting a large bundle and pushing it over a consumer link
-  // takes minutes - and the log is the part worth watching.
-  const exportBundle = async (name: string) => {
-    setExporting(name)
-    setExportError(null)
-    try {
-      const res = await api.exportArtifact(name, remoteRoot)
-      onExportStarted({ jobId: res.job_id, name })
-    } catch (error) {
-      setExportError({
-        name,
-        message: error instanceof Error ? error.message : String(error),
-      })
-    } finally {
-      setExporting(null)
-    }
-  }
-
+  // The mirror of recover lives in the Local tab, where the bundle that would
+  // be pushed actually is: the Remote tab only lists what MEGA has now.
   return (
     <Card className="w-full">
       <Card.Header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <Card.Title>Remote bundles</Card.Title>
-          <p className="mt-1 text-[11px] text-default-500">MEGA uploads and remembered bundle history</p>
+          <p className="mt-1 text-[11px] text-default-500">Bundles MEGA is listing right now</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Chip size="sm" variant="soft">{bundles.length} found</Chip>
-          {missing > 0 && <Chip size="sm" variant="soft" color="warning">{missing} not present remotely</Chip>}
-        </div>
+        <Chip size="sm" variant="soft">{bundles.length} found</Chip>
       </Card.Header>
       <Card.Content className="flex flex-col gap-2">
-        {!uploadEnabled && (
+        {!rootExists && !refreshing && (
           <Alert status="warning">
-            <Alert.Title>Export is disabled</Alert.Title>
+            <Alert.Title>MEGA destination folder not found</Alert.Title>
             <Alert.Description>
-              The upload toggle is off - whoever decided it is shown on{' '}
-              <strong>Analysis Configuration → MEGA upload</strong>, whose{' '}
-              <code className="font-mono">MEGA_*</code> settings win over{' '}
-              <code className="font-mono">config/artifacts.yaml</code> where both are set.
-              Recover still works: pulling evidence down does not send it anywhere.
+              MEGA could not find <code className="font-mono">{remoteRoot}</code>. No remote bundles are currently listed here; exporting a local bundle from the Local tab can create this destination.
+            </Alert.Description>
+          </Alert>
+        )}
+        {refreshing && (
+          <Alert status="accent">
+            <Alert.Title>Checking current MEGA contents</Alert.Title>
+            <Alert.Description>
+              The listing refreshes in the background; past uploads are kept in history, not counted as current remote files.
             </Alert.Description>
           </Alert>
         )}
         {bundles.length === 0 ? (
-          <p className="artifact-list-empty">No bundles on MEGA yet. Local archives are still listed in the Local tab.</p>
+          <p className="artifact-list-empty">No bundles on MEGA yet. Local archives are listed in the Local tab.</p>
         ) : (
           <>
             <div className="timeline">
               {paged.slice.map((bundle) => {
                 const tone = bundle.present ? 'var(--success)' : 'var(--danger)'
+                const megaLink = linkOf(bundle)
                 return (
                   <div key={bundle.name} className="timeline-item mb-2 last:mb-0">
                     <span className="timeline-node" style={{ '--node': tone } as CSSProperties} />
@@ -478,7 +556,7 @@ function RemoteList({
                         </span>
                         <div className="flex flex-wrap items-center justify-end gap-1.5">
                           <Chip size="sm" variant="soft" color={bundle.present ? 'success' : 'warning'}>
-                            {bundle.present ? `${bundle.where} · present` : 'missing remotely'}
+                            {bundle.present ? `${bundle.where} · present` : 'not on MEGA'}
                           </Chip>
                           <Chip size="sm" variant="soft">{bundle.file_count} files</Chip>
                           <Chip size="sm" variant="soft">{bytes(bundle.bytes)}</Chip>
@@ -509,30 +587,42 @@ function RemoteList({
                               {bundle.where !== 'both' && <span aria-hidden="true">↓</span>}
                             </button>
                           )}
-                          {/* Export only where it means something: a bundle that is
-                              on disk and not on MEGA. Offering it for one that is
-                              already there would re-upload the same bytes under the
-                              same name. */}
-                          {bundle.present && bundle.where === 'local' && (
-                            <button
-                              type="button"
-                              className="artifact-action"
-                              title={uploadEnabled
-                                ? (encryptEnabled
-                                  ? (passwordReady
-                                    ? `Protect this bundle with the operator password and upload it to MEGA ${remoteRoot}`
-                                    : `Cannot protect yet: no bundle password is set - set or generate one on the Analysis Configuration page first`)
-                                  : `Upload this bundle to MEGA ${remoteRoot} UNPROTECTED`)
-                                : 'Uploading is disabled - see the Analysis Configuration page, MEGA upload group'}
-                              onClick={() => void exportBundle(bundle.name)}
-                              disabled={exporting !== null || !uploadEnabled || (encryptEnabled && !passwordReady)}
-                            >
-                              {exporting === bundle.name
-                                ? 'Exporting…'
-                                : encryptEnabled ? 'Export to MEGA' : 'Export unprotected'}
-                              <span aria-hidden="true">↑</span>
-                            </button>
+                          {/* A public link is how a bundle reaches someone on
+                              another machine. Only for bundles MEGA is listing
+                              now - a remembered entry has nothing to link to.
+                              Asking for one publishes the evidence, which is
+                              why it is a click rather than a poll side effect. */}
+                          {bundle.present &&
+                            (bundle.where === 'remote' || bundle.where === 'both') && (
+                            megaLink ? (
+                              <a
+                                className="artifact-action"
+                                href={megaLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={encryptEnabled
+                                  ? 'Open this bundle on MEGA - the zip inside is password-protected'
+                                  : 'Open this bundle on MEGA - it is NOT password-protected'}
+                              >
+                                Open on MEGA
+                                <span aria-hidden="true">↗</span>
+                              </a>
+                            ) : (
+                              <button
+                                type="button"
+                                className="artifact-action"
+                                title="Create a public MEGA link for this bundle and show it here"
+                                onClick={() => void requestLink(bundle.name)}
+                                disabled={linkBusy !== null}
+                              >
+                                {linkBusy === bundle.name ? 'Creating link…' : 'Get MEGA link'}
+                                <span aria-hidden="true">🔗</span>
+                              </button>
+                            )
                           )}
+                          {/* Export lives in the Local tab: a bundle MEGA is
+                              listing is already there, and one it is not
+                              listing is not a remote artifact. */}
                         </div>
                       </div>
                       <div className="artifact-bundle-details">
@@ -540,17 +630,43 @@ function RemoteList({
                         <span className="font-mono">{bundle.date_text ?? shortStamp(bundle.modified)}</span>
                         <span>Last seen</span>
                         <span className="font-mono">{ago(bundle.last_seen ?? bundle.modified)}</span>
+                        <span>Remote files</span>
+                        <span className="min-w-0 break-all font-mono">
+                          {bundle.files.map((file) => file.name).filter(Boolean).join(', ') || 'No files listed'}
+                        </span>
                       </div>
+                      {/* The URL itself, not only a link label: the point of the
+                          share is to hand it to someone, and a copy button next
+                          to the URL is how it gets into a chat or a ticket. */}
+                      {megaLink && (
+                        <div className="artifact-bundle-details">
+                          <span>MEGA link</span>
+                          <span className="flex min-w-0 flex-wrap items-center gap-2">
+                            <a
+                              className="min-w-0 break-all font-mono text-[11px] text-accent-400 underline underline-offset-2"
+                              href={megaLink}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {megaLink}
+                            </a>
+                            <CopyButton text={megaLink} variant="ghost">Copy link</CopyButton>
+                            {!encryptEnabled && (
+                              <Chip size="sm" variant="soft" color="warning">unprotected</Chip>
+                            )}
+                          </span>
+                        </div>
+                      )}
                       {recoverError?.name === bundle.name && (
                         <Alert status="danger" className="mt-2">
                           <Alert.Title>Recovery failed</Alert.Title>
                           <Alert.Description>{recoverError.message}</Alert.Description>
                         </Alert>
                       )}
-                      {exportError?.name === bundle.name && (
+                      {linkError?.name === bundle.name && (
                         <Alert status="danger" className="mt-2">
-                          <Alert.Title>Export failed</Alert.Title>
-                          <Alert.Description>{exportError.message}</Alert.Description>
+                          <Alert.Title>Could not create the MEGA link</Alert.Title>
+                          <Alert.Description>{linkError.message}</Alert.Description>
                         </Alert>
                       )}
                     </div>
@@ -590,24 +706,37 @@ export default function Artifacts() {
   const [tab, setTab] = useState<Tab>('local')
   const forceRefresh = useRef(false)
   useMinuteTick()
+  const { data: artifactSettings } = usePoll(api.artifactSettings, 120_000)
+  const configuredRemoteRoot = artifactSettings
+    ? artifactSettings.artifacts.remote_root?.trim() || '/'
+    : undefined
   const { data, error, loading, refresh } = usePoll<ArtifactsSnapshot>(
-    () => api.artifacts('/', forceRefresh.current),
+    () => api.artifacts(configuredRemoteRoot, forceRefresh.current),
     POLL_MS,
   )
+  useEffect(() => {
+    if (configuredRemoteRoot && data?.remote?.remote_root !== configuredRemoteRoot) {
+      refresh()
+    }
+  }, [configuredRemoteRoot, data?.remote?.remote_root])
+  useEffect(() => {
+    if (!data?.remote?.refreshing) return
+    const timer = window.setTimeout(refresh, 5000)
+    return () => window.clearTimeout(timer)
+  }, [data?.generated_at, data?.remote?.refreshing])
   // Whether this lab permits pushing evidence off the host at all. Read from the
   // same config the analyzer reads, so the button and the option cannot disagree
   // - and so the page can explain a disabled button instead of leaving the
   // operator to discover it by clicking.
-  const { data: analysis } = usePoll(api.analysisConfig, 120_000)
-  const uploadEnabled = analysis?.mega_upload ?? true
+  const uploadEnabled = artifactSettings?.mega_upload ?? true
   // What an export will actually do, decided server-side from the same config
   // the analyzer reads. Shown on the button because "this leaves the host" and
   // "this leaves the host readable by anyone who can open the remote folder"
   // are different claims, and the operator should see which one they are
   // making. Protection is a password zip, so the state is on/off plus whether
   // the password file exists enough to actually protect anything.
-  const encryptEnabled = analysis?.mega_encrypt ?? false
-  const passwordReady = analysis?.bundle_password?.present ?? false
+  const encryptEnabled = artifactSettings?.mega_encrypt ?? false
+  const passwordReady = artifactSettings?.bundle_password?.present ?? false
   const [exportJob, setExportJob] = useState<{ jobId: string; name: string } | null>(null)
 
   useEffect(() => {
@@ -625,8 +754,16 @@ export default function Artifacts() {
     return { totalBytes, verified, attention }
   }, [localBundles])
 
-  const remoteBundles: UnifiedBundle[] = data?.unified ?? (data?.history?.bundles ?? []).map(
+  // The Remote tab is MEGA's current contents, nothing else. The unified view
+  // also carries local-only bundles (so the diff and counts can describe both
+  // ends); rendering those here is what made local artifacts look remote.
+  const unifiedBundles: UnifiedBundle[] = data?.unified ?? (data?.history?.bundles ?? []).map(
     (bundle: HistoryBundle) => ({ ...bundle, where: 'remembered' }),
+  )
+  const remoteBundles = unifiedBundles.filter((bundle) => bundle.where !== 'local')
+  const remoteNames = useMemo(
+    () => new Set((data?.remote?.bundles ?? []).map((bundle) => bundle.name)),
+    [data?.remote?.bundles],
   )
   const refreshNow = () => {
     forceRefresh.current = true
@@ -737,6 +874,12 @@ export default function Artifacts() {
               {tab === 'local' ? (
                 <LocalList
                   bundles={localBundles}
+                  remoteNames={remoteNames}
+                  remoteRoot={data.remote?.remote_root ?? '/'}
+                  uploadEnabled={uploadEnabled}
+                  encryptEnabled={encryptEnabled}
+                  passwordReady={passwordReady}
+                  onExportStarted={setExportJob}
                   historyPath={data.history?.path ?? ''}
                   historyWritten={data.history?.written ?? false}
                   historyAt={data.history?.updated_at ?? null}
@@ -746,15 +889,14 @@ export default function Artifacts() {
                   bundles={remoteBundles}
                   truncated={data.remote?.truncated ?? null}
                   notExamined={data.remote?.not_examined ?? 0}
+                  refreshing={data.remote?.refreshing ?? false}
+                  rootExists={data.remote?.root_exists ?? true}
                   remoteRoot={data.remote?.remote_root ?? '/'}
                   onRecovered={refreshNow}
                   historyPath={data.history?.path ?? ''}
                   historyWritten={data.history?.written ?? false}
                   historyAt={data.history?.updated_at ?? null}
-                  uploadEnabled={uploadEnabled}
                   encryptEnabled={encryptEnabled}
-                  passwordReady={passwordReady}
-                  onExportStarted={setExportJob}
                 />
               )}
             </div>

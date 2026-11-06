@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#080d12">
+    <title>DAORCS · Threat Intelligence</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/catalog.css') }}">
+  </head>
+  <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="DAORCS Threat Intelligence home">
+          <pre class="brand-logo">{{ logo }}</pre>
+          <span class="brand-copy">
+            <strong>DAORCS</strong>
+            <span>THREAT INTELLIGENCE</span>
+          </span>
+        </a>
+        <div class="topbar-status">
+          <span class="status-pulse" aria-hidden="true"></span>
+          <span>Evidence catalog</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow"><span>01</span> COLLECTION OVERVIEW</p>
+            <h1>Artifact <span>intelligence</span></h1>
+            <p class="hero-description">
+              A central view of collected evidence, integrity hashes, submission
+              dates, and exported MEGA bundles.
+            </p>
+          </div>
+          <div class="hero-counter">
+            <span>COLLECTED ARTIFACTS</span>
+            <strong>{{ artifacts|length }}</strong>
+            <span class="counter-caption">records in this catalog</span>
+          </div>
+        </section>
+
+        <section class="catalog-panel" aria-labelledby="catalog-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow"><span>02</span> EVIDENCE INDEX</p>
+              <h2 id="catalog-title">Collected artifacts</h2>
+            </div>
+            <span class="record-count">{{ artifacts|length }} RECORDS</span>
+          </div>
+
+          {% if artifacts %}
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Sample name</th>
+                  <th scope="col">SHA-256</th>
+                  <th scope="col">Submitted</th>
+                  <th scope="col">MEGA export</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for artifact in artifacts %}
+                <tr>
+                  <td>
+                    <span class="sample-name">{{ artifact.sample_name|default(artifact.name|default("Unknown sample")) }}</span>
+                    {% if artifact.bundle_name %}
+                    <span class="bundle-name">{{ artifact.bundle_name }}</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if artifact.sha256 %}
+                    <code class="hash-value" title="{{ artifact.sha256 }}">{{ artifact.sha256 }}</code>
+                    {% else %}
+                    <span class="muted">Not recorded</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if artifact.submitted_at %}
+                    <time datetime="{{ artifact.submitted_at }}">{{ artifact.submitted_at }}</time>
+                    {% else %}
+                    <span class="muted">Unknown</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if artifact.mega_link %}
+                    <a class="mega-link" href="{{ artifact.mega_link }}" target="_blank" rel="noopener noreferrer">
+                      Open MEGA bundle <span aria-hidden="true">↗</span>
+                    </a>
+                    {% else %}
+                    <span class="muted">Not exported</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="empty-state">
+            <span class="empty-icon" aria-hidden="true">◇</span>
+            <h3>No artifacts collected yet</h3>
+            <p>Collected evidence will appear here with its hash, submission date, and MEGA export link.</p>
+          </div>
+          {% endif %}
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>DAORCS EDR <span class="footer-separator">/</span> THREAT INTELLIGENCE</span>
+        <span>Evidence catalog</span>
+      </footer>
+    </div>
+  </body>
+</html>

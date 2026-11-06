@@ -21,6 +21,7 @@ What the tests actually pin:
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import time
@@ -195,6 +196,72 @@ class TestTheChildProcess:
     def test_upload_is_forced_off_not_inherited(self, started):
         args, _ = started
         assert args["env"]["IA_ARTIFACT_UPLOAD"] == "0"
+
+    def test_saved_cti_key_reaches_the_child_by_config_path_not_environment_value(
+            self, repo, monkeypatch):
+        secret = "panel-cti-secret-for-test"
+        monkeypatch.setenv("IA_APPDATA_DIR", str(repo / "appdata"))
+        monkeypatch.delenv("CTI_CONFIG", raising=False)
+        monkeypatch.setattr(pr.cti_settings, "_harden",
+                            lambda *_args, **_kwargs: None)
+        pr.cti_settings.update({"virustotal": secret})
+        observed = {}
+
+        def popen(argv, **kwargs):
+            observed["argv"] = argv
+            observed.update(kwargs)
+            return FakeProc([], 0)
+
+        monkeypatch.setattr(pr, "_POPEN", popen)
+        out = pr.start("quick", "samples/sample.exe")
+        assert out["ok"], out
+        deadline = time.time() + 30
+        while time.time() < deadline and pr.job(out["job_id"])["state"] == "running":
+            time.sleep(0.02)
+
+        env = observed["env"]
+        cti_path = Path(env["CTI_CONFIG"])
+        assert cti_path.is_file()
+        assert secret in cti_path.read_text(encoding="utf-8")
+        assert all(secret not in value for value in env.values())
+        assert secret not in " ".join(observed["argv"])
+
+    def test_merged_cti_config_preserves_external_options_and_is_cleaned_after_run(
+            self, repo, monkeypatch):
+        secret = "merged-panel-cti-secret"
+        monkeypatch.setenv("IA_APPDATA_DIR", str(repo / "appdata"))
+        monkeypatch.setattr(pr.cti_settings, "_harden",
+                            lambda *_args, **_kwargs: None)
+        base = repo / "external-cti.json"
+        base.write_text(json.dumps({
+            "keys": {"nvd": "external-nvd"},
+            "endpoints": {"otx": "https://example.test"},
+        }), encoding="utf-8")
+        monkeypatch.setenv("CTI_CONFIG", str(base))
+        pr.cti_settings.update({"virustotal": secret})
+        observed = {}
+
+        def popen(argv, **kwargs):
+            path = Path(kwargs["env"]["CTI_CONFIG"])
+            observed["path"] = path
+            observed["config"] = json.loads(path.read_text(encoding="utf-8"))
+            return FakeProc([], 0)
+
+        monkeypatch.setattr(pr, "_POPEN", popen)
+        out = pr.start("quick", "samples/sample.exe")
+        assert out["ok"], out
+        deadline = time.time() + 30
+        while time.time() < deadline and pr.job(out["job_id"])["state"] == "running":
+            time.sleep(0.02)
+
+        assert observed["config"]["keys"] == {
+            "nvd": "external-nvd",
+            "virustotal": secret,
+        }
+        assert observed["config"]["endpoints"] == {
+            "otx": "https://example.test",
+        }
+        assert not observed["path"].exists()
 
     def test_startup_logo_is_forced_into_the_captured_log(self, started):
         # stdout is a pipe, so the analyzer would otherwise drop daorcs.logo.

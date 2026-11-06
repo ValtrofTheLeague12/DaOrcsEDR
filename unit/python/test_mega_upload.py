@@ -113,3 +113,22 @@ def test_a_genuinely_missing_parent_still_is_an_error(monkeypatch, tmp_path):
     with pytest.raises(upload.megacmd.MegaError) as excinfo:
         upload.upload_megacmd(tmp_path, "nowhere", 60)
     assert "path does not exist" in str(excinfo.value)
+
+
+def test_legacy_sealing_arguments_are_accepted():
+    """An older analyzer passes --recipient/--admin-key; that must not abort."""
+    args = upload.parse_args(["--artifact", "quick_test",
+                              "--encrypt", "--recipient", "user"])
+    assert args.recipient == "user"
+    assert args.encrypt is True
+    assert args.admin_key is None
+
+
+def test_colour_can_be_turned_off_for_a_redirected_log(monkeypatch):
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert upload._resolve_color("always") is False
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setenv("TERM", "dumb")
+    assert upload._resolve_color("auto") is False
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    assert upload._resolve_color("auto") is True

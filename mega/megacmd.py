@@ -267,3 +267,95 @@ def logged_in(email: str | None = None, timeout: int = QUICK_TIMEOUT) -> bool:
     if not who:
         return False
     return who.lower() == email.lower() if email else True
+
+
+# ---------------------------------------------------------------------------
+# Public links
+#
+# `export <path>` reports the link a node already has; `export -a -f <path>`
+# creates one. The two are kept separate because listing a page must never
+# publish evidence: remote() only ever asks for an existing link, and creating
+# one is an explicit operator action (or the end of an export they started).
+#
+# MEGA puts the decryption key in the link's fragment, so the URL is the whole
+# capability and must be treated as a secret when the bundle is not protected.
+# ---------------------------------------------------------------------------
+
+_LINK = re.compile(
+    r"https://mega\.nz/(?:folder|file)/[A-Za-z0-9_-]+(?:#[A-Za-z0-9_-]+)?")
+
+# MEGA's --expire grammar: s seconds, M minutes, h hours, d days, m months,
+# y years. The case matters - M is minutes and m is months - so this cannot be
+# case-insensitive. Components combine: "1m12d3h".
+_DURATION = re.compile(r"^(?:\d+[smhdMy])+$")
+
+
+def valid_duration(text: str) -> bool:
+    """True for a MEGA time delay with at least one non-zero component."""
+    text = str(text or "").strip()
+    if not _DURATION.match(text):
+        return False
+    return any(int(part) > 0 for part in re.findall(r"\d+", text))
+
+
+
+def _link_from(text: str) -> str | None:
+    found = _LINK.search(text or "")
+    return found.group(0) if found else None
+
+
+def link_from(text: str) -> str | None:
+    """The first public MEGA URL in some MEGAcmd output, or None."""
+    return _link_from(text)
+
+
+def exported_link(remote_path: str, timeout: int = QUICK_TIMEOUT) -> str | None:
+    """The existing public link for a node, or None if it is not exported.
+
+    Read-only: a node that is not exported returns MEGAcmd's "not exported.
+    Use -a" with exit 53, which is a normal answer here, not an error.
+    """
+    res = run("export", remote_path, timeout=timeout, check=False)
+    if res.code != 0:
+        return None
+    return _link_from(res.text)
+
+
+def public_link(remote_path: str, timeout: int = QUICK_TIMEOUT,
+                expire: str | None = None) -> str:
+    """The node's public link, creating one if it has none.
+
+    `-f` accepts the copyright terms shown the first time an account exports
+    anything; without it the first call can fail on a prompt no script can
+    answer. An already-exported node is read first so `-a` is not attempted
+    (MEGAcmd errors when the export exists).
+
+    `expire` is a MEGA time delay ("12h", "7d", "1m12d3h") applied only when a
+    link is created. An existing link is returned unchanged: MEGA cannot modify
+    an export in place. Only PRO accounts may set an expiry; the refusal is
+    raised rather than retried without it, because a permanent link would
+    outlive the policy the operator asked for.
+    """
+    if expire is not None:
+        expire = str(expire).strip()
+        if not expire:
+            expire = None
+        elif not valid_duration(expire):
+            raise MegaError(
+                f"invalid MEGA link expiry {expire!r}: use e.g. "
+                "12h, 7d or 1m12d3h (M = minutes, m = months)")
+
+    link = exported_link(remote_path, timeout)
+    if link:
+        return link
+    args = ["-a"]
+    if expire:
+        args.append(f"--expire={expire}")
+    args += ["-f", remote_path]
+    res = run("export", *args, timeout=timeout)
+    link = _link_from(res.text)
+    if not link:
+        raise MegaError(
+            f"megacmd export returned no link for {remote_path}: "
+            f"{res.text[:200] or '(no output)'}")
+    return link

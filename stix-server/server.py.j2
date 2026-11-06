@@ -1,0 +1,101 @@
+"""Jinja-backed STIX artifact catalog server template.
+
+Copy this file to server.py in the same directory and run it with Python.
+The listener address and port come from cti_config.json.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from flask import Flask, abort, render_template
+from jinja2 import select_autoescape
+
+BASE_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = BASE_DIR / "cti_config.json"
+LOGO_PATH = BASE_DIR / "static" / "daorcs.logo"
+
+
+def load_config() -> dict:
+    try:
+        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Unable to read {CONFIG_PATH.name}: {exc}") from exc
+
+    if not isinstance(config, dict):
+        raise RuntimeError("cti_config.json must contain a JSON object")
+    server = config.get("server")
+    if not isinstance(server, dict):
+        raise RuntimeError("cti_config.json must contain a server object")
+    host = server.get("ip")
+    port = server.get("port")
+    if not isinstance(host, str) or not host.strip():
+        raise RuntimeError("server.ip must be a non-empty bind address")
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise RuntimeError("server.port must be an integer from 1 to 65535")
+    return config
+
+
+def create_app() -> Flask:
+    config = load_config()
+    app = Flask(
+        __name__, root_path=str(BASE_DIR),
+        template_folder="templates", static_folder="static",
+    )
+    app.jinja_env.autoescape = select_autoescape(
+        enabled_extensions=("html", "htm", "xml", "html.j2"),
+        default_for_string=True,
+    )
+    catalog_path = (BASE_DIR / str(config.get("catalog_file", "artifact_catalog.json"))).resolve()
+    try:
+        catalog_path.relative_to(BASE_DIR)
+    except ValueError:
+        raise RuntimeError("catalog_file must stay inside the server directory") from None
+
+    @app.get("/")
+    def index():
+        try:
+            artifacts = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            artifacts = []
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            abort(500, description=f"Unable to read artifact catalog: {exc}")
+
+        if not isinstance(artifacts, list):
+            abort(500, description="Artifact catalog must be a JSON array")
+        try:
+            logo = LOGO_PATH.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            abort(500, description=f"Unable to read DAORCS logo: {exc}")
+        return render_template(
+            "index.html.j2",
+            artifacts=artifacts,
+            logo=logo,
+        )
+
+    @app.get("/health")
+    def health():
+        return {"ok": True, "artifact_count": _catalog_count(catalog_path)}
+
+    return app
+
+
+def _catalog_count(path: Path) -> int:
+    try:
+        catalog = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return 0
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return 0
+    return len(catalog) if isinstance(catalog, list) else 0
+
+
+if __name__ == "__main__":
+    settings = load_config()["server"]
+    create_app().run(
+        host=settings["ip"],
+        port=settings["port"],
+        debug=False,
+        use_reloader=False,
+    )
