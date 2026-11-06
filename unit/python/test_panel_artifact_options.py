@@ -149,9 +149,82 @@ class TestGates:
         write(files, "MEGA_SEAL: true\n")
         assert analysis.artifact_encrypt_enabled() is True
 
+    def test_dashboard_remote_root_uses_the_effective_analysis_setting(self, files):
+        write(files, 'MEGA_REMOTE_ROOT: "/lab/evidence"\n')
+        assert analysis.artifact_remote_root() == "/lab/evidence"
+
+    def test_dashboard_remote_root_defaults_to_mega_root(self, files):
+        write(files, None)
+        assert analysis.artifact_remote_root() == "/"
+
+    def test_artifacts_dashboard_settings_are_read_without_catalog_resolution(self, files, monkeypatch):
+        write(files, """\
+MEGA_UPLOAD: true
+MEGA_SEAL: true
+MEGA_REMOTE_ROOT: "evidence"
+""")
+        monkeypatch.setattr(
+            analysis, "_password_payload", lambda: {"present": True}
+        )
+
+        assert analysis.artifact_settings() == {
+            "mega_upload": True,
+            "mega_encrypt": True,
+            "artifacts": {"remote_root": "evidence"},
+            "bundle_password": {"present": True},
+        }
+
     def test_the_timeout_gate_takes_mega_timeout_within_bounds(self, files):
         write(files, 'MEGA_TIMEOUT: "300"\n')
         assert analysis.artifact_upload_timeout() == 300
+
+
+class TestArtifactsEndpoint:
+
+    def test_listing_defaults_to_the_effective_analysis_root(
+        self, files, monkeypatch
+    ):
+        write(files, 'MEGA_REMOTE_ROOT: "evidence"\n')
+        from panel.app import create_app
+        from panel.artifacts import artifacts
+
+        calls = []
+        monkeypatch.setattr(
+            artifacts, "snapshot",
+            lambda remote_root, force=False, **kwargs:
+                calls.append((remote_root, force, kwargs)) or {},
+        )
+        client = create_app().test_client()
+
+        response = client.get("/api/artifacts")
+
+        assert response.status_code == 200
+        assert calls == [("evidence", False, {"background_remote": True})]
+
+    def test_lightweight_settings_route_does_not_use_analysis_snapshot(
+        self, files, monkeypatch
+    ):
+        write(files, 'MEGA_REMOTE_ROOT: "evidence"\nMEGA_UPLOAD: true\n')
+        monkeypatch.setattr(
+            analysis, "artifact_settings",
+            lambda: {
+                "mega_upload": True,
+                "mega_encrypt": False,
+                "artifacts": {"remote_root": "evidence"},
+                "bundle_password": {"present": False},
+            },
+        )
+        monkeypatch.setattr(
+            analysis, "snapshot",
+            lambda: pytest.fail("the full pipeline snapshot is expensive"),
+        )
+        from panel.app import create_app
+        client = create_app().test_client()
+
+        response = client.get("/api/artifacts/settings")
+
+        assert response.status_code == 200
+        assert response.get_json()["artifacts"]["remote_root"] == "evidence"
 
 
 class TestWrites:

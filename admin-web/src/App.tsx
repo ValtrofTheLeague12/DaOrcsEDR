@@ -31,6 +31,8 @@ const System = lazy(() => import('./panels/System'))
 const Network = lazy(() => import('./panels/Network'))
 const Logs = lazy(() => import('./panels/Logs'))
 const Artifacts = lazy(() => import('./panels/Artifacts'))
+const ThreatIntelligence = lazy(() => import('./panels/ThreatIntelligence'))
+const ThreatIntelligenceApis = lazy(() => import('./panels/ThreatIntelligenceApis'))
 const Containers = lazy(() => import('./panels/Containers'))
 const Build = lazy(() => import('./panels/Build'))
 const Utils = lazy(() => import('./panels/Utils'))
@@ -48,7 +50,8 @@ export type PanelId =
   | 'overview' | 'docs' | 'stats' | 'system' | 'network' | 'logs' | 'artifacts'
   | 'pipelines' | 'analysis' | 'build' | 'utils' | 'memory-profiling'
   | 'containers'
-  | 'dynamic-analysis' | 'vm' | 'qiling-vm' | 'clamd' | 'qiling'
+  | 'dynamic-analysis' | 'threat-intel' | 'threat-intel-apis'
+  | 'vm' | 'qiling-vm' | 'clamd' | 'qiling'
 
 interface NavEntry {
   id: PanelId
@@ -59,7 +62,8 @@ interface NavEntry {
 const BUILT: PanelId[] = [
   'stats', 'overview', 'docs', 'system', 'network', 'artifacts', 'pipelines',
   'analysis', 'dynamic-analysis', 'build', 'utils', 'containers', 'logs', 'vm',
-  'qiling-vm', 'qiling', 'clamd', 'memory-profiling',
+  'qiling-vm', 'qiling', 'clamd', 'memory-profiling', 'threat-intel',
+  'threat-intel-apis',
 ]
 
 // The virtual-machine section is generated from lib/vms.ts, so bringing a new
@@ -110,6 +114,13 @@ const NAV: { group: string; items: NavEntry[] }[] = [
       { id: 'pipelines', label: 'Pipelines Configuration', icon: 'analyze' },
       { id: 'artifacts', label: 'Artifacts', icon: 'artifacts' },
       { id: 'build', label: 'Build', icon: 'build' },
+    ],
+  },
+  {
+    group: 'Threat Intelligence',
+    items: [
+      { id: 'threat-intel', label: 'Threat Intelligence Server', icon: 'server' },
+      { id: 'threat-intel-apis', label: 'API Configuration', icon: 'plug' },
     ],
   },
   {
@@ -277,6 +288,8 @@ export default function App() {
             {panel === 'network' && <Network />}
             {panel === 'logs' && <Logs />}
             {panel === 'artifacts' && <Artifacts />}
+            {panel === 'threat-intel' && <ThreatIntelligence />}
+            {panel === 'threat-intel-apis' && <ThreatIntelligenceApis />}
             {panel === 'analysis' && <AnalysisConfig />}
             {panel === 'memory-profiling' && <MemoryProfiling />}
             {panel === 'dynamic-analysis' && <DynamicAnalysisConfig />}
@@ -286,7 +299,10 @@ export default function App() {
             {panel === 'containers' && <Containers />}
             {panel === 'vm' && <VM />}
             {(panel === 'qiling-vm' || panel === 'qiling') && (
-              <QilingVM onOpenProfiler={() => setPanel('memory-profiling')} />
+              <QilingVM
+                onOpenProfiler={() => setPanel('memory-profiling')}
+                onNavigate={(next) => setPanel(next as PanelId)}
+              />
             )}
             {panel === 'clamd' && <Clamd onNavigate={setPanel} />}
           </Suspense>

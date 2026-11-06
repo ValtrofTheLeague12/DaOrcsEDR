@@ -65,6 +65,7 @@ import threading
 import time
 from pathlib import Path
 
+from ..analysis import cti_settings
 from ..build import pe_tools
 from ..core import config
 from ..samples import samples
@@ -463,6 +464,7 @@ def _append(job_id: str, line: str) -> None:
 # call it directly, synchronously, with _POPEN replaced.
 def _run(job_id: str, argv: list[str]) -> None:
     global _running
+    cti_config: Path | None = None
     try:
         env = dict(os.environ)
         # The single most important line in this file. The analysis settings
@@ -470,6 +472,12 @@ def _run(job_id: str, argv: list[str]) -> None:
         # would push an evidence bundle to the operator's cloud account.
         # Forced, not inherited, exactly as the Tests section does.
         env["IA_ARTIFACT_UPLOAD"] = "0"
+        # Provider keys are stored outside the repository. Preserve an existing
+        # CTI_CONFIG (including endpoint overrides) by passing the merged,
+        # panel-managed config only when keys have been saved in the panel.
+        cti_config = cti_settings.analyzer_config_path()
+        if cti_config is not None:
+            env["CTI_CONFIG"] = str(cti_config)
         # stdout is a pipe here, so the analyzer's startup logo is suppressed
         # by default. The panel's log IS the operator's view of the run, though,
         # so opt back in - and let a crash add crash.logo to the same log the
@@ -524,6 +532,10 @@ def _run(job_id: str, argv: list[str]) -> None:
                 job["error"] = f"{type(exc).__name__}: {exc}"
                 job["finished_at"] = round(_now(), 1)
     finally:
+        try:
+            cti_settings.cleanup_analyzer_config(cti_config)
+        except OSError as exc:
+            _append(job_id, f"--- CTI config cleanup failed: {exc}")
         with _jobs_lock:
             _procs.pop(job_id, None)
             if _running == job_id:
