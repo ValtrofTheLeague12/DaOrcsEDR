@@ -65,8 +65,9 @@ export default function ThreatIntelligenceApis() {
           <h1 className="page-title mt-1">Threat Intelligence API Configuration</h1>
           <p className="mt-2 max-w-3xl text-xs leading-relaxed text-default-500">
             Configure the intelligence providers used by static analysis. Keys
-            are stored outside the repository and used for runs started from
-            this panel. Saved values are never sent back to the browser.
+            saved here are stored outside the repository; runs also use keys
+            declared in the repository <code>.env</code>. Saved values are
+            never sent back to the browser.
           </p>
         </div>
         {loading && <Chip size="sm" variant="soft">Loading status…</Chip>}
@@ -97,9 +98,11 @@ export default function ThreatIntelligenceApis() {
                   <Chip
                     size="sm"
                     variant="soft"
-                    color={provider.configured ? 'success' : 'warning'}
+                    color={provider.configured || provider.environment ? 'success' : 'warning'}
                   >
-                    {provider.configured ? 'Saved' : 'Not saved'}
+                    {provider.configured
+                      ? 'Saved'
+                      : provider.environment ? 'From .env' : 'Not saved'}
                   </Chip>
                 </Card.Header>
                 <Card.Content className="threat-api-card-content">
@@ -120,7 +123,11 @@ export default function ThreatIntelligenceApis() {
                       ...current,
                       [provider.id]: event.target.value,
                     }))}
-                    placeholder={provider.configured ? 'Saved · enter a new key to replace' : 'Paste API key'}
+                    placeholder={provider.configured
+                      ? 'Saved · enter a new key to replace'
+                      : provider.environment
+                        ? 'From .env · enter a key here to override'
+                        : 'Paste API key'}
                   />
                   <div className="threat-api-actions">
                     <button

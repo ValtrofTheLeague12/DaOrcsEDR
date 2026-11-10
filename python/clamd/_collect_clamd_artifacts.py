@@ -33,7 +33,10 @@ except ImportError:
 
 def load_vm_info(path: pathlib.Path) -> dict:
     if not path.is_file():
-        raise RuntimeError(f"vm_info.json not found: {path}")
+        example = path.with_name("vm_info.example.json")
+        hint = (f" - copy {example.name} to {path.name} and fill it in"
+                if example.is_file() else "")
+        raise RuntimeError(f"vm_info.json not found: {path}{hint}")
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
     if not isinstance(data.get("paths"), dict):

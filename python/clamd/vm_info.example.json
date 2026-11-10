@@ -1,0 +1,24 @@
+{
+    "_comment": "Copy to vm_info.json and fill in the values. vm_info.json is gitignored because it carries VM_PASSWORD.",
+    "VM_NAME": "TestingVM",
+    "VM_IP": "",
+    "VM_HOST": "",
+    "VM_PASSWORD": "",
+    "VM_PORT": 22,
+    "clamd": {
+        "mode": "unix",
+        "socket": "/var/run/clamav/clamd.ctl",
+        "host": "127.0.0.1",
+        "port": 3310,
+        "timeout": 60,
+        "conf": "/etc/clamav/clamd.conf"
+    },
+    "paths": {
+        "base": "/home/qilin/.config/clamd",
+        "samples": "/home/qilin/.config/clamd/samples",
+        "results": "/home/qilin/.config/clamd/results",
+        "script": "/home/qilin/.config/clamd/clamd-python.py",
+        "test_script": "/home/qilin/.config/clamd/test_clamd_connection.sh"
+    },
+    "python": "python3"
+}

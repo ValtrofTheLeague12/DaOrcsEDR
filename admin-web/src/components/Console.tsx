@@ -3,6 +3,7 @@ import { Card } from '@heroui/react/card'
 import { Chip } from '@heroui/react/chip'
 import CopyButton from './CopyButton'
 import Icon, { type IconName } from './Icon'
+import { ansiPieces, hasAnsi, TONE_CLASS } from '../lib/logColor'
 
 // ---------------------------------------------------------------------------
 // Console - one read-only terminal panel.
@@ -40,6 +41,7 @@ export default function Console({
   actions,
   lines,
   lineClass,
+  renderLine,
   size = 'default',
   live = false,
   numbered = false,
@@ -60,6 +62,12 @@ export default function Console({
   actions?: ReactNode
   lines: string[]
   lineClass?: (line: string, index: number) => string
+  /**
+   * Optional per-line renderer for structured output (a trace whose timestamp,
+   * event class and message each deserve their own colour). When omitted the
+   * console keeps its plain/ANSI renderer.
+   */
+  renderLine?: (line: string, index: number) => ReactNode
   size?: ConsoleSize
   /** A running job: follow the tail and offer the follow toggle. */
   live?: boolean
@@ -94,10 +102,14 @@ export default function Console({
   }
 
   return (
-    <Card className={`w-full ${className}`}>
+    <Card className={`console-card w-full ${className}`}>
       <Card.Header className="flex flex-row flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <Icon name={icon} size={13} className="shrink-0 text-default-400" />
+          {icon === 'terminal' ? (
+            <span className="console-glyph" aria-hidden="true">&gt;_</span>
+          ) : (
+            <Icon name={icon} size={13} className="shrink-0 text-default-400" />
+          )}
           <div className="min-w-0">
             <Card.Title className="truncate text-sm font-semibold">{title}</Card.Title>
             {subtitle && (
@@ -152,7 +164,21 @@ export default function Console({
             lines.map((line, i) => (
               <div className={`build-log-line ${lineClass?.(line, i) ?? ''}`} key={i}>
                 {numbered && <span className="build-log-num">{i + 1}</span>}
-                <span className="build-log-text">{line || ' '}</span>
+                <span className="build-log-text">
+                  {renderLine
+                    ? renderLine(line, i)
+                    : line
+                      ? hasAnsi(line)
+                        ? ansiPieces(line).map((piece, index) => (
+                          <span key={index} className={TONE_CLASS[piece.tone]}>
+                            {piece.text}
+                          </span>
+                        ))
+                        // No escape sequences: leave the text bare so `lineClass`
+                        // can colour the row (tags, verdicts, transport lines).
+                        : line
+                      : ' '}
+                </span>
               </div>
             ))
           )}

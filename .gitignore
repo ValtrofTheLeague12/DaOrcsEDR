@@ -1,6 +1,13 @@
 # Created by venv; see https://docs.python.org/3/library/venv.html
 *
 !server.py
+!agent/
+agent/*
+!agent/endpoint_agent.py
+!agent/agent.example.json
+!agent/requirements.txt
+!agent/build.ps1
+!agent/DaOrcsAgent.iss
 !admin-terminal/
 admin-terminal/*
 !admin-terminal/admin.py
@@ -15,7 +22,10 @@ admin-terminal/*
 qiling_dlls/*
 !qiling_dlls/dll_collector.bat
 !qiling_dlls/known_hosts.ssh
-!qiling_dlls/vm_info.json
+# vm_info.json carries the VM's SSH password, so it stays local. The example is
+# the tracked, value-free template; copy it and fill in the values.
+!qiling_dlls/vm_info.example.json
+qiling_dlls/vm_info.json
 !qiling_dlls/qilin-service.install.sh
 !qiling_dlls/qilin-check-service.sh
 !qiling_dlls/templates/
@@ -37,7 +47,10 @@ python/clamd/*
 !python/clamd/scan_remote.py
 !python/clamd/_collect_clamd_artifacts.py
 !python/clamd/_configure_clamd.pyc
-!python/clamd/vm_info.json
+# Same rule as qiling_dlls/vm_info.json: the real file holds VM_PASSWORD and is
+# local only; the example is the template.
+!python/clamd/vm_info.example.json
+python/clamd/vm_info.json
 !python/clamd/test_clamd_connection.sh
 !python/clamd/requirements.txt
 # Qiling emulation tooling. qiling_dlls/ keeps only what gets staged onto the
@@ -82,6 +95,17 @@ config/*
 # look like the feature is broken. The dumps themselves stay in ressources/,
 # ignored.
 !config/sample_resources.json
+# Public MEGA link expiry. Tracked for the same reason as hardening.json: the
+# Analysis Configuration page writes it and every link the panel creates reads
+# it, so a re-clone that silently reset it would publish permanent links under
+# an operator who had asked for expiring ones. The shipped value is "" -
+# permanent links - so a checkout behaves as before until someone sets it.
+!config/share.json
+# Memory profiling target (analyzer or sample) and the sample it remembers.
+# Panel-owned, like share.json: the analyzer's config loader rejects unknown
+# keys in config/analysis.yaml, and this option must never be able to stop a
+# run from starting. Tracked so a re-clone keeps the operator's choice.
+!config/memory_profiling.json
 !config/systemd/
 config/systemd/*
 !config/systemd/qilin-service/
@@ -101,6 +125,7 @@ mega/*
 !mega/megacmd.py
 !mega/list.py
 !mega/recover.py
+!mega/protect.py
 !mega/README.md
 mega/credentials.enc
 mega/credential.key
@@ -135,11 +160,9 @@ mega/*.bak
 # gets committed and every install starts sharing one signing key.
 python/panel/.session-key
 python/panel/**/__pycache__/
-# Local operator scratch in the utils package. config/vm_info.json holds VM
-# credentials; vm_utility.py is an unfinished local tool that the panel never
-# imports. Neither belongs in a checkout.
+# VM connection settings contain operator credentials and stay local. The VM
+# utility client itself is tracked with its matching server.
 python/panel/utils/config/
-python/panel/utils/vm_utility.py
 
 # Admin orchestration panel - React front end. Source and the lockfile are
 # tracked so the build is reproducible; node_modules and dist are not. dist is
@@ -177,8 +200,8 @@ admin-web/dist
 !logos/
 !logos/*.logo
 
-# tools/ holds vendored checkouts (cminer, bin, compressor_tool,
-# sample_archive) that stay ignored on purpose. Only the scripts added to it are
+# tools/ holds vendored checkouts (bin, compressor_tool, sample_archive) that
+# stay ignored on purpose. Only the scripts added to it are
 # listed, rather than !tools/*.py, so titlecase_summaries.py stays excluded as
 # it was.
 !tools/
@@ -211,6 +234,19 @@ admin-web/dist
 !mega/seal.py
 !mega/test_seal.py
 
+# stix-server/ renders its Flask server from Jinja templates. Whitelist the
+# template directory outright: a template that exists locally but not in the
+# repository makes every fresh checkout generate a server with pieces missing
+# (the artifact detail page, for example) while everything still looks fine.
+!stix-server/
+stix-server/*
+!stix-server/templates/
+stix-server/templates/*
+!stix-server/templates/*.j2
+!stix-server/cti_auth.py
+!stix-server/manage_users.py
+!stix-server/host_server.py
+
 # Unit tests. The whole tree, because a whitelist that has to be edited per new
 # test file is the same trap as above, and a test that is invisible is a test
 # that does not exist as far as the next person is concerned.
@@ -228,6 +264,11 @@ unit/**/*.pyc
 *.pyc
 python/clamd/_configure_clamd.pyc
 *.bak
+# Vim leaves these beside the file it was editing; they are local state, not
+# source, and they only appear in `git status` as untracked noise.
+*~
+*.un~
+*.swp
 # WinHTTrack mirror state. Its own readme warns these may carry credentials
 # from the mirrored sites, which is reason enough not to version them. The
 # cache itself is still tracked - only the regenerable old/ and the logs go.
@@ -235,3 +276,17 @@ python/clamd/_configure_clamd.pyc
 **/hts-cache/doit.log
 **/hts-cache/old.zip
 **/hts-cache/old.lst
+
+# ---------------------------------------------------------------------------
+# Local secrets.
+#
+# `.env` is already caught by the leading `*`, but the deny is written out for
+# the same reason mega/credentials.enc is: it must survive a future rewrite of
+# this file, and a repository where the only thing keeping the operator's
+# provider keys out of git is a wildcard nobody noticed is one edit from an
+# accident. `.env.example` is the one .env* path that belongs in the
+# repository - it is the documented template and carries no values.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example

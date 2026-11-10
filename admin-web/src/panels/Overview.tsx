@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert } from '@heroui/react/alert'
 import { Button } from '@heroui/react/button'
 import { usePoll, api } from '../api'
-import { ServiceCard } from '../components/ServiceCard'
+import { ServiceCard, type ServiceNotice } from '../components/ServiceCard'
 import Loading from '../components/Loading'
 import Icon from '../components/Icon'
 import type { Probe } from '../types'
@@ -56,13 +56,49 @@ function latencyOf(p: Probe): number {
   return p.up ? p.ms : Number.POSITIVE_INFINITY
 }
 
-export default function Overview() {
+export default function Overview({ onNavigate }: {
+  /**
+   * A container-backed card cannot be started from here, so it points at the
+   * page that can. Typed to the one destination rather than the whole panel
+   * union: this page has no business sending anyone to Build or Logs.
+   */
+  onNavigate?: (panel: 'containers') => void
+}) {
   const { data, error, loading, refresh } = usePoll(api.overview, INTERVAL)
   const [filter, setFilter] = useState<Filter>('all')
   const [sort, setSort] = useState<Sort>('role')
   const [q, setQ] = useState('')
   const [page, setPage] = useState(0)
   const searchRef = useRef<HTMLInputElement>(null)
+
+  // Start/Stop is synchronous on the server: the request returns only after
+  // the endpoint the card shows has answered, or the attempt failed with the
+  // reason. So the button stays in a labelled busy state for the whole boot
+  // instead of flicking back to "Start" while the process is still coming up.
+  const [acting, setActing] = useState<Record<string, 'start' | 'stop' | undefined>>({})
+  const [notice, setNotice] = useState<Record<string, ServiceNotice | undefined>>({})
+
+  const control = async (key: string, action: 'start' | 'stop') => {
+    setActing((a) => ({ ...a, [key]: action }))
+    setNotice((n) => ({ ...n, [key]: undefined }))
+    try {
+      const result = await api.serviceAction(key, action)
+      setNotice((n) => ({ ...n, [key]: { tone: 'success', text: result.detail } }))
+    } catch (e) {
+      setNotice((n) => ({
+        ...n,
+        [key]: {
+          tone: 'warning',
+          text: e instanceof Error ? e.message : String(e),
+        },
+      }))
+    } finally {
+      setActing((a) => ({ ...a, [key]: undefined }))
+      // The server invalidates its own probe cache; this drops the stale
+      // payload the page is holding so the card redraws from the new state.
+      refresh()
+    }
+  }
 
   // "/" focuses search, the way every other tool on earth does it. Ignored while
   // the user is already typing somewhere, and cleared by Escape.
@@ -356,7 +392,14 @@ export default function Overview() {
                     </div>
                     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                       {g.items.map((s) => (
-                        <ServiceCard key={s.key} probe={s} />
+                        <ServiceCard
+                          key={s.key}
+                          probe={s}
+                          onAction={s.control ? (a) => void control(s.key, a) : undefined}
+                          busy={acting[s.key]}
+                          message={notice[s.key]}
+                          onContainers={onNavigate ? () => onNavigate('containers') : undefined}
+                        />
                       ))}
                     </div>
                   </div>

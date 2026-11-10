@@ -80,6 +80,66 @@ def test_invalid_key_updates_are_rejected_without_writing(client, keys):
     assert not cti_settings.settings_path().exists()
 
 
+def test_status_reports_dotenv_keys_without_returning_them(
+        client, tmp_path, monkeypatch):
+    env_file = tmp_path / "repo" / ".env"
+    env_file.write_text("VT_API_KEY=dotenv-secret-never-return\n", encoding="utf-8")
+    monkeypatch.setattr(config, "ENV_FILE", env_file)
+    monkeypatch.delenv("VT_API_KEY", raising=False)
+    monkeypatch.delenv("VIRUSTOTAL_API_KEY", raising=False)
+
+    response = client.get("/api/threat-intelligence/apis")
+
+    assert response.status_code == 200
+    provider = next(
+        row for row in response.get_json()["providers"] if row["id"] == "virustotal")
+    assert provider["configured"] is False
+    assert provider["environment"] is True
+    assert "dotenv-secret-never-return" not in response.get_data(as_text=True)
+
+
+def test_export_environment_copies_dotenv_keys_and_keeps_process_env(
+        tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "VT_API_KEY=from-dotenv\nOTX_API_KEY=\n", encoding="utf-8")
+    monkeypatch.setattr(config, "ENV_FILE", env_file)
+    for name in cti_settings._ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ABUSEIPDB_API_KEY", "from-process")
+
+    env: dict[str, str] = {}
+    cti_settings.export_environment(env)
+
+    assert env["VT_API_KEY"] == "from-dotenv"
+    assert env["ABUSEIPDB_API_KEY"] == "from-process"
+    assert "OTX_API_KEY" not in env
+
+
+def test_dotenv_cti_config_is_used_as_the_merge_base(
+        client, tmp_path, monkeypatch):
+    base = tmp_path / "dotenv-cti.json"
+    base.write_text(json.dumps({
+        "keys": {"otx": "external-otx"},
+        "endpoints": {"otx": "https://example.test"},
+    }), encoding="utf-8")
+    env_file = tmp_path / "repo" / ".env"
+    env_file.write_text(f"CTI_CONFIG={base}\n", encoding="utf-8")
+    monkeypatch.setattr(config, "ENV_FILE", env_file)
+    monkeypatch.delenv("CTI_CONFIG", raising=False)
+    client.put(
+        "/api/threat-intelligence/apis",
+        json={"keys": {"virustotal": "panel-vt"}},
+    )
+
+    effective = cti_settings.analyzer_config_path()
+
+    assert effective is not None
+    loaded = json.loads(effective.read_text(encoding="utf-8"))
+    assert loaded["keys"] == {"otx": "external-otx", "virustotal": "panel-vt"}
+    assert loaded["endpoints"] == {"otx": "https://example.test"}
+
+
 def test_effective_config_preserves_existing_options_and_overlays_saved_keys(
     client, tmp_path, monkeypatch
 ):

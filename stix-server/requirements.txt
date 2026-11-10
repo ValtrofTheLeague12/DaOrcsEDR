@@ -1,6 +1,9 @@
 bcrypt
 colorama
-supabase
+cryptography
 faker
-requests
 Flask
+jinja2
+loguru
+numpy
+requests

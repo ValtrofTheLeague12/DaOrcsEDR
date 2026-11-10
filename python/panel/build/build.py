@@ -731,7 +731,10 @@ def _job_view(job: dict, full: bool = True) -> dict:
             # a test run and show per-test verdicts. Copied like `log` is:
             # explicitly listed, so adding a field to a job shows up in the API
             # rather than being silently dropped here.
-            "kind", "summary", "selected", "results")
+            "kind", "summary", "selected", "results",
+            # ClamAV and Qiling submissions record which transport ran. Copied
+            # so the page names the path that actually moved the sample.
+            "mode")
     out = {k: job.get(k) for k in keys}
     out["results"] = list(job.get("results") or [])
     # `log` has to be copied in explicitly, not just left off: it is the one

@@ -45,8 +45,8 @@ function MachineCard({ vm }: { vm: VmTarget }) {
             <p className="truncate text-[11px] text-default-400">{vm.purpose}</p>
           </div>
         </div>
-        <Chip size="sm" variant="soft" color={vm.slice ? 'warning' : 'default'}>
-          {vm.slice ?? KIND_LABEL[vm.kind]}
+        <Chip size="sm" variant="soft" color={vm.host ? 'default' : 'warning'}>
+          {vm.host ? 'Endpoint set' : 'Setup required'}
         </Chip>
       </Card.Header>
 
@@ -84,7 +84,9 @@ function MachineCard({ vm }: { vm: VmTarget }) {
 }
 
 export default function VM() {
-  const machines = VM_MACHINES
+  // The live VirtualBox inventory already lists the Qiling VM; keep it out of
+  // the static endpoint cards below so the same machine is not shown twice.
+  const machines = VM_MACHINES.filter((machine) => machine.id !== 'qiling-vm')
   const guests = VM_TARGETS.filter((t) => t.hostedOn)
 
   return (
@@ -131,8 +133,8 @@ export default function VM() {
                   <p className="truncate text-[11px] text-default-400">{g.purpose}</p>
                 </div>
               </div>
-              <Chip size="sm" variant="soft" color="warning">
-                {g.slice}
+              <Chip size="sm" variant="soft" color={g.host ? 'default' : 'warning'}>
+                {g.host ? 'Endpoint set' : 'Setup required'}
               </Chip>
             </Card.Header>
             <Card.Content>

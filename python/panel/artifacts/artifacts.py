@@ -425,6 +425,31 @@ def _load_mega():
         return None, f"{type(exc).__name__}: {exc}"
 
 
+def _load_share():
+    """Load mega/share.py by path, for reading and revoking public exports.
+
+    `share.py` already owns everything subtle about MEGA's export command: the
+    listing format, the exit codes that mean "not exported" rather than
+    "failed", and the re-read that turns a revocation into a checked fact. The
+    panel reuses it rather than parsing that output a second time.
+    """
+    mega_dir = config.REPO / "mega"
+    if not mega_dir.is_dir():
+        return None, "mega/ not found"
+    if str(mega_dir) not in sys.path:
+        sys.path.insert(0, str(mega_dir))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "mega_share", mega_dir / "share.py")
+        if spec is None or spec.loader is None:
+            return None, "mega/share.py could not be loaded"
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return (module, module.megacmd), None
+    except Exception as exc:  # noqa: BLE001 - a broken client is a state, not a crash
+        return None, f"{type(exc).__name__}: {exc}"
+
+
 def remote(remote_root: str = "/", force: bool = False) -> dict:
     """Bundles on MEGA, via mega/list.py's own listing.
 
@@ -1005,6 +1030,111 @@ def _valid_remote_root(root: str) -> str | None:
     return root
 
 
+def _export_name(path: str, root: str, share) -> str | None:
+    """The artifact name for one export path, if it is a bundle under `root`.
+
+    Only direct children count: ``remote()`` lists the configured folder's
+    immediate ``*_artifact`` folders, so an export nested deeper is not one of
+    the bundles this page is describing. Both sides are normalised because the
+    configured root may be relative ("evidence") while MEGA reports absolute
+    paths.
+    """
+    normalised = share.normalise(path)
+    prefix = share.normalise(root)
+    if normalised is None or prefix is None:
+        return None
+    if prefix != "/" and not normalised.startswith(prefix + "/"):
+        return None
+    relative = (normalised[len(prefix):] if prefix != "/"
+                else normalised).lstrip("/")
+    if "/" in relative or not relative.endswith(BUNDLE_SUFFIX):
+        return None
+    stem = relative[: -len(BUNDLE_SUFFIX)]
+    return stem if valid_name(stem) else None
+
+
+def links_for(remote_root: str = "/") -> dict:
+    """Existing public links for the bundles under one MEGA root.
+
+    Read-only, and deliberately separate from ``remote()``: the page polls the
+    listing on a timer, and publishing evidence because a tab stayed open is a
+    different act from an operator asking for one of these links. Listing the
+    exports costs exactly one MEGAcmd call, so the Remote tab can refresh it on
+    open and after a create or revoke without spawning a process per bundle.
+    """
+    root = _valid_remote_root(remote_root)
+    if root is None:
+        return {"ok": False, "error": "invalid MEGA remote root"}
+
+    loaded, why = _load_share()
+    if loaded is None:
+        return {"ok": False, "error": why}
+    share, megacmd = loaded
+    if not megacmd.available():
+        return {"ok": False,
+                "error": f"MEGAcmd missing - {megacmd.missing_message()}"}
+    account = megacmd.whoami(timeout=_REMOTE_SESSION_TIMEOUT)
+    if not account:
+        return {"ok": False,
+                "error": "no MEGAcmd session - run: python mega/login.py --mega"}
+
+    try:
+        exports = share.list_exports(_REMOTE_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 - the page shows the reason verbatim
+        return {"ok": False, "error": str(exc)}
+
+    links: dict[str, str] = {}
+    for record in exports:
+        name = _export_name(str(record.get("path") or ""), root, share)
+        link = record.get("link")
+        # Duplicate same-named folders are real on MEGA. The export listing
+        # identifies nodes by path, which is also what MEGAcmd resolves, so the
+        # first link wins here - the page warns about the duplicate instead of
+        # pretending one name has two different public URLs.
+        if name and isinstance(link, str) and link:
+            links.setdefault(name, link)
+    return {"ok": True, "links": links, "account": account,
+            "remote_root": root}
+
+
+def revoke_link(name: str, remote_root: str = "/") -> dict:
+    """Revoke a bundle's public MEGA link without touching the bundle itself.
+
+    Deleting the export unpublishes the folder for everyone; the evidence
+    remains on the account. ``deleted: false`` means there was no export to
+    remove - already revoked, or never created - which is an answer, not a
+    failure: the end state the operator asked for is true either way.
+    """
+    if not valid_name(name):
+        return {"ok": False, "error": "invalid artifact name"}
+    root = _valid_remote_root(remote_root)
+    if root is None:
+        return {"ok": False, "error": "invalid MEGA remote root"}
+
+    loaded, why = _load_share()
+    if loaded is None:
+        return {"ok": False, "error": why}
+    share, megacmd = loaded
+    if not megacmd.available():
+        return {"ok": False,
+                "error": f"MEGAcmd missing - {megacmd.missing_message()}"}
+    account = megacmd.whoami(timeout=_REMOTE_SESSION_TIMEOUT)
+    if not account:
+        return {"ok": False,
+                "error": "no MEGAcmd session - run: python mega/login.py --mega"}
+
+    target = f"{root.rstrip('/')}/{name}{BUNDLE_SUFFIX}".replace("//", "/")
+    try:
+        deleted = share.revoke(target, _REMOTE_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 - the page shows the reason verbatim
+        return {"ok": False, "error": str(exc), "remote_path": target,
+                "account": account}
+
+    invalidate_remote_cache()
+    return {"ok": True, "deleted": bool(deleted), "not_exported": not deleted,
+            "name": name, "remote_path": target, "account": account}
+
+
 def link_for(name: str, remote_root: str = "/") -> dict:
     """The bundle's public MEGA link, creating one when it has none.
 
@@ -1089,8 +1219,11 @@ def start_export(name: str, remote_root: str = "/", timeout: int | None = None) 
     # two minutes into a streaming upload job, after the bundle has been built,
     # is not the same experience. upload.py still refuses to fall back to
     # plaintext, so this is about telling people early rather than about safety.
+    # A per-bundle export needs no operator password: the uploader generates
+    # its own, so there is nothing to pre-flight.
     encrypt = analysis.artifact_encrypt_enabled()
-    if encrypt:
+    per_bundle = analysis.artifact_per_bundle_password_enabled()
+    if encrypt and not per_bundle:
         try:
             _preflight_bundle_password()
         except Exception as exc:                       # noqa: BLE001
@@ -1109,7 +1242,7 @@ def start_export(name: str, remote_root: str = "/", timeout: int | None = None) 
         _uploader_jobs[job_id] = {
             "job_id": job_id, "name": name, "remote_root": root,
             "state": "running", "lines": [], "dropped": 0,
-            "encrypt": encrypt,
+            "encrypt": encrypt, "per_bundle_password": per_bundle,
             "started_at": now, "finished_at": None, "exit_code": None,
         }
 
@@ -1119,7 +1252,8 @@ def start_export(name: str, remote_root: str = "/", timeout: int | None = None) 
     # password itself: the value lives in the operator password file and no
     # payload here carries it.
     return True, {"job_id": job_id, "reused": False, "encrypted": encrypt,
-                  "password_protected": encrypt}
+                  "password_protected": encrypt,
+                  "per_bundle_password": per_bundle}
 
 
 def _preflight_bundle_password() -> None:
@@ -1161,7 +1295,12 @@ def _run_export(job: dict, remote_root: str, timeout: int) -> None:
                # The password file is the uploader's default (the operator one
                # the Analysis page manages): the C++/panel side passes paths,
                # never the password itself.
-               "--encrypt" if job.get("encrypt") else "--no-encrypt"]
+               "--encrypt" if job.get("encrypt") else "--no-encrypt",
+               # Same explicit-both-ways rule for the per-bundle switch: the
+               # uploader generates and stores each bundle's own password,
+               # and this command never carries a password value either way.
+               "--per-bundle-password" if job.get("per_bundle_password")
+               else "--no-per-bundle-password"]
     try:
         proc = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

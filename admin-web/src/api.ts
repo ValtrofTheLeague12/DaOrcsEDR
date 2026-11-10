@@ -10,6 +10,7 @@ import type {
   AnalyzerPackedStop,
   AgentSaveResult,
   ArtifactExportJob,
+  ArtifactLinks,
   ArtifactSettings,
   ArtifactsSnapshot,
   EndpointApplyResult,
@@ -44,6 +45,9 @@ import type {
   ClamdSubmitJob,
   ClamdSubmitStart,
   CTISettings,
+  CTIListenerResult,
+  CTIListenerStatus,
+  CTIServerSettings,
   ComposeFile,
   ContainerList,
   DocsCatalog,
@@ -93,6 +97,27 @@ export interface AuthState {
   required: boolean
   authorised: boolean
   loopback: boolean
+}
+
+/** Result of checking one user's password and IP decision against Supabase. */
+export interface UserCredentialCheck {
+  id_user: number
+  username: string
+  /** True when the candidate password matches the stored bcrypt digest. */
+  password_ok: boolean
+  /** False when the stored value is not a complete bcrypt digest. */
+  hash_valid: boolean
+  /** Whether the row carries a per-user pepper. */
+  pepper_present: boolean
+  decision: boolean | null
+  stored_ip: string | null
+  /** Address actually tested - the supplied one, else the stored one. */
+  test_ip: string | null
+  ip_ok: boolean
+  /** True only when the password and the access gate both pass. */
+  allowed: boolean
+  detail: string
+  reasons: string[]
 }
 
 export const auth = {
@@ -312,6 +337,95 @@ containerBuild: (project: string) =>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keys }),
     }),
+  ctiServerSettings: () =>
+    json<CTIServerSettings>('/api/threat-intelligence/server'),
+  saveCtiServerSettings: (settings: {
+    ip?: string
+    port?: number
+    banned?: { name: string | null; hash: string | null }[]
+  }) =>
+    json<CTIServerSettings>('/api/threat-intelligence/server', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    }),
+  /**
+   * Rebuild the CTI catalog and regenerate `server.py` + `index.html`.
+   *
+   * `pull` asks host_server to download every remote bundle first; the
+   * default reuses whatever is already in `stix-server/exported_evidence`.
+   */
+  generateCtiServer: (pull = false) =>
+    json<{
+      ok: boolean
+      returncode: number
+      output: string[]
+      catalog: string
+      server: string
+      index: string
+      error?: string
+    }>('/api/threat-intelligence/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pull }),
+    }),
+  // The generated server is not one of the panel's probed services, so it has
+  // its own listener routes. `start` waits for /health; the result carries the
+  // post-action status so the button and the badge cannot disagree.
+  ctiListenerStatus: () =>
+    json<CTIListenerStatus>('/api/threat-intelligence/listener'),
+  controlCtiListener: (action: 'start' | 'stop') =>
+    json<CTIListenerResult>(`/api/threat-intelligence/listener/${action}`, {
+      method: 'POST',
+    }),
+  banBundles: (bundles: { name: string | null; hash: string | null }[]) =>
+    json<{
+      banned: { name: string | null; hash: string | null }[]
+      skipped: unknown[]
+      error: string | null
+    }>('/api/threat-intelligence/ban-bundles', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bundles }),
+    }),
+  threatIntelligenceUsers: () =>
+    json<{
+      users: {
+        id_user: number
+        username: string
+        password: string
+        unique_peper: string
+        created_at: string
+        ip_address: string | null
+        decision: boolean | null
+        allowed: boolean
+      }[]
+    }>('/api/threat-intelligence/users'),
+  toggleUserDecision: (id_user: number) =>
+    json<{
+      id_user: number
+      decision: boolean | null
+      allowed: boolean
+    }>(`/api/threat-intelligence/users/${id_user}/toggle`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  verifyUserCredentials: (
+    id_user: number,
+    password: string,
+    ip_address?: string,
+  ) =>
+    json<UserCredentialCheck>(
+      `/api/threat-intelligence/users/${id_user}/verify`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password,
+          ...(ip_address?.trim() ? { ip_address: ip_address.trim() } : {}),
+        }),
+      },
+    ),
   artifactArchiveUrl: (name: string) =>
     `/api/artifacts/local/${encodeURIComponent(name)}/archive`,
   recoverArtifact: (name: string, remoteRoot = '/') =>
@@ -354,6 +468,25 @@ containerBuild: (project: string) =>
         body: JSON.stringify({ name, remote_root: remoteRoot }),
       },
     ),
+  /** Read-only: the links that already exist, never creates one. */
+  artifactLinks: (remoteRoot = '/') =>
+    json<ArtifactLinks>(
+      `/api/artifacts/links?remote_root=${encodeURIComponent(remoteRoot)}`,
+    ),
+  /** Revoke a bundle's public link. `deleted: false` means there was none. */
+  deleteArtifactLink: (name: string, remoteRoot = '/') =>
+    json<{
+      ok: boolean
+      deleted: boolean
+      not_exported: boolean
+      name: string
+      remote_path: string
+      account: string
+    }>('/api/artifacts/link/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, remote_root: remoteRoot }),
+    }),
   // Every registered VirtualBox machine with its address and live services.
   // One showvminfo per machine, so this is heavier than the netmap poll. Guest
   // metrics are already attached per machine from the cached SSH/SFTP
@@ -772,7 +905,20 @@ containerBuild: (project: string) =>
 export function usePoll<T>(
   fn: () => Promise<T>,
   intervalMs: number,
-): { data: T | null; error: string | null; loading: boolean; refresh: () => void } {
+): {
+  data: T | null
+  error: string | null
+  loading: boolean
+  refresh: () => void
+  /**
+   * Patch the current value without waiting for the next poll.
+   *
+   * A mutating action already knows its result - a toggle returns the new
+   * decision - so waiting for the next interval to show it would leave the
+   * table disagreeing with the confirmation written to the log.
+   */
+  mutate: (next: T | null | ((prev: T | null) => T | null)) => void
+} {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -821,5 +967,5 @@ export function usePoll<T>(
   }, [intervalMs, tick])
 
   const refresh = useCallback(() => setTick((t) => t + 1), [])
-  return { data, error, loading, refresh }
+  return { data, error, loading, refresh, mutate: setData }
 }

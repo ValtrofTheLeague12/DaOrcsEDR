@@ -10,7 +10,9 @@ import {
   type ParsedLine,
   type Piece,
   type Tone,
+  ansiPieces,
   colorize,
+  hasAnsi,
   parseLine,
 } from './logParse'
 
@@ -143,7 +145,12 @@ export function LogLine({ line, number }: { line: string; number: number }) {
 }
 
 export function renderPieces(line: string): ReactNode {
-  return colorize(line).map((p: Piece, i: number) => (
+  // ANSI first. The analyzer and VMMap write their own SGR colours to the pipe,
+  // and colorize() only understands this repo's plain-text shapes - feeding it
+  // an escape sequence left `[36m` sitting in the output as literal text.
+  const text = line.replace(/\r$/, '')
+  const pieces = hasAnsi(text) ? ansiPieces(text) : colorize(text)
+  return pieces.map((p: Piece, i: number) => (
     <span key={i} className={`${TONE_CLASS[p.tone]} ${p.strong ? 'font-semibold' : ''}`}>
       {p.text}
     </span>

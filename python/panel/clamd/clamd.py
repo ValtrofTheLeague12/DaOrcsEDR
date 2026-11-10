@@ -20,8 +20,11 @@ Three questions, deliberately answered by three different mechanisms:
                                  status poll.
 
                 tcp selected  -> use the operator's SocketValidator to open the
-                                 socket, then ask clamd for PING and VERSION.
-                                 A daemon that does not answer cannot scan.
+                                 socket the transport actually dials. That
+                                 proves the path can run; whether the ClamAV
+                                 service is alive is the explicit ping()
+                                 button, which asks the guest through
+                                 panel/utils/vm_utility.py (ping_service).
 
               Read-only in both cases.
 
@@ -36,11 +39,9 @@ Three questions, deliberately answered by three different mechanisms:
                       brings home - the SSH/SFTP/freshclam logic is not
                       duplicated here.
 
-                tcp   talks to a clamd that is listening on a TCP port
-                      directly, using the operator's SocketValidator in
-                      python/panel/utils/socket_validator.py to open the
-                      socket, then speaks clamd's INSTREAM command on it.
-                      That module is used as-is and is not modified.
+                tcp   opens the VM utility socket with SocketValidator,
+                      uploads the sample in chunks, then asks the VM server
+                      to scan its assembled file over ClamAV's Unix socket.
 
 Both paths write the same result document shape as clamd-python.py, so the
 Results tab cannot tell which transport produced a row.
@@ -61,7 +62,6 @@ import os
 import re
 import secrets
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
@@ -73,6 +73,7 @@ from pathlib import Path
 from ..build import build
 from ..core import config
 from ..samples import dynamic_analysis
+from ..utils.vm_utility import Service, VirtualUtility
 
 CLAMD_DIR = config.REPO / "python" / "clamd"
 RESULTS_DIR = CLAMD_DIR / "results"
@@ -84,12 +85,14 @@ SCAN_REMOTE = CLAMD_DIR / "scan_remote.py"
 CLAMD_SCANNER = CLAMD_DIR / "clamd-python.py"
 SOCKET_VALIDATOR = Path(__file__).resolve().parents[1] / "utils" / "socket_validator.py"
 
-# A clamd configured with StreamMaxLength 25M refuses anything larger, and
-# buffering more than that in a staging file to find out is pointless.
+# Keep the accepted file size within the lab's existing 25 MiB sample limit.
 SUBMIT_MAX_BYTES = 25 * 1024 * 1024
-# SFTP includes a freshclam pass when the VM allows it, so it gets room; TCP is
-# one INSTREAM request and gets the daemon's own timeout plus slack.
+# SFTP includes a freshclam pass when the VM allows it, so it gets room; TCP
+# uploads the sample to the VM utility server and scans the assembled file.
 SUBMIT_TIMEOUT = {"sftp": 900.0, "tcp": 180.0}
+# The service ping is one JSON request/response on the VM utility socket, not a
+# scan: the socket client connects in seconds and the server answers at once.
+PING_TIMEOUT = 10.0
 
 _MAX_FILES = 200  # newest files parsed; the directory is small, this is a guard
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -277,8 +280,13 @@ def _clean_output(text: str) -> str:
 
 
 def _trace_lines(text: str) -> list[str]:
-    """Captured print() narration, ANSI stripped, blank lines dropped."""
-    return [ln.rstrip() for ln in _ANSI.sub("", text).splitlines() if ln.strip()]
+    """Captured print() narration, blank lines dropped.
+
+    SGR colours are kept: Console renders ANSI through ansiPieces(), and the
+    transport tools (socket_validator.py, scan_remote.py) colour their own
+    output. Stripping here was why the ClamAV log arrived grey.
+    """
+    return [ln.rstrip() for ln in text.splitlines() if ln.strip()]
 
 
 def _file_usable(path: Path) -> bool:
@@ -316,7 +324,7 @@ def transports() -> dict:
 
     SFTP needs the whole python/clamd/ driver - the host-side script, the in-VM
     scanner it deploys and the vm_info.json it reads. TCP is the operator's
-    socket client, which imports ifaddr and colorama. A transport missing any
+    socket client, which imports ifaddr and loguru. A transport missing any
     of them is a button that fails after the upload, not a transport.
     """
     return {
@@ -328,9 +336,9 @@ def transports() -> dict:
             "scan there, bring the result JSON home"),
         "tcp": _probe(
             "tcp", SOCKET_VALIDATOR, [SOCKET_VALIDATOR],
-            ("ifaddr", "colorama"),
-            "panel/utils/socket_validator.py - open a TCP socket to clamd and "
-            "send the sample with INSTREAM"),
+            ("ifaddr", "loguru"),
+            "panel/utils/socket_validator.py - upload the sample to the VM "
+            "utility server, then scan its assembled file with ClamAV"),
     }
 
 
@@ -388,12 +396,16 @@ def _sftp_checks() -> list[dict]:
 
 def _probe_tcp(validator_cls, host: str, port: int,
                timeout: float = 10.0) -> dict:
-    """Open the socket with the operator's client, then ask clamd directly.
+    """Open the socket with the operator's client and report whether it opened.
 
-    The client owns the interface check and the connect (it sets its own 3s
-    timeout); this only speaks the two commands that answer "is it alive and
-    what is it". Every line it prints is captured into `trace`, so the status
-    page can show the connection test's own output instead of paraphrasing it.
+    "Can a sample travel down this transport" is answered by the connect, not by
+    clamd's ``zPING``: the endpoint on this lab can be the VM utility server,
+    which speaks newline-delimited JSON, so a clamd command would time out on a
+    socket that is perfectly usable. Whether the ClamAV service is alive is the
+    separate, explicit Ping button (``ping()``, via vm_utility.py).
+
+    The client owns the interface check and the connect. Every line it prints is
+    captured into `trace`, so the status page can show the client's own output.
     """
     sink = io.StringIO()
     validator = None
@@ -403,33 +415,25 @@ def _probe_tcp(validator_cls, host: str, port: int,
             validator = validator_cls(host)
             sock = validator.establish_tcp_connection(port)
     except Exception as exc:  # noqa: BLE001 - a refusal is the answer
-        return {"connected": False, "pong": False, "version": "",
-                "detail": f"{type(exc).__name__}: {exc}",
+        detail = f"{type(exc).__name__}: {exc}"
+        return {"connected": False, "detail": detail, "error": detail,
                 "trace": _trace_lines(sink.getvalue())}
     if sock is None:
-        return {"connected": False, "pong": False, "version": "",
-                "detail": _clean_output(sink.getvalue()) or "connection failed",
+        detail = _clean_output(sink.getvalue()) or "connection failed"
+        return {"connected": False, "detail": detail, "error": detail,
                 "trace": _trace_lines(sink.getvalue())}
 
-    pong = False
-    version = ""
-    detail = ""
     try:
         sock.settimeout(timeout)
-        sock.sendall(b"zPING\0")
-        pong = b"PONG" in _recv_reply(sock).upper()
-        sock.sendall(b"zVERSION\0")
-        version = _recv_reply(sock).decode("utf-8", "replace").strip("\0\r\n ")
-    except OSError as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-    finally:
-        try:
-            with contextlib.redirect_stdout(sink):
-                validator.closeConnection(sock)
-        except Exception:  # noqa: BLE001 - closing is best-effort
-            pass
-    return {"connected": True, "pong": pong, "version": version,
-            "detail": detail, "trace": _trace_lines(sink.getvalue())}
+    except OSError:
+        pass
+    try:
+        with contextlib.redirect_stdout(sink):
+            validator.closeConnection(sock)
+    except Exception:  # noqa: BLE001 - closing is best-effort
+        pass
+    return {"connected": True, "detail": "", "error": "",
+            "trace": _trace_lines(sink.getvalue())}
 
 
 def _tcp_checks() -> tuple[list[dict], str, bool, list[str]]:
@@ -442,21 +446,14 @@ def _tcp_checks() -> tuple[list[dict], str, bool, list[str]]:
     checks.append(_check(
         "socket_validator.py", usable, detail,
         echo="locating the operator's TCP client", icon="file-code"))
-    for module, echo in (
-            ("ifaddr", "checking ifaddr - the client enumerates every adapter"),
-            ("colorama", "checking colorama - the client colours its output")):
-        found = importlib.util.find_spec(module) is not None
-        checks.append(_check(f"{module} installed", found,
-                             "importable" if found else f"pip install {module}",
-                             echo=echo, icon="code"))
-    if not all(c["ok"] for c in checks):
+    if not usable:
         return checks, "", False, []
 
     host, port = _tcp_target()
-    # The address the validator will actually dial, so this row can never
-    # disagree with the scan that follows it.
-    checks.append(_check("clamd target", True, f"{host}:{port}",
-                         echo="resolving the clamd address", icon="wifi"))
+    # TCP uses the VM utility endpoint; ClamAV itself is reached over its local
+    # Unix socket by the VM server after the file has been assembled.
+    checks.append(_check("VM utility target", True, f"{host}:{port}",
+                         echo="resolving the VM utility address", icon="wifi"))
     try:
         validator_cls = _socket_validator()
     except SubmitError as exc:
@@ -464,24 +461,15 @@ def _tcp_checks() -> tuple[list[dict], str, bool, list[str]]:
                              echo="importing socket_validator.py unchanged",
                              icon="code"))
         return checks, "", False, []
-    checks.append(_check("socket client loads", True,
-                         "panel/utils/socket_validator.py, imported unchanged",
-                         echo="importing socket_validator.py unchanged",
-                         icon="code"))
 
     probe = _probe_tcp(validator_cls, host, port)
     checks.append(_check("connect", probe["connected"],
-                         probe["detail"] or f"{host}:{port}",
+                         f"{host}:{port} (socket opened for the probe)"
+                         if probe["connected"]
+                         else (probe["detail"] or "connection failed"),
                          echo="opening the socket, exactly as a scan does",
                          icon="plug"))
-    checks.append(_check("PING -> PONG", probe["pong"],
-                         "clamd answered PONG" if probe["pong"]
-                         else ("not connected, so clamd was never asked"
-                               if not probe["connected"]
-                               else (probe["detail"] or "no answer")),
-                         echo="asking clamd for PING and VERSION",
-                         icon="activity"))
-    return checks, probe["version"], probe["pong"], probe["trace"]
+    return checks, "", probe["connected"], probe["trace"]
 
 
 def _condense_trace(trace: list[str]) -> list[str]:
@@ -587,8 +575,10 @@ def status() -> dict:
         host, port = _tcp_target()
         endpoint = f"tcp://{host}:{port}"
         note = ("TCP transport: panel/utils/socket_validator.py opens the "
-                "socket and clamd is asked for PING and VERSION on it. This "
-                "page never SSHes anywhere.")
+                "socket this transport dials, so `connect` is the path check. "
+                "Service health is the Ping button: it asks the guest through "
+                "panel/utils/vm_utility.py, which is the endpoint that answers "
+                "here. This page never SSHes anywhere.")
 
     hard_ok = all(c["ok"] or c.get("advisory") for c in checks)
     return {
@@ -673,7 +663,9 @@ def scan_file(path, timeout: float = 60.0) -> dict:
 
 
 def _log(job_id: str, line: str) -> None:
-    line = _ANSI.sub("", line)
+    # ANSI is preserved. The browser's Console renders SGR through ansiPieces();
+    # stripping it here made every coloured line from scan_remote.py and
+    # socket_validator.py arrive as plain grey text.
     with _jobs_lock:
         job = _jobs.get(job_id)
         if job is None:
@@ -900,41 +892,116 @@ def _tcp_target() -> tuple[str, int]:
     return host or "127.0.0.1", port
 
 
-def _recv_reply(sock) -> bytes:
-    data = b""
-    while True:
-        part = sock.recv(4096)
-        if not part:
-            break
-        data += part
-        # clamd terminates its reply with \n or \0 depending on version.
-        if b"\0" in data or b"\n" in data:
-            break
-    return data
+def _utility_target() -> tuple[str, int]:
+    """The VM utility server's address - the socket ``ping_service`` runs on.
+
+    It is deliberately the VM address and the port the utility client's own
+    ``__main__`` dials (the clamd port from vm_info.json, 3310 by default).
+    This is the guest's management endpoint, not a clamd command: no SSH and no
+    zPING is involved in the service ping.
+    """
+    info = _vm_info()
+    cfg = _clamd_cfg()
+    host = str(info.get("VM_IP", "") or "").strip()
+    try:
+        port = int(cfg.get("port", 3310) or 3310)
+    except (TypeError, ValueError):
+        port = 3310
+    return host or "127.0.0.1", port
 
 
-def _parse_instream(reply: bytes) -> tuple[str, str, str]:
-    """(status, signature, detail) from clamd's INSTREAM reply."""
-    text = reply.decode("utf-8", "replace").replace("\0", "").strip()
-    if not text:
-        return "ERROR", "", "clamd closed the connection without a reply"
-    upper = text.upper()
-    if "FOUND" in upper:
-        signature = text.rsplit(":", 1)[-1].replace("FOUND", "").strip()
-        return "FOUND", signature or "unknown", ""
-    if "ERROR" in upper:
-        detail = text.split("ERROR")[0].strip(" .:") or text
-        return "ERROR", "", detail
-    if upper.endswith("OK") or ": OK" in upper:
-        return "OK", "", ""
-    return "ERROR", "", text[:200]
+def ping() -> dict:
+    """Ping the ClamAV service through ``python/panel/utils/vm_utility.py``.
+
+    This is the one path that asks the guest itself whether the service is
+    alive, so it works with either submission transport and does not depend on
+    clamd's own TCP listener being exposed. The socket is opened with the
+    operator's SocketValidator (the same client a scan uses) and handed to
+    ``VirtualUtility.ping_service(Service.CLAMD_SERVICE)``; the panel does not
+    reimplement the utility protocol.
+
+    The answer is returned verbatim under ``response``. ``alive`` is the
+    service's own verdict; ``ok`` only says the request was answered, so the
+    page can tell "clamav is down" from "the utility server is unreachable".
+    """
+    host, port = _utility_target()
+    endpoint = f"tcp://{host}:{port}"
+    checked_at = round(time.time(), 1)
+    started = time.perf_counter()
+    base = {"ok": False, "alive": False, "endpoint": endpoint,
+            "checked_at": checked_at, "seconds": 0.0, "detail": "",
+            "state": "", "error": None, "code": None, "response": None}
+
+    try:
+        validator_cls = _socket_validator()
+    except SubmitError as exc:
+        return {**base, "code": exc.code, "error": str(exc), "detail": str(exc)}
+
+    validator = None
+    sock = None
+    state = ""
+    try:
+        validator = validator_cls(host)
+        sock = validator.establish_tcp_connection(port)
+        if sock is None:
+            detail = f"could not connect to the VM utility server at {endpoint}"
+            return {**base, "error": detail, "detail": detail,
+                    "seconds": round(time.perf_counter() - started, 2)}
+        sock.settimeout(PING_TIMEOUT)
+        utility = VirtualUtility(sock)
+        response = utility.ping_service(Service.CLAMD_SERVICE)
+        # The service state is extra evidence, never the verdict: a unit that
+        # systemd calls active but that does not answer PONG is still down.
+        try:
+            info = utility.recover_information_about_services_status(
+                Service.CLAMD_SERVICE)
+            state = str(info.get("state") or "")
+        except Exception:  # noqa: BLE001 - the ping already answered
+            state = ""
+    except Exception as exc:  # noqa: BLE001 - a refusal is the answer
+        detail = f"{type(exc).__name__}: {exc}"
+        return {**base, "error": detail, "detail": detail,
+                "seconds": round(time.perf_counter() - started, 2)}
+    finally:
+        if sock is not None:
+            try:
+                if validator is not None:
+                    validator.closeConnection(sock)
+                else:
+                    sock.close()
+            except Exception:  # noqa: BLE001 - closing is best-effort
+                pass
+
+    seconds = round(time.perf_counter() - started, 2)
+    if not isinstance(response, dict):
+        detail = "the VM utility server returned no ping result"
+        return {**base, "seconds": seconds, "error": detail, "detail": detail}
+
+    # vm_utility.ping_service returns the server's reply verbatim. The running
+    # server answers {"ok": true, "results": "Response successfull : PONG"};
+    # accept a dict result too, so a richer reply needs no change here.
+    body = response.get("result", response.get("results"))
+    if isinstance(body, dict):
+        text = str(body.get("detail") or body.get("output")
+                   or body.get("result") or "")
+        alive = bool(body.get("active", body.get("alive", False)))
+        state = str(body.get("state") or state)
+    else:
+        text = str(body or "")
+        alive = "PONG" in text.upper()
+    detail = text.strip() or ("clamav is active on the VM" if alive
+                              else "clamav is not active on the VM")
+    return {"ok": True, "alive": alive, "endpoint": endpoint,
+            "checked_at": checked_at, "seconds": seconds, "detail": detail,
+            "state": state, "error": None,
+            "code": None if alive else "no-pong", "response": response}
 
 
 def _scan_tcp(job_id: str, staged: dict) -> tuple[dict, Path]:
-    """Open a TCP socket with SocketValidator, then speak INSTREAM on it."""
+    """Upload chunks to the VM utility server, then scan the assembled file."""
     validator_cls = _socket_validator()
     host, port = _tcp_target()
-    _log(job_id, f"    transport: TCP {host}:{port} (INSTREAM)")
+    _log(job_id, f"    transport: TCP {host}:{port} (VM utility)")
     _log(job_id, "    socket:    panel/utils/socket_validator.py")
 
     sink = _LogPipe(job_id)
@@ -960,18 +1027,31 @@ def _scan_tcp(job_id: str, staged: dict) -> tuple[dict, Path]:
     try:
         try:
             sock.settimeout(float(_clamd_cfg().get("timeout", 60) or 60))
-            data = staged["path"].read_bytes()
-            _log(job_id, f"    INSTREAM {staged['name']} ({staged['bytes']:,} bytes)")
-            sock.sendall(b"zINSTREAM\0")
-            for offset in range(0, len(data), 8192):
-                chunk = data[offset:offset + 8192]
-                sock.sendall(struct.pack(">I", len(chunk)) + chunk)
-            sock.sendall(struct.pack(">I", 0))
-            reply = _recv_reply(sock)
+            utility = VirtualUtility(sock)
+            _log(job_id, f"    uploading {staged['name']} in chunks "
+                         f"({staged['bytes']:,} bytes)")
+            remote_name = f"{secrets.token_hex(8)}-{staged['name']}"
+            last_progress = -1
+
+            def report_upload_progress(sent: int, total: int) -> None:
+                nonlocal last_progress
+                percent = sent * 100 // total
+                milestone = percent // 10
+                if milestone > last_progress:
+                    last_progress = milestone
+                    _log(job_id, f"    upload: {percent}% ({sent:,}/{total:,} bytes)")
+
+            if not utility.send_sample_to_vm(
+                    staged["path"], filename=remote_name,
+                    progress=report_upload_progress):
+                raise SubmitError("VM utility server did not store the sample",
+                                  "scan-failed")
+            _log(job_id, "    scanning assembled file through the VM's ClamAV socket")
+            result = utility.scan_sample_on_vm(remote_name)
         except SubmitError:
             raise
         except Exception as exc:  # noqa: BLE001 - timeout, reset, refused
-            raise SubmitError(f"INSTREAM failed: {type(exc).__name__}: {exc}",
+            raise SubmitError(f"VM upload or scan failed: {type(exc).__name__}: {exc}",
                               "scan-failed") from exc
     finally:
         if validator is not None:
@@ -983,7 +1063,9 @@ def _scan_tcp(job_id: str, staged: dict) -> tuple[dict, Path]:
                 pass
 
     seconds = round(time.perf_counter() - started, 2)
-    status, signature, detail = _parse_instream(reply)
+    status = result["status"]
+    signature = str(result.get("signature") or "")
+    detail = str(result.get("detail") or "")
     _log(job_id, f"    clamd: {status}" + (f" ({signature})" if signature else ""))
     if status == "ERROR":
         raise SubmitError(f"clamd rejected the stream: {detail or 'no detail'}",

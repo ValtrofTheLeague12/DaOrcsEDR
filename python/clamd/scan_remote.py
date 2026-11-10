@@ -213,9 +213,16 @@ def main() -> int:
         print(f"[-] scanner missing: {LOCAL_SCANNER}", file=sys.stderr)
         return EXIT_FAIL
 
+    vm_info_path = pathlib.Path(args.vm_info)
     try:
-        info = json.loads(pathlib.Path(args.vm_info).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        info = json.loads(vm_info_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        example = vm_info_path.with_name("vm_info.example.json")
+        hint = (f" - copy {example.name} to {vm_info_path.name} and fill it in"
+                if example.is_file() else "")
+        print(f"[-] cannot read vm_info.json: {exc}{hint}", file=sys.stderr)
+        return EXIT_FAIL
+    except json.JSONDecodeError as exc:
         print(f"[-] cannot read vm_info.json: {exc}", file=sys.stderr)
         return EXIT_FAIL
 

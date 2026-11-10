@@ -1257,6 +1257,21 @@ export interface RemoteBundle {
   files: { name: string | null; bytes: number; date: string | null }[]
   /** Existing public MEGA folder link, or null when the bundle is not shared. */
   link?: string | null
+  /** Per-file SHA-256 from the bundle manifest, when available. */
+  hash?: string
+}
+
+/**
+ * Existing public links for the bundles under one MEGA root, keyed by artifact
+ * name. A bundle with no export is absent rather than null: "not shared" and
+ * "shared" are the only states the page needs, and an absent key is the first.
+ */
+export interface ArtifactLinks {
+  ok: boolean
+  links: Record<string, string>
+  account: string | null
+  remote_root: string
+  error?: string
 }
 
 export interface RemoteState {
@@ -1401,12 +1416,51 @@ export interface CTIProviderSetting {
   env: string
   optional: boolean
   description: string
+  /** A key is saved through the panel (application-data file). */
   configured: boolean
+  /** A key is visible from the process environment or the repository .env. */
+  environment: boolean
 }
 
 export interface CTISettings {
   providers: CTIProviderSetting[]
   source: string
+}
+
+export interface CTIServerSettings {
+  path: string
+  exists: boolean
+  ip: string
+  port: number
+  banned: { name: string | null; hash: string | null }[]
+  error: string | null
+}
+
+/**
+ * The generated CTI listener, as the panel sees it right now.
+ *
+ * `running` means the process on the configured port is stix-server/server.py
+ * and its /health route answered. `foreign` means something else holds the
+ * port, and `error` means the saved config cannot be understood.
+ */
+export interface CTIListenerStatus {
+  state: 'running' | 'stopped' | 'unhealthy' | 'foreign' | 'error'
+  ip: string
+  port: number
+  url: string | null
+  pid: number | null
+  log: string | null
+  detail: string
+}
+
+export interface CTIListenerResult {
+  ok: boolean
+  code: string
+  detail: string
+  pid: number | null
+  log: string | null
+  tail: string[]
+  status: CTIListenerStatus
 }
 
 /**

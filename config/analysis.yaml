@@ -27,7 +27,7 @@
 #   IA_ALLOW_CORE_DUMP  IA_CONTINUE_ON_SIGNAL
 #   TRACE_FILE  ENABLE_TRACING
 #   IA_INTERRUPT_IF_PACKED  IA_INTERRUPT_ENTROPY
-#   MEGA_UPLOAD  MEGA_REMOTE_ROOT  MEGA_SEAL  MEGA_TIMEOUT
+#   MEGA_UPLOAD  MEGA_REMOTE_ROOT  MEGA_SEAL  MEGA_PER_BUNDLE_PASSWORD  MEGA_TIMEOUT
 #
 # Remove a line to fall back to the binary's built-in default. Do not add one
 # for a credential: those belong in .env or the vault, and the analyzer redacts
@@ -43,16 +43,17 @@
 
 # --- set from the admin console ---
 IA_CONTINUE_ON_SIGNAL: false
-CTI_SKIP: true
+CTI_SKIP: false
 ML_SKIP: true
 STATIC_ANALYZER_CURSES: false
-ML_EXPLAIN: true
 IA_ALLOW_CORE_DUMP: false
 ENABLE_TRACING: true
 ML_THRESHOLD: "0.5"
-IA_INTERRUPT_IF_PACKED: false
+IA_INTERRUPT_IF_PACKED: true
 IA_INTERRUPT_ENTROPY: "7"
 ML_TOP_K: "10"
 MEGA_UPLOAD: true
 MEGA_REMOTE_ROOT: "evidence"
-MEGA_TIMEOUT: "5000"
+MEGA_TIMEOUT: "900"
+MEGA_SEAL: true
+MEGA_PER_BUNDLE_PASSWORD: true

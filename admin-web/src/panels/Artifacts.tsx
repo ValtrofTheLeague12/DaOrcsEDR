@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Alert } from '@heroui/react/alert'
 import { Card } from '@heroui/react/card'
 import { Chip } from '@heroui/react/chip'
@@ -42,6 +42,62 @@ function VerifyMark({ bundle }: { bundle: LocalBundle }) {
   if (bundle.verified === true) return <Chip size="sm" variant="soft" color="success">verified</Chip>
   if (bundle.verified === false) return <Chip size="sm" variant="soft" color="danger">digest mismatch</Chip>
   return <Chip size="sm" variant="soft" title={bundle.verify_detail}>not hashed</Chip>
+}
+
+const FILES_PER_PAGE = 6
+
+/**
+ * File chips for one remote bundle, paged rather than truncated.
+ *
+ * A bundle can carry dozens of files and the listing returns all of them; the
+ * old "+N more" hid them behind a label that was not a control. Six per page
+ * keeps the card the same height as before, while the shared Pager makes the
+ * rest reachable without expanding the whole card.
+ */
+function RemoteFileChips({
+  files,
+  fileCount,
+}: {
+  files: RemoteBundle['files']
+  fileCount: number
+}) {
+  const paged = usePaged(files, FILES_PER_PAGE)
+
+  return (
+    <>
+      <div className="artifact-remote-files">
+        <span className="artifact-remote-files-label">Files · {fileCount}</span>
+        {files.length === 0 && (
+          <span className="artifact-remote-file" data-empty="true">No files listed</span>
+        )}
+        {paged.slice.map((file, fileIndex) => (
+          <span
+            key={`${file.name ?? 'file'}-${fileIndex}`}
+            className="artifact-remote-file"
+            title={file.name ?? undefined}
+          >
+            <span className="artifact-remote-file-name">
+              {file.name ?? 'unnamed'}
+            </span>
+            <span className="artifact-remote-file-size">{bytes(file.bytes)}</span>
+          </span>
+        ))}
+      </div>
+      {paged.pages > 1 && (
+        <div className="artifact-remote-file-pager">
+          <Pager
+            page={paged.page}
+            pages={paged.pages}
+            first={paged.first}
+            last={paged.last}
+            total={files.length}
+            onPrev={paged.prev}
+            onNext={paged.next}
+          />
+        </div>
+      )}
+    </>
+  )
 }
 
 function MetricTile({
@@ -300,6 +356,16 @@ function LocalList({
   const [exporting, setExporting] = useState<string | null>(null)
   const [exportError, setExportError] = useState<{ name: string; message: string } | null>(null)
 
+  const totalBytes = bundles.reduce((sum, bundle) => sum + (bundle.bytes ?? 0), 0)
+  const verified = bundles.filter(
+    (bundle) => bundle.present && bundle.verified === true,
+  ).length
+  const attention = bundles.filter(
+    (bundle) => !bundle.present || bundle.verified === false ||
+      bundle.size_matches === false || bundle.digests_match === false,
+  ).length
+  const onMega = bundles.filter((bundle) => remoteNames.has(bundle.name)).length
+
   // The mirror of RemoteList's recover: push what is on disk up to MEGA. It is
   // a job, not a request, because protecting a large bundle and pushing it over
   // a consumer link takes minutes - and the log is the part worth watching.
@@ -321,14 +387,50 @@ function LocalList({
 
   return (
     <Card className="w-full">
-      <Card.Header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Card.Title>Local bundles</Card.Title>
-          <p className="mt-1 text-[11px] text-default-500">Evidence archives found under exports/</p>
+      <Card.Header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <span className="artifact-section-icon artifact-remote-icon">
+            <Icon name="machine" size={16} />
+          </span>
+          <div>
+            <Card.Title>Local bundles</Card.Title>
+            <p className="mt-1 text-[11px] text-default-500">
+              Evidence archives under <code className="font-mono">exports/</code>, checked on disk.
+            </p>
+          </div>
         </div>
-        <Chip size="sm" variant="soft">{bundles.length} found</Chip>
+        <Chip size="sm" variant="soft">{bytes(totalBytes, 0)} on disk</Chip>
       </Card.Header>
-      <Card.Content className="flex flex-col gap-2">
+      <Card.Content className="flex flex-col gap-3">
+        <div className="artifact-remote-overview">
+          <div className="artifact-remote-stat">
+            <span className="artifact-remote-stat-label">Bundles found</span>
+            <span className="artifact-remote-stat-value">{bundles.length}</span>
+          </div>
+          <div className="artifact-remote-stat" data-tone={verified > 0 ? 'success' : undefined}>
+            <span className="artifact-remote-stat-label">Verified</span>
+            <span className="artifact-remote-stat-value">
+              {verified}
+              {bundles.length > 0 && (
+                <span className="artifact-remote-stat-note"> of {bundles.length}</span>
+              )}
+            </span>
+          </div>
+          <div className="artifact-remote-stat" data-tone={attention > 0 ? 'danger' : undefined}>
+            <span className="artifact-remote-stat-label">Needs attention</span>
+            <span className="artifact-remote-stat-value">{attention}</span>
+          </div>
+          <div className="artifact-remote-stat" data-tone={onMega > 0 ? 'accent' : undefined}>
+            <span className="artifact-remote-stat-label">On MEGA</span>
+            <span className="artifact-remote-stat-value">
+              {onMega}
+              {bundles.length > 0 && (
+                <span className="artifact-remote-stat-note"> of {bundles.length}</span>
+              )}
+            </span>
+          </div>
+        </div>
+
         {!uploadEnabled && (
           <Alert status="warning">
             <Alert.Title>Export is disabled</Alert.Title>
@@ -347,29 +449,43 @@ function LocalList({
             <div className="timeline">
               {paged.slice.map((bundle) => {
                 const flagged = bundle.size_matches === false || bundle.digests_match === false
+                const onRemote = remoteNames.has(bundle.name)
+                const integrityBad = flagged || bundle.verified === false
+                const integrityState = !bundle.present
+                  ? 'empty'
+                  : integrityBad ? 'bad' : bundle.verified === true ? 'ok' : 'unknown'
                 return (
                   <div key={bundle.name} className="timeline-item mb-2 last:mb-0">
                     <span
                       className="timeline-node"
                       style={{
-                        '--node': bundle.verified === true
-                          ? 'var(--success)'
-                          : bundle.verified === false ? 'var(--danger)' : 'var(--default-400)',
+                        '--node': !bundle.present
+                          ? 'var(--danger)'
+                          : flagged
+                            ? 'var(--warning)'
+                            : bundle.verified === true ? 'var(--success)' : 'var(--default-400)',
                       } as CSSProperties}
                     />
                     <div
-                      className="timeline-card"
+                      className="timeline-card artifact-remote-card"
                       data-flag={flagged}
                       style={flagged ? { '--flag': 'var(--warning)' } as CSSProperties : undefined}
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="min-w-0 truncate font-mono text-[12px]" title={bundle.name}>
-                          {bundle.dir}
-                        </span>
-                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                      <div className="artifact-remote-row">
+                        <div className="artifact-remote-title">
+                          <Icon name="folder" size={14} />
+                          <span className="artifact-remote-name" title={bundle.dir}>
+                            {bundle.dir}
+                          </span>
+                        </div>
+                        <div className="artifact-remote-chips">
                           <VerifyMark bundle={bundle} />
-                          <Chip size="sm" variant="soft">{bundle.file_count} files</Chip>
-                          <Chip size="sm" variant="soft">{bytes(bundle.bytes)}</Chip>
+                          {onRemote && (
+                            <Chip size="sm" variant="soft" color="success">on MEGA</Chip>
+                          )}
+                          {encryptEnabled && !passwordReady && bundle.present && !onRemote && (
+                            <Chip size="sm" variant="soft" color="warning">password missing</Chip>
+                          )}
                           {bundle.present && (
                             <a
                               className="artifact-action"
@@ -380,9 +496,7 @@ function LocalList({
                               <span aria-hidden="true">↗</span>
                             </a>
                           )}
-                          {remoteNames.has(bundle.name) ? (
-                            <Chip size="sm" variant="soft" color="success">on MEGA</Chip>
-                          ) : bundle.present && (
+                          {bundle.present && !onRemote && (
                             <button
                               type="button"
                               className="artifact-action"
@@ -404,12 +518,97 @@ function LocalList({
                           )}
                         </div>
                       </div>
-                      <div className="artifact-bundle-details">
-                        <span>Generated</span>
-                        <span className="font-mono">{shortStamp(bundle.generated_at)}</span>
-                        <span>Archive modified</span>
-                        <span className="font-mono">{ago(bundle.modified)}</span>
+
+                      <div className="artifact-remote-meta">
+                        <div>
+                          <span>Generated</span>
+                          <strong className="font-mono">{shortStamp(bundle.generated_at)}</strong>
+                        </div>
+                        <div>
+                          <span>Archive modified</span>
+                          <strong title={shortStamp(bundle.modified)}>{ago(bundle.modified)}</strong>
+                        </div>
+                        <div>
+                          <span>Archive</span>
+                          <strong className="font-mono" title={bundle.archive ?? undefined}>
+                            {bundle.archive ?? 'No archive'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Size</span>
+                          <strong>{bytes(bundle.bytes)}</strong>
+                        </div>
                       </div>
+
+                      <div className="artifact-remote-files">
+                        <span className="artifact-remote-files-label">
+                          Manifest · {bundle.file_count} files
+                        </span>
+                        {bundle.source && (
+                          <span className="artifact-remote-file" title={bundle.source}>
+                            <span className="artifact-remote-file-name">
+                              source: {bundle.source}
+                            </span>
+                          </span>
+                        )}
+                        {bundle.sha256 && (
+                          <span className="artifact-remote-file" title={bundle.sha256}>
+                            <span className="artifact-remote-file-name">
+                              sha256 {bundle.sha256.slice(0, 12)}…
+                            </span>
+                          </span>
+                        )}
+                        {!bundle.present && (
+                          <span className="artifact-remote-file" data-empty="true">
+                            archive missing
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="artifact-integrity-panel" data-state={integrityState}>
+                        <div className="artifact-integrity-head">
+                          <span className="artifact-integrity-label">
+                            <Icon name="clamd" size={13} />
+                            Integrity check
+                          </span>
+                          <span className="artifact-integrity-detail" title={bundle.verify_detail}>
+                            {bundle.verify_detail}
+                          </span>
+                        </div>
+                        <div className="artifact-integrity-grid">
+                          <div>
+                            <span>Archive size</span>
+                            <strong>
+                              {bundle.size_matches === null
+                                ? 'not recorded'
+                                : bundle.size_matches ? 'matches manifest' : 'differs from manifest'}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Digests</span>
+                            <strong>
+                              {bundle.digests_match === null
+                                ? 'not recorded'
+                                : bundle.digests_match
+                                  ? 'manifest and sidecar agree'
+                                  : 'manifest and sidecar disagree'}
+                            </strong>
+                          </div>
+                          <div className="artifact-integrity-hash">
+                            <span>SHA-256</span>
+                            <strong className="font-mono">
+                              {bundle.sha256 ?? 'not recorded'}
+                            </strong>
+                          </div>
+                          {bundle.sidecar_sha256 && bundle.sidecar_sha256 !== bundle.sha256 && (
+                            <div className="artifact-integrity-hash">
+                              <span>Sidecar SHA-256</span>
+                              <strong className="font-mono">{bundle.sidecar_sha256}</strong>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
                       {exportError?.name === bundle.name && (
                         <Alert status="danger" className="mt-2">
                           <Alert.Title>Export failed</Alert.Title>
@@ -445,6 +644,7 @@ function RemoteList({
   refreshing,
   rootExists,
   remoteRoot,
+  account,
   onRecovered,
   historyPath,
   historyWritten,
@@ -457,6 +657,8 @@ function RemoteList({
   refreshing: boolean
   rootExists: boolean
   remoteRoot: string
+  /** MEGA account the listing was read from, when it could be read. */
+  account: string | null
   onRecovered: () => void
   historyPath: string
   historyWritten: boolean
@@ -472,11 +674,52 @@ function RemoteList({
   // earlier carries its link in the listing; this map covers the ones created
   // by the button below without waiting for the next remote poll.
   const [links, setLinks] = useState<Record<string, string>>({})
+  const [linksLoading, setLinksLoading] = useState(true)
+  const [linksError, setLinksError] = useState<string | null>(null)
   const [linkBusy, setLinkBusy] = useState<string | null>(null)
   const [linkError, setLinkError] = useState<{ name: string; message: string } | null>(null)
+  // The delete action is a two-step: showing the confirmation inline keeps the
+  // warning beside the URL it revokes instead of in a modal that covers it.
+  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null)
+
+  const loadLinks = useCallback(async () => {
+    setLinksLoading(true)
+    setLinksError(null)
+    setLinks({})
+    try {
+      const res = await api.artifactLinks(remoteRoot)
+      setLinks(res.links ?? {})
+    } catch (error) {
+      setLinksError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setLinksLoading(false)
+    }
+  }, [remoteRoot])
+
+  useEffect(() => {
+    void loadLinks()
+  }, [loadLinks])
 
   const linkOf = (bundle: UnifiedBundle): string | null =>
     links[bundle.name] ?? bundle.link ?? null
+
+  // Duplicate same-named folders are real on MEGA: `put` creates a second
+  // `*_artifact` folder when one already exists. The page says so instead of
+  // rendering two identical rows as though nothing were wrong.
+  const copiesOf = (name: string) =>
+    bundles.filter((bundle) => bundle.present && bundle.name === name).length
+  const duplicateNames = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const bundle of bundles) {
+      if (!bundle.present) continue
+      counts.set(bundle.name, (counts.get(bundle.name) ?? 0) + 1)
+    }
+    return [...counts].filter(([, count]) => count > 1).map(([name]) => name)
+  }, [bundles])
+
+  const linkedCount = bundles.filter(
+    (bundle) => bundle.present && (links[bundle.name] ?? bundle.link),
+  ).length
 
   const requestLink = async (name: string) => {
     setLinkBusy(name)
@@ -484,6 +727,27 @@ function RemoteList({
     try {
       const res = await api.artifactLink(name, remoteRoot)
       setLinks((prev) => ({ ...prev, [name]: res.link }))
+    } catch (error) {
+      setLinkError({
+        name,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setLinkBusy(null)
+    }
+  }
+
+  const revoke = async (name: string) => {
+    setLinkBusy(name)
+    setLinkError(null)
+    try {
+      await api.deleteArtifactLink(name, remoteRoot)
+      setLinks((prev) => {
+        const next = { ...prev }
+        delete next[name]
+        return next
+      })
+      setConfirmRevoke(null)
     } catch (error) {
       setLinkError({
         name,
@@ -514,14 +778,58 @@ function RemoteList({
   // be pushed actually is: the Remote tab only lists what MEGA has now.
   return (
     <Card className="w-full">
-      <Card.Header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Card.Title>Remote bundles</Card.Title>
-          <p className="mt-1 text-[11px] text-default-500">Bundles MEGA is listing right now</p>
+      <Card.Header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <span className="artifact-section-icon artifact-remote-icon">
+            <Icon name="artifacts" size={16} />
+          </span>
+          <div>
+            <Card.Title>Remote bundles</Card.Title>
+            <p className="mt-1 text-[11px] text-default-500">
+              Evidence MEGA is holding now, and every public link that reaches it.
+            </p>
+          </div>
         </div>
-        <Chip size="sm" variant="soft">{bundles.length} found</Chip>
+        <button
+          type="button"
+          className="artifact-refresh"
+          onClick={() => void loadLinks()}
+          disabled={linksLoading}
+          title="Re-read the public exports without republishing anything"
+        >
+          <Icon name={linksLoading ? 'refresh' : 'link'} size={13} />
+          {linksLoading ? 'Checking links…' : 'Refresh links'}
+        </button>
       </Card.Header>
-      <Card.Content className="flex flex-col gap-2">
+      <Card.Content className="flex flex-col gap-3">
+        <div className="artifact-remote-overview">
+          <div className="artifact-remote-stat">
+            <span className="artifact-remote-stat-label">Account</span>
+            <span className="artifact-remote-stat-value" title={account ?? undefined}>
+              {account ?? 'Unavailable'}
+            </span>
+          </div>
+          <div className="artifact-remote-stat">
+            <span className="artifact-remote-stat-label">Destination</span>
+            <span className="artifact-remote-stat-value font-mono" title={remoteRoot}>
+              {remoteRoot}
+            </span>
+          </div>
+          <div className="artifact-remote-stat">
+            <span className="artifact-remote-stat-label">Bundles listed</span>
+            <span className="artifact-remote-stat-value">{bundles.length}</span>
+          </div>
+          <div className="artifact-remote-stat" data-tone={linkedCount > 0 ? 'accent' : undefined}>
+            <span className="artifact-remote-stat-label">Public links</span>
+            <span className="artifact-remote-stat-value">
+              {linksLoading ? '…' : linkedCount}
+              {!linksLoading && bundles.length > 0 && (
+                <span className="artifact-remote-stat-note"> of {bundles.length}</span>
+              )}
+            </span>
+          </div>
+        </div>
+
         {!rootExists && !refreshing && (
           <Alert status="warning">
             <Alert.Title>MEGA destination folder not found</Alert.Title>
@@ -538,29 +846,84 @@ function RemoteList({
             </Alert.Description>
           </Alert>
         )}
+        {linksError && (
+          <Alert status="warning">
+            <Alert.Title>Public link status unavailable</Alert.Title>
+            <Alert.Description>{linksError}</Alert.Description>
+          </Alert>
+        )}
+        {duplicateNames.length > 0 && (
+          <Alert status="warning">
+            <Alert.Title>
+              {duplicateNames.length === 1
+                ? 'A bundle name appears more than once on MEGA'
+                : `${duplicateNames.length} bundle names appear more than once on MEGA`}
+            </Alert.Title>
+            <Alert.Description>
+              MEGA allows duplicate folders, and the uploader creates a new
+              <code className="font-mono"> *_artifact</code> folder instead of
+              reusing one that is already there. These names are duplicated:
+              {' '}
+              <span className="font-mono">{duplicateNames.join(', ')}</span>.
+              Link actions resolve by folder name, so they apply to the name,
+              not to a single copy.
+            </Alert.Description>
+          </Alert>
+        )}
+
         {bundles.length === 0 ? (
           <p className="artifact-list-empty">No bundles on MEGA yet. Local archives are listed in the Local tab.</p>
         ) : (
           <>
             <div className="timeline">
-              {paged.slice.map((bundle) => {
-                const tone = bundle.present ? 'var(--success)' : 'var(--danger)'
+              {paged.slice.map((bundle, index) => {
+                const present = bundle.present
+                const localCopy = bundle.where === 'both'
+                const copies = present ? copiesOf(bundle.name) : 1
                 const megaLink = linkOf(bundle)
+                const cardKey = `${bundle.name}-${index}`
+                const tone = !present
+                  ? 'var(--danger)'
+                  : localCopy ? 'var(--accent)' : 'var(--success)'
                 return (
-                  <div key={bundle.name} className="timeline-item mb-2 last:mb-0">
+                  <div key={cardKey} className="timeline-item mb-2 last:mb-0">
                     <span className="timeline-node" style={{ '--node': tone } as CSSProperties} />
-                    <div className="timeline-card" data-flag={!bundle.present}>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="min-w-0 truncate font-mono text-[12px]" title={bundle.name}>
-                          {bundle.dir}
-                        </span>
-                        <div className="flex flex-wrap items-center justify-end gap-1.5">
-                          <Chip size="sm" variant="soft" color={bundle.present ? 'success' : 'warning'}>
-                            {bundle.present ? `${bundle.where} · present` : 'not on MEGA'}
+                    <div className="timeline-card artifact-remote-card" data-flag={!present}>
+                      <div className="artifact-remote-row">
+                        <div className="artifact-remote-title">
+                          <Icon name="folder" size={14} />
+                          <span className="artifact-remote-name" title={bundle.dir}>
+                            {bundle.dir}
+                          </span>
+                          {copies > 1 && (
+                            <Chip size="sm" variant="soft" color="warning">
+                              {copies} copies
+                            </Chip>
+                          )}
+                        </div>
+                        <div className="artifact-remote-chips">
+                          <Chip size="sm" variant="soft" color={present ? (localCopy ? 'accent' : 'success') : 'warning'}>
+                            {present
+                              ? localCopy ? 'on MEGA · local copy' : 'on MEGA'
+                              : 'not on MEGA'}
                           </Chip>
-                          <Chip size="sm" variant="soft">{bundle.file_count} files</Chip>
-                          <Chip size="sm" variant="soft">{bytes(bundle.bytes)}</Chip>
-                          {bundle.present && bundle.where !== 'remote' && (
+                          {present && (bundle.where === 'remote' || localCopy) && (
+                            <button
+                              type="button"
+                              className="artifact-action"
+                              title={localCopy
+                                ? 'This bundle is already available locally; open that copy instead.'
+                                : 'Recover this bundle from MEGA'}
+                              onClick={() => void recover(bundle.name)}
+                              disabled={recovering !== null || localCopy}
+                            >
+                              {localCopy
+                                ? 'Already local'
+                                : recovering === bundle.name ? 'Recovering…' : 'Recover from MEGA'}
+                              {!localCopy && <span aria-hidden="true">↓</span>}
+                            </button>
+                          )}
+                          {present && bundle.where !== 'remote' && (
                             <a
                               className="artifact-action"
                               href={api.artifactArchiveUrl(bundle.name)}
@@ -570,93 +933,152 @@ function RemoteList({
                               <span aria-hidden="true">↗</span>
                             </a>
                           )}
-                          {bundle.present &&
-                            (bundle.where === 'remote' || bundle.where === 'both') && (
-                            <button
-                              type="button"
-                              className="artifact-action"
-                              title={bundle.where === 'both'
-                                ? 'This bundle is already available locally; open that copy instead.'
-                                : 'Recover this bundle from MEGA'}
-                              onClick={() => void recover(bundle.name)}
-                              disabled={recovering !== null || bundle.where === 'both'}
-                            >
-                              {bundle.where === 'both'
-                                ? 'Already local'
-                                : recovering === bundle.name ? 'Recovering…' : 'Recover from MEGA'}
-                              {bundle.where !== 'both' && <span aria-hidden="true">↓</span>}
-                            </button>
-                          )}
-                          {/* A public link is how a bundle reaches someone on
-                              another machine. Only for bundles MEGA is listing
-                              now - a remembered entry has nothing to link to.
-                              Asking for one publishes the evidence, which is
-                              why it is a click rather than a poll side effect. */}
-                          {bundle.present &&
-                            (bundle.where === 'remote' || bundle.where === 'both') && (
-                            megaLink ? (
-                              <a
-                                className="artifact-action"
-                                href={megaLink}
-                                target="_blank"
-                                rel="noreferrer"
-                                title={encryptEnabled
-                                  ? 'Open this bundle on MEGA - the zip inside is password-protected'
-                                  : 'Open this bundle on MEGA - it is NOT password-protected'}
-                              >
-                                Open on MEGA
-                                <span aria-hidden="true">↗</span>
-                              </a>
-                            ) : (
-                              <button
-                                type="button"
-                                className="artifact-action"
-                                title="Create a public MEGA link for this bundle and show it here"
-                                onClick={() => void requestLink(bundle.name)}
-                                disabled={linkBusy !== null}
-                              >
-                                {linkBusy === bundle.name ? 'Creating link…' : 'Get MEGA link'}
-                                <span aria-hidden="true">🔗</span>
-                              </button>
-                            )
-                          )}
-                          {/* Export lives in the Local tab: a bundle MEGA is
-                              listing is already there, and one it is not
-                              listing is not a remote artifact. */}
                         </div>
                       </div>
-                      <div className="artifact-bundle-details">
-                        <span>Timestamp</span>
-                        <span className="font-mono">{bundle.date_text ?? shortStamp(bundle.modified)}</span>
-                        <span>Last seen</span>
-                        <span className="font-mono">{ago(bundle.last_seen ?? bundle.modified)}</span>
-                        <span>Remote files</span>
-                        <span className="min-w-0 break-all font-mono">
-                          {bundle.files.map((file) => file.name).filter(Boolean).join(', ') || 'No files listed'}
-                        </span>
+
+                      <div className="artifact-remote-meta">
+                        <div>
+                          <span>Uploaded</span>
+                          <strong className="font-mono">{bundle.date_text ?? shortStamp(bundle.modified)}</strong>
+                        </div>
+                        <div>
+                          <span>Last seen</span>
+                          <strong>{ago(bundle.last_seen ?? bundle.modified)}</strong>
+                        </div>
+                        <div>
+                          <span>Archive</span>
+                          <strong className="font-mono" title={bundle.archive ?? undefined}>
+                            {bundle.archive ?? 'No archive'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Size</span>
+                          <strong>
+                            {bytes(bundle.bytes)}
+                            {bundle.total_bytes > bundle.bytes && (
+                              <span className="artifact-remote-meta-note">
+                                {' '}of {bytes(bundle.total_bytes)}
+                              </span>
+                            )}
+                          </strong>
+                        </div>
                       </div>
-                      {/* The URL itself, not only a link label: the point of the
-                          share is to hand it to someone, and a copy button next
-                          to the URL is how it gets into a chat or a ticket. */}
-                      {megaLink && (
-                        <div className="artifact-bundle-details">
-                          <span>MEGA link</span>
-                          <span className="flex min-w-0 flex-wrap items-center gap-2">
+
+                      <RemoteFileChips
+                        files={bundle.files}
+                        fileCount={bundle.file_count}
+                      />
+
+                      {/* A public link is how a bundle reaches someone on
+                          another machine. Only for bundles MEGA is listing now -
+                          a remembered entry has nothing to link to. Asking for
+                          one publishes the evidence, which is why it is a click
+                          rather than a poll side effect; deleting one is the
+                          explicit inverse. */}
+                      {present && (bundle.where === 'remote' || localCopy) && (
+                        <div className="artifact-link-panel" data-live={Boolean(megaLink)}>
+                          <div className="artifact-link-head">
+                            <span className="artifact-link-label">
+                              <Icon name="link" size={13} />
+                              Public MEGA link
+                              {megaLink && !encryptEnabled && (
+                                <Chip size="sm" variant="soft" color="warning">unprotected</Chip>
+                              )}
+                            </span>
+                            <div className="artifact-link-actions">
+                              {megaLink ? (
+                                <>
+                                  <a
+                                    className="artifact-action"
+                                    href={megaLink}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title={encryptEnabled
+                                      ? 'Open this bundle on MEGA - the zip inside is password-protected'
+                                      : 'Open this bundle on MEGA - it is NOT password-protected'}
+                                  >
+                                    Open on MEGA
+                                    <span aria-hidden="true">↗</span>
+                                  </a>
+                                  <CopyButton text={megaLink} variant="ghost">Copy link</CopyButton>
+                                  <button
+                                    type="button"
+                                    className="artifact-action artifact-action-danger"
+                                    onClick={() => {
+                                      setLinkError(null)
+                                      setConfirmRevoke(cardKey)
+                                    }}
+                                    disabled={linkBusy !== null}
+                                    title="Revoke this public link; the bundle stays on MEGA"
+                                  >
+                                    <Icon name="x" size={12} />
+                                    Delete link
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="artifact-action"
+                                  title="Create a public MEGA link for this bundle and show it here"
+                                  onClick={() => void requestLink(bundle.name)}
+                                  disabled={linkBusy !== null}
+                                >
+                                  <Icon name="link" size={12} />
+                                  {linkBusy === bundle.name ? 'Creating link…' : 'Create public link'}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {megaLink ? (
                             <a
-                              className="min-w-0 break-all font-mono text-[11px] text-accent-400 underline underline-offset-2"
+                              className="artifact-link-url"
                               href={megaLink}
                               target="_blank"
                               rel="noreferrer"
                             >
                               {megaLink}
                             </a>
-                            <CopyButton text={megaLink} variant="ghost">Copy link</CopyButton>
-                            {!encryptEnabled && (
-                              <Chip size="sm" variant="soft" color="warning">unprotected</Chip>
-                            )}
-                          </span>
+                          ) : (
+                            <p className="artifact-link-hint">
+                              Not shared. Creating a link publishes this folder
+                              {' - '}
+                              {encryptEnabled
+                                ? 'the zip inside is password-protected'
+                                : 'the bundle is NOT password-protected'}.
+                            </p>
+                          )}
+
+                          {confirmRevoke === cardKey && megaLink && (
+                            <div className="artifact-link-confirm" role="alert">
+                              <Icon name="alert-circle" size={15} />
+                              <span>
+                                Revoke this public link? Anyone holding it loses
+                                access immediately. The bundle itself stays on MEGA.
+                              </span>
+                              <div className="artifact-link-confirm-actions">
+                                <button
+                                  type="button"
+                                  className="artifact-action artifact-action-danger"
+                                  onClick={() => void revoke(bundle.name)}
+                                  disabled={linkBusy !== null}
+                                >
+                                  {linkBusy === bundle.name ? 'Revoking…' : 'Yes, delete link'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="artifact-action"
+                                  onClick={() => setConfirmRevoke(null)}
+                                  disabled={linkBusy !== null}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
+
                       {recoverError?.name === bundle.name && (
                         <Alert status="danger" className="mt-2">
                           <Alert.Title>Recovery failed</Alert.Title>
@@ -665,7 +1087,7 @@ function RemoteList({
                       )}
                       {linkError?.name === bundle.name && (
                         <Alert status="danger" className="mt-2">
-                          <Alert.Title>Could not create the MEGA link</Alert.Title>
+                          <Alert.Title>Could not change the MEGA link</Alert.Title>
                           <Alert.Description>{linkError.message}</Alert.Description>
                         </Alert>
                       )}
@@ -892,6 +1314,7 @@ export default function Artifacts() {
                   refreshing={data.remote?.refreshing ?? false}
                   rootExists={data.remote?.root_exists ?? true}
                   remoteRoot={data.remote?.remote_root ?? '/'}
+                  account={data.remote?.account ?? null}
                   onRecovered={refreshNow}
                   historyPath={data.history?.path ?? ''}
                   historyWritten={data.history?.written ?? false}

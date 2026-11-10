@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -80,15 +81,22 @@ class TestSettings:
     def test_defaults_are_disabled_and_profile_the_analyzer(self, repo):
         assert M.load(repo) == {
             "enabled": False, "target": "analyzer", "sample": "",
+            "keep_open": False,
         }
 
     def test_write_round_trips(self, repo):
         M.write(repo, {
             "enabled": True, "target": "sample", "sample": "samples/sample.exe",
+            "keep_open": True,
         })
         assert M.load(repo) == {
             "enabled": True, "target": "sample", "sample": "samples/sample.exe",
+            "keep_open": True,
         }
+
+    def test_keep_open_rejects_a_non_boolean(self, repo):
+        with pytest.raises(ValueError, match="'keep_open' must be a boolean"):
+            M.write(repo, {"keep_open": "sometimes"})
 
     def test_unknown_key_is_refused(self, repo):
         with pytest.raises(ValueError, match="not a memory-profiling setting"):
@@ -171,7 +179,7 @@ class TestVMMapCommand:
 
 
 class TestVMMapCSV:
-    def test_parses_category_summary_and_root_regions(self, tmp_path):
+    def test_parses_category_summary_and_region_tree(self, tmp_path):
         csv_export = tmp_path / "layout.csv"
         csv_export.write_text(
             '"Process:","sample.exe"\r\n'
@@ -203,15 +211,124 @@ class TestVMMapCSV:
             "total_ws_bytes": 64 * 1024,
             "private_ws_bytes": 32 * 1024,
         }]
-        assert result["region_count"] == 1
+        assert result["root_count"] == 1
+        assert result["region_count"] == 2
+        assert result["region_total"] == 2
         assert result["regions"][0]["address"] == "0000000000100000"
         assert result["regions"][0]["details"] == "sample heap"
+        assert result["regions"][0]["children"][0]["address"] == "0000000000100000"
+        assert result["regions"][0]["children"][0]["details"] == "child region"
+
+    def test_duplicate_child_is_collapsed_into_the_tree(self, tmp_path):
+        csv_export = tmp_path / "layout.csv"
+        csv_export.write_text(
+            '"Type","Size","Committed","Private","Total WS","Private WS",\r\n'
+            '"Total","1 024","512","256","128","64"\r\n'
+            '"Heap","512","256","128","64","32"\r\n\r\n'
+            '"Address","Type","Size","Committed","Private","Total WS",'
+            '"Private WS","Protection","Details",\r\n'
+            '"0000000000100000","Heap","512","256","128","64",'
+            '"32","Read/Write","sample heap"\r\n'
+            '"  0000000000100000","Heap","512","256","128","64",'
+            '"32","Read/Write","sample heap"\r\n',
+            encoding="utf-8",
+        )
+
+        result = M._parse_vmmap_csv(csv_export)
+
+        assert result["root_count"] == 1
+        assert result["region_count"] == 1
+        assert result["regions"][0]["children"] == []
+
+    def test_same_region_with_child_detail_is_folded(self, tmp_path):
+        csv_export = tmp_path / "layout.csv"
+        csv_export.write_text(
+            '"Type","Size","Committed","Private","Total WS","Private WS",\r\n'
+            '"Total","1 024","512","256","128","64"\r\n'
+            '"Heap","512","256","128","64","32"\r\n\r\n'
+            '"Address","Type","Size","Committed","Private","Total WS",'
+            '"Private WS","Shareable WS","Shared WS","Locked WS","Blocks",'
+            '"Protection","Details",\r\n'
+            '"0000000000100000","Heap","512","256","128","64",'
+            '"32","16","16","","1","Read/Write",""\r\n'
+            '"  0000000000100000","Heap","512","256","128","64",'
+            '"32","16","16","","","Read/Write","Thread Environment Block"\r\n',
+            encoding="utf-8",
+        )
+
+        result = M._parse_vmmap_csv(csv_export)
+
+        assert result["root_count"] == 1
+        assert result["region_count"] == 1
+        assert result["regions"][0]["children"] == []
+        assert result["regions"][0]["details"] == "Thread Environment Block"
+
+    def test_nested_regions_keep_their_parent(self, tmp_path):
+        csv_export = tmp_path / "layout.csv"
+        csv_export.write_text(
+            '"Type","Size","Committed","Private","Total WS","Private WS",\r\n'
+            '"Total","1 024","512","256","128","64"\r\n'
+            '"Heap","512","256","128","64","32"\r\n\r\n'
+            '"Address","Type","Size","Committed","Private","Total WS",'
+            '"Private WS","Protection","Details",\r\n'
+            '"0000000000100000","Heap","512","256","128","64",'
+            '"32","Read/Write","sample heap"\r\n'
+            '"  0000000000101000","Heap","256","128","64","32",'
+            '"16","Read/Write","child region"\r\n'
+            '"    0000000000102000","Heap","64","32","16","8",'
+            '"4","Read/Write","grandchild region"\r\n',
+            encoding="utf-8",
+        )
+
+        result = M._parse_vmmap_csv(csv_export)
+
+        root = result["regions"][0]
+        assert root["children"][0]["details"] == "child region"
+        assert root["children"][0]["children"][0]["details"] == "grandchild region"
+        assert result["region_count"] == 3
 
     def test_refuses_oversized_export(self, tmp_path):
         csv_export = tmp_path / "large.csv"
         csv_export.write_bytes(b"x" * (M.MAX_LAYOUT_BYTES + 1))
         with pytest.raises(ValueError, match="too large"):
             M._parse_vmmap_csv(csv_export)
+
+
+class TestRecovery:
+    def _export(self, root: Path, name: str) -> Path:
+        directory = root / M.OUTPUT_RELATIVE / name
+        directory.mkdir(parents=True)
+        (directory / "memory-map.csv").write_text(
+            '"Process:","static_analyzer.exe"\r\n'
+            '"PID:","1234"\r\n\r\n'
+            '"Type","Size","Committed","Private","Total WS","Private WS",\r\n'
+            '"Total","1 024","512","256","128","64"\r\n'
+            '"Heap","512","256","128","64","32"\r\n\r\n'
+            '"Address","Type","Size","Committed","Private","Total WS",'
+            '"Private WS","Protection","Details",\r\n'
+            '"0000000000100000","Heap","512","256","128","64",'
+            '"32","Read/Write","sample heap"\r\n',
+            encoding="utf-8",
+        )
+        (directory / "target.log").write_text("analyzer output\n", encoding="utf-8")
+        return directory
+
+    def test_snapshot_recovers_the_newest_export(self, repo):
+        old = self._export(repo, "20260101-000000-aaaaaa")
+        new = self._export(repo, "20260102-000000-bbbbbb")
+        os.utime(old, (1_700_000_000, 1_700_000_000))
+        os.utime(new, (1_700_000_100, 1_700_000_100))
+        M._jobs.clear()
+        try:
+            snapshot = M.snapshot(repo)
+            assert snapshot["last"]["id"] == new.name
+            assert snapshot["last"]["state"] == "done"
+            assert snapshot["last"]["csv_path"].endswith("memory-map.csv")
+            assert "Recovered" in snapshot["last"]["warning"]
+            layout = M.layout(new.name)
+            assert layout["layout"]["root_count"] == 1
+        finally:
+            M._jobs.clear()
 
 
 class TestStart:
@@ -242,6 +359,8 @@ class TestStart:
         assert Path(finished["report_dir"]).parent.name == "memory_profiling"
         assert Path(finished["snapshot_path"]).is_file()
         assert Path(finished["csv_path"]).is_file()
+        assert M.snapshot_file(result["job"]["id"]) == Path(finished["snapshot_path"])
+        assert M.csv_file(result["job"]["id"]) == Path(finished["csv_path"])
 
     def test_generated_executable_is_captured_as_sample(self, repo, monkeypatch):
         _fake_popen(monkeypatch)
@@ -285,6 +404,67 @@ class TestProfileWorker:
         assert captured["env"]["STATIC_ANALYZER_CURSES"] == "0"
         assert captured["env"]["CTI_SKIP"] == "1"
         assert captured["env"]["IA_ARTIFACT_UPLOAD"] == "0"
+
+    def test_target_output_is_kept_separate_from_vmmap_output(
+            self, repo, monkeypatch, tmp_path):
+        def fake_popen(args, **kwargs):
+            kwargs["stdout"].write("analyzer says hello\n")
+            return FakeProcess()
+
+        monkeypatch.setattr(M, "_POPEN", fake_popen)
+        monkeypatch.setattr(M, "_RUN", _fake_vmmap)
+        job_id = "mtargetlog"
+        out_dir = tmp_path / "reports"
+        self._job(job_id, out_dir)
+        try:
+            sample = (repo / "samples" / "sample.exe").resolve()
+            M._run_profile(job_id, repo, "analyzer", sample, 10)
+            result = M.job(job_id)
+            assert "analyzer says hello" in result["target_log"]
+            assert all("analyzer says hello" not in line for line in result["log"])
+        finally:
+            M._jobs.pop(job_id, None)
+
+    def test_keep_open_launches_the_saved_snapshot_in_vmmap(
+            self, repo, monkeypatch, tmp_path):
+        spawned = []
+        _fake_popen(monkeypatch)
+        monkeypatch.setattr(M, "_RUN", _fake_vmmap)
+        monkeypatch.setattr(
+            M, "_SPAWN", lambda args, **kwargs: spawned.append(args))
+        job_id = "mkeepopen"
+        out_dir = tmp_path / "reports"
+        self._job(job_id, out_dir)
+        M._jobs[job_id]["keep_open"] = True
+        try:
+            sample = (repo / "samples" / "sample.exe").resolve()
+            M._run_profile(job_id, repo, "analyzer", sample, 10)
+            result = M.job(job_id)
+            assert result["state"] == "done"
+            assert result["keep_open"] is True
+            assert spawned
+            assert spawned[0][-2] == "-o"
+            assert spawned[0][-1].endswith("snapshot.mmp")
+            assert any("VMMap GUI opened" in line for line in result["log"])
+        finally:
+            M._jobs.pop(job_id, None)
+
+    def test_keep_open_is_off_by_default(
+            self, repo, monkeypatch, tmp_path):
+        spawned = []
+        _fake_popen(monkeypatch)
+        monkeypatch.setattr(M, "_RUN", _fake_vmmap)
+        monkeypatch.setattr(
+            M, "_SPAWN", lambda args, **kwargs: spawned.append(args))
+        job_id = "mguiclosed"
+        out_dir = tmp_path / "reports"
+        self._job(job_id, out_dir)
+        try:
+            sample = (repo / "samples" / "sample.exe").resolve()
+            M._run_profile(job_id, repo, "analyzer", sample, 10)
+            assert spawned == []
+        finally:
+            M._jobs.pop(job_id, None)
 
     def test_vmmap_failure_kills_target_and_is_reported(
             self, repo, monkeypatch, tmp_path):

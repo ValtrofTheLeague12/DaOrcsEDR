@@ -30,7 +30,6 @@ export interface VmTarget {
   path?: string
   /** What this target is for - shown so a new VM is self-explanatory. */
   purpose: string
-  slice?: string
 }
 
 export const VM_TARGETS: VmTarget[] = [
@@ -41,7 +40,6 @@ export const VM_TARGETS: VmTarget[] = [
     kind: 'local',
     host: '',
     purpose: 'Power, endpoints and SSH trust for every machine below',
-    slice: 'slice 4',
   },
   // --- machines -----------------------------------------------------------
   {
@@ -53,7 +51,6 @@ export const VM_TARGETS: VmTarget[] = [
     port: 22,
     username: 'qilin',
     purpose: 'CPU-emulation sandbox. VirtualBox host-only 192.168.56.0/24',
-    slice: 'slice 4',
   },
   {
     id: 'cape-vm',
@@ -64,7 +61,6 @@ export const VM_TARGETS: VmTarget[] = [
     port: 8090,
     path: '/apiv2/',
     purpose: 'Dynamic sandbox. Windows VM driven over its REST API',
-    slice: 'slice 4',
   },
   // --- guests running on a machine ----------------------------------------
   {
@@ -75,7 +71,6 @@ export const VM_TARGETS: VmTarget[] = [
     hostedOn: 'qiling-vm',
     host: 'unix:/var/run/clamav/clamd.ctl',
     purpose: 'Signature scanner. Guest on the Qiling VM, reached over SSH',
-    slice: 'slice 5',
   },
   {
     id: 'qiling',
@@ -87,7 +82,6 @@ export const VM_TARGETS: VmTarget[] = [
     port: 22,
     username: 'qilin',
     purpose: 'PE emulation harness. Guest on the Qiling VM, systemd oneshot',
-    slice: 'slice 5',
   },
 ]
 

@@ -90,16 +90,17 @@ class TestOfferedOptions:
 
     def test_a_pipeline_page_is_offered_the_run_wide_keys_only(self, pipelines):
         # Same list on a one-phase pipeline and on a full one: the run-wide
-        # set is static, a property of the keys, not of the plan. Thirteen
-        # keys: the original cursing/dump/signal/trace group plus the tracer
-        # hard-off, the packed tripwire pair and the MEGA upload overrides -
-        # the same set the C++ kKeys list carries minus the machine-wide
-        # CTI/ML/TRACE keys this class's parity tests keep in their place.
+        # set is static, a property of the keys, not of the plan. The original
+        # cursing/dump/signal/trace group plus the tracer hard-off, the packed
+        # tripwire pair and the MEGA upload overrides (including the per-bundle
+        # password switch) - the same set the C++ kKeys list carries minus the
+        # machine-wide CTI/ML/TRACE keys this class's parity tests keep in their
+        # place.
         expected = ["STATIC_ANALYZER_CURSES", "IA_ALLOW_CORE_DUMP",
                     "IA_CONTINUE_ON_SIGNAL", "TRACE_FILE",
                     "ENABLE_TRACING", "IA_INTERRUPT_IF_PACKED",
                     "IA_INTERRUPT_ENTROPY", "MEGA_UPLOAD", "MEGA_REMOTE_ROOT",
-                    "MEGA_SEAL", "MEGA_TIMEOUT"]
+                    "MEGA_SEAL", "MEGA_PER_BUNDLE_PASSWORD", "MEGA_TIMEOUT"]
         for name in ("capa", "model"):
             options = [o["key"] for o in _entry(pipelines, name)["options"]]
             assert options == expected, name
@@ -138,7 +139,8 @@ class TestOfferedOptions:
                            "IA_CONTINUE_ON_SIGNAL", "TRACE_FILE",
                            "ENABLE_TRACING", "IA_INTERRUPT_IF_PACKED",
                            "IA_INTERRUPT_ENTROPY", "MEGA_UPLOAD",
-                           "MEGA_REMOTE_ROOT", "MEGA_SEAL", "MEGA_TIMEOUT"]
+                           "MEGA_REMOTE_ROOT", "MEGA_SEAL",
+                           "MEGA_PER_BUNDLE_PASSWORD", "MEGA_TIMEOUT"]
         assert all("irrelevant" not in e for e in entry["environment"])
 
 

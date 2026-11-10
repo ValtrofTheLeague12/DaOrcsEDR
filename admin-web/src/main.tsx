@@ -3,6 +3,9 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import { initTheme } from './lib/theme'
 import './styles.css'
+// Theme layer must load last so its tokens and component refinements win over
+// the original console design system.
+import './theme.css'
 
 // Applied before the first render so there is no flash of the wrong theme.
 // index.html ships data-theme="dark" for exactly this reason.

@@ -6,6 +6,7 @@ import { Chip } from '@heroui/react/chip'
 import { api } from '../api'
 import Loading from '../components/Loading'
 import MemoryLayout from '../components/MemoryLayout'
+import MemoryOutput from '../components/MemoryOutput'
 import Switch from '../components/Switch'
 import type {
   MemoryProfilingJob,
@@ -38,6 +39,7 @@ export default function MemoryProfiling() {
     enabled?: boolean
     target?: MemoryProfilingTarget
     sample?: string | null
+    keep_open?: boolean
   }) => {
     setSaving(true)
     setError(null)
@@ -58,7 +60,10 @@ export default function MemoryProfiling() {
     try {
       const response = await api.runMemoryProfiling({
         target: memory.settings.target,
-        sample: memory.settings.sample || null,
+        // A capture always needs a sample. When the stored setting is empty,
+        // use the first one the picker found rather than sending null and
+        // having the request refused.
+        sample: memory.settings.sample || memory.samples[0]?.path || null,
       })
       setJob(response.job)
     } catch (exc) {
@@ -92,11 +97,16 @@ export default function MemoryProfiling() {
   }
 
   const current = memory
+  // The stored setting starts empty, and the backend refuses to profile either
+  // target without a sample. Falling back to the first discovered sample keeps
+  // the page usable on a machine that has one instead of showing a permanently
+  // disabled Capture button next to the "choose a Windows .exe" placeholder.
+  const selectedSample = current?.settings.sample || current?.samples[0]?.path || ''
   const ready = Boolean(
     current?.settings.enabled
     && current.vmmap.installed
     && (current.settings.target !== 'analyzer' || current.vmmap.analyzer_present)
-    && current.settings.sample,
+    && selectedSample,
   )
 
   return (
@@ -145,6 +155,14 @@ export default function MemoryProfiling() {
                 footnote={current.path}
               />
 
+              <Switch
+                label="Keep VMMap GUI open"
+                checked={current.settings.keep_open}
+                pending={saving}
+                onChange={(value) => void save({ keep_open: value })}
+                detail="After a successful capture, open the saved .mmp in VMMap's GUI and leave it running. Without this, VMMap only writes the export and exits."
+              />
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="flex flex-col gap-1.5">
                   <span className="text-xs font-medium text-default-700">Process to capture</span>
@@ -171,7 +189,7 @@ export default function MemoryProfiling() {
                   </span>
                   <select
                     className="field font-mono"
-                    value={current.settings.sample}
+                    value={selectedSample}
                     disabled={saving}
                     onChange={(event) => void save({ sample: event.currentTarget.value })}
                   >
@@ -185,8 +203,8 @@ export default function MemoryProfiling() {
                     ))}
                   </select>
                   <span className="text-[11px] text-default-500">
-                    Required for either target. The analyzer otherwise defaults
-                    to <code>a.exe</code>, which may not exist.
+                    Required for either target. When none is stored, the first
+                    sample found is used.
                   </span>
                 </label>
               </div>
@@ -277,15 +295,23 @@ export default function MemoryProfiling() {
               <Card.Content>
                 {job.error && <p className="mb-2 text-xs text-danger">{job.error}</p>}
                 {job.warning && <p className="mb-2 text-xs text-warning">{job.warning}</p>}
-                {job.state === 'failed' && job.log.length > 0 && (
-                  <details className="mb-3">
-                    <summary className="cursor-pointer text-xs text-default-500">Capture log</summary>
-                    <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-default-100 p-3 font-mono text-[10px]">
-                      {job.log.join('\n')}
-                    </pre>
-                  </details>
-                )}
                 <MemoryLayout job={job} />
+              </Card.Content>
+            </Card>
+          )}
+
+          {job && (
+            <Card className="w-full">
+              <Card.Header>
+                <div>
+                  <Card.Title className="text-sm font-semibold">VMMap output</Card.Title>
+                  <p className="mt-1 text-[11px] text-default-500">
+                    Console output and exported files from this capture
+                  </p>
+                </div>
+              </Card.Header>
+              <Card.Content>
+                <MemoryOutput job={job} />
               </Card.Content>
             </Card>
           )}

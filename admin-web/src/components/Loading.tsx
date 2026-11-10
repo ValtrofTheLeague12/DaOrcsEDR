@@ -1,4 +1,4 @@
-import { Spinner } from '@heroui/react/spinner'
+import LogoSpinner from './LogoSpinner'
 // First-load indicator, shared so every panel says the same thing while it is
 // still waiting on a probe.
 //
@@ -29,7 +29,7 @@ export default function Loading({
       role="status"
       aria-live="polite"
     >
-      <Spinner size="md" />
+      <LogoSpinner size={44} />
       <div className="text-center">
         <p className="text-sm text-default-500">{label}</p>
         {hint && <p className="mt-1 font-mono text-[10px] text-default-400">{hint}</p>}

@@ -1,0 +1,1328 @@
+/* ==========================================================================
+   Theme layer — clean, calm operator UI (light first, dark supported).
+   Loaded after console.css: re-points HeroUI tokens and styles the new shell.
+   ========================================================================== */
+
+:root,
+[data-theme="light"] {
+  --font-sans: "Inter Tight", "IBM Plex Sans", system-ui, sans-serif;
+  --font-display: "Inter Tight", "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --font-mono: var(--mono);
+  --radius: 0.75rem;
+
+  --background: oklch(0.975 0.003 250);
+  --foreground: oklch(0.23 0.02 260);
+  --surface: oklch(1 0 0);
+  --surface-secondary: oklch(0.965 0.004 250);
+  --overlay: oklch(1 0 0);
+  --field-background: oklch(1 0 0);
+  --default: oklch(0.95 0.005 250);
+  --segment: oklch(1 0 0);
+  --muted: oklch(0.52 0.018 260);
+  --border: oklch(0.915 0.006 250);
+  --separator: oklch(0.93 0.005 250);
+
+  --accent: oklch(0.55 0.19 258);
+  --accent-foreground: oklch(0.99 0 0);
+  --focus: var(--accent);
+  --success: oklch(0.6 0.15 155);
+  --warning: oklch(0.72 0.15 70);
+  --danger: oklch(0.58 0.2 25);
+
+  --brand-blue: oklch(0.55 0.19 258);
+  --brand-violet: oklch(0.58 0.12 220);
+  --brand-cyan: oklch(0.6 0.11 205);
+  --brand-emerald: oklch(0.6 0.14 158);
+  --brand-amber: oklch(0.7 0.14 70);
+  --brand-rose: oklch(0.6 0.18 20);
+  --brand-gradient: linear-gradient(135deg, var(--accent), var(--brand-cyan));
+
+  --console-border: var(--border);
+  --console-shadow: 0 1px 2px oklch(0.3 0.02 260 / 0.05), 0 8px 24px -16px oklch(0.3 0.03 260 / 0.18);
+  --glow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
+
+  --sidebar-bg: oklch(1 0 0);
+  --nav-hover: oklch(0.96 0.005 250);
+  --nav-active: color-mix(in oklab, var(--accent) 9%, var(--surface));
+}
+
+[data-theme="dark"] {
+  --background: oklch(0.17 0.01 260);
+  --foreground: oklch(0.95 0.005 250);
+  --surface: oklch(0.21 0.012 260);
+  --surface-secondary: oklch(0.245 0.013 260);
+  --overlay: oklch(0.22 0.012 260);
+  --field-background: oklch(0.19 0.01 260);
+  --default: oklch(0.27 0.013 260);
+  --segment: oklch(0.3 0.014 260);
+  --muted: oklch(0.7 0.015 255);
+  --border: oklch(0.29 0.013 260);
+  --separator: oklch(0.26 0.012 260);
+
+  --accent: oklch(0.7 0.15 255);
+  --accent-foreground: oklch(0.15 0.02 260);
+  --success: oklch(0.74 0.15 155);
+  --warning: oklch(0.8 0.14 75);
+  --danger: oklch(0.7 0.17 25);
+
+  --brand-violet: oklch(0.74 0.11 220);
+  --brand-cyan: oklch(0.78 0.1 205);
+  --brand-emerald: oklch(0.76 0.13 158);
+  --brand-amber: oklch(0.82 0.13 75);
+  --brand-rose: oklch(0.72 0.16 20);
+
+  --console-shadow: 0 10px 30px -20px oklch(0 0 0 / 0.6);
+  --sidebar-bg: oklch(0.19 0.011 260);
+  --nav-hover: oklch(0.24 0.012 260);
+  --nav-active: color-mix(in oklab, var(--accent) 16%, var(--surface));
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- shell ---------------------------------------------------------------- */
+
+.ui-shell {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  height: 100%;
+}
+
+.ui-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+}
+
+.ui-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 1.15rem 1.1rem 0.9rem;
+}
+
+.ui-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  border-radius: 0.65rem;
+  background: var(--brand-gradient);
+  color: var(--accent-foreground);
+  box-shadow: 0 6px 16px -8px var(--accent);
+}
+
+.ui-brand-name {
+  font-size: 0.92rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--foreground);
+}
+
+.ui-brand-sub {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.ui-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.25rem 0.9rem 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--surface-secondary);
+  color: var(--muted);
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.ui-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--glow);
+}
+
+.ui-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 0.8rem;
+  color: var(--foreground);
+}
+
+.ui-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.25rem 0.65rem 1rem;
+  scrollbar-width: thin;
+}
+
+.ui-nav-group + .ui-nav-group {
+  margin-top: 0.6rem;
+}
+
+.ui-nav-heading {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.6rem 0.3rem;
+  border: 0;
+  background: transparent;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ui-nav-heading:hover {
+  color: var(--foreground);
+}
+
+.ui-chev {
+  display: inline-flex;
+  transition: transform 160ms;
+}
+
+.ui-chev.open {
+  transform: rotate(90deg);
+}
+
+.ui-nav-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 0.65rem;
+  border: 0;
+  border-radius: 0.55rem;
+  background: transparent;
+  font-size: 0.84rem;
+  font-weight: 480;
+  color: color-mix(in oklab, var(--foreground) 78%, var(--muted));
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms, color 140ms;
+}
+
+.ui-nav-item svg {
+  color: var(--muted);
+  flex: none;
+}
+
+.ui-nav-item:hover {
+  background: var(--nav-hover);
+  color: var(--foreground);
+}
+
+.ui-nav-item.active {
+  background: var(--nav-active);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ui-nav-item.active svg {
+  color: var(--accent);
+}
+
+.ui-nav-empty {
+  padding: 1rem 0.6rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.ui-sidebar-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+.ui-main {
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.ui-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  height: 3.5rem;
+  padding: 0 2rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--background) 85%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.ui-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.ui-crumbs strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.ui-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.32rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 500;
+}
+
+.ui-status.ok {
+  color: var(--success);
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+}
+
+.ui-status.down {
+  color: var(--danger);
+  background: color-mix(in oklab, var(--danger) 10%, transparent);
+}
+
+.ui-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.ui-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin: 1.5rem 2rem 0;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid color-mix(in oklab, var(--warning) 35%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--warning) 9%, var(--surface));
+  font-size: 0.82rem;
+  color: var(--foreground);
+}
+
+.ui-banner svg {
+  color: var(--warning);
+  margin-top: 0.1rem;
+  flex: none;
+}
+
+.ui-content {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 1.75rem 2rem 3rem;
+  animation: ui-in 280ms ease-out both;
+}
+
+@keyframes ui-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* --- panel content refinements ------------------------------------------- */
+
+.page-title {
+  padding-left: 0;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  background: none;
+  color: var(--foreground);
+}
+
+.page-title::before { display: none; }
+
+.card {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--console-shadow);
+}
+
+.stat-tile {
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--console-shadow);
+}
+
+.stat-tile:hover {
+  background: var(--surface);
+}
+
+.stat-tile::after { display: none; }
+
+.metric,
+.font-mono {
+  font-feature-settings: "zero", "tnum";
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 25%, transparent);
+}
+
+/* --- threat intelligence: modular sections -------------------------------- */
+
+.threat-page { gap: 1.25rem; }
+
+.threat-header {
+  padding: 1.4rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 0.25rem);
+  background:
+    radial-gradient(120% 140% at 100% 0%, color-mix(in oklab, var(--accent) 10%, transparent), transparent 55%),
+    var(--surface);
+  box-shadow: var(--console-shadow);
+}
+
+.threat-section-nav {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 5;
+  gap: 0.25rem;
+  width: fit-content;
+  padding: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--console-shadow);
+}
+.threat-section-nav-label { display: none; }
+.threat-section-nav a {
+  border: 0;
+  background: transparent;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+.threat-section-nav a:hover {
+  color: var(--foreground);
+  background: var(--nav-hover);
+}
+
+.threat-server-section,
+.threat-evidence-section,
+.threat-catalog-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.4rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 0.25rem);
+  background: var(--surface);
+  box-shadow: var(--console-shadow);
+}
+
+.threat-server-heading,
+.threat-section-heading,
+.threat-catalog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--separator);
+}
+.threat-server-heading h2,
+.threat-section-heading h2,
+.threat-catalog-heading h2 {
+  margin-top: 0.3rem;
+  font-size: 1.1rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--foreground);
+}
+.threat-server-heading p:last-child,
+.threat-section-heading p:last-child,
+.threat-catalog-heading p:last-child {
+  margin-top: 0.35rem;
+  max-width: 48rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.threat-page .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.threat-subsection {
+  padding: 1rem 1.1rem;
+  border-radius: var(--radius);
+  background: var(--surface-secondary);
+  border-color: var(--separator);
+}
+.threat-subsection-heading h3 { font-size: 0.88rem; }
+.threat-subsection-heading p { font-size: 0.76rem; }
+
+.threat-server-config label span { font-size: 0.76rem; font-weight: 500; }
+.threat-server-config small { font-size: 0.7rem; color: var(--muted); }
+
+.threat-metrics { gap: 0.75rem; }
+.threat-metric {
+  position: relative;
+  overflow: hidden;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.threat-metric::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+}
+.threat-metric:nth-child(2)::before { background: var(--warning); }
+.threat-metric:nth-child(3)::before { background: var(--success); }
+.threat-metric:nth-child(4)::before { background: var(--brand-cyan); }
+.threat-metric .eyebrow {
+  padding: 0; background: none; color: var(--muted);
+}
+.threat-metric strong {
+  font-size: 1.75rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.threat-browser,
+.threat-inspector {
+  border-radius: var(--radius);
+  box-shadow: none;
+}
+
+.threat-bundle {
+  border-radius: 0.6rem;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.threat-bundle:hover { background: var(--nav-hover); }
+.threat-bundle.active {
+  background: var(--nav-active);
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--border));
+}
+
+.threat-catalog-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: auto;
+}
+.threat-catalog-table th {
+  background: var(--surface-secondary);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.threat-catalog-table tbody tr:hover { background: var(--nav-hover); }
+
+.threat-ban-output pre,
+.threat-generation-output pre {
+  border-radius: 0.6rem;
+  background: oklch(0.2 0.015 260);
+  color: oklch(0.88 0.02 160);
+  padding: 0.9rem 1rem;
+  font-size: 0.74rem;
+}
+
+.threat-api-section {
+  padding: 1.4rem 1.5rem;
+  border-radius: calc(var(--radius) + 0.25rem);
+  background: var(--surface);
+}
+.threat-api-grid { gap: 1rem; }
+.threat-api-card { border-radius: var(--radius); background: var(--surface-secondary); }
+
+/* --- dashboard ------------------------------------------------------------ */
+
+.stat-tile {
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.stat-tile::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: var(--brand-gradient);
+  opacity: 0.85;
+}
+.stat-tile:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 1px 2px oklch(0.3 0.02 260 / 0.06), 0 16px 32px -18px color-mix(in oklab, var(--accent) 45%, transparent);
+}
+.section-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.meta-pill {
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+/* ==========================================================================
+   Refinement pass
+   Goals: fix dark-mode contrast, drop the decorative gradients, make the
+   density consistent, and let status colour (not tile colour) carry meaning.
+   ========================================================================== */
+
+:root,
+[data-theme="light"] {
+  --radius: 0.625rem;
+  --console-shadow: 0 1px 2px oklch(0.3 0.02 260 / 0.04);
+  --ring-soft: color-mix(in oklab, var(--foreground) 6%, transparent);
+  --brand-gradient: var(--accent);
+}
+
+/* Unstyled text (big metrics, ring labels) used to inherit the UA default,
+   which is black - invisible on the dark surface. */
+body {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+/* --- shell ---------------------------------------------------------------- */
+
+.ui-brand-mark {
+  background: var(--accent);
+  box-shadow: none;
+  border-radius: 0.55rem;
+}
+
+.ui-brand-name { font-size: 0.9rem; }
+
+.ui-nav-heading {
+  padding-top: 0.7rem;
+  letter-spacing: 0.07em;
+  font-size: 0.64rem;
+}
+
+.ui-nav-item {
+  position: relative;
+  padding: 0.42rem 0.65rem;
+  font-size: 0.83rem;
+}
+
+.ui-nav-item.active {
+  background: var(--nav-active);
+}
+
+.ui-nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: -0.65rem;
+  top: 22%;
+  bottom: 22%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.ui-topbar {
+  height: 3.25rem;
+  background: color-mix(in oklab, var(--background) 92%, transparent);
+}
+
+.ui-status { border: 1px solid transparent; font-size: 0.72rem; }
+.ui-status.ok { border-color: color-mix(in oklab, var(--success) 22%, transparent); }
+.ui-status.down { border-color: color-mix(in oklab, var(--danger) 20%, transparent); }
+
+.ui-content { padding-top: 1.5rem; }
+
+/* --- page header ---------------------------------------------------------- */
+
+.page-title {
+  font-size: 1.45rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--foreground);
+  background: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+}
+
+.meta-pill {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.meta-pill::before {
+  width: 0.38rem;
+  height: 0.38rem;
+  background: var(--success);
+  box-shadow: none;
+}
+
+/* --- cards & tiles: flat, one border, one radius -------------------------- */
+
+.stat-tile,
+.card,
+.service-card {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--console-shadow);
+}
+
+.stat-tile { padding: 1.05rem 1.15rem; transform: none; }
+.stat-tile:hover,
+.service-card:hover {
+  transform: none;
+  background: var(--surface);
+  border-color: color-mix(in oklab, var(--foreground) 18%, var(--border));
+  box-shadow: var(--console-shadow);
+}
+
+.stat-tile::after,
+.service-card::before { display: none; }
+
+/* Icon wells: neutral chip, tone only on the glyph. */
+.stat-tile-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--tile-tone, var(--accent)) 11%, transparent);
+  box-shadow: none;
+}
+
+/* Service cards keep a slim status edge, now solid and 2px. */
+.service-card {
+  border-left: 3px solid var(--tile-tone, var(--border));
+  gap: 0.55rem;
+  padding-block: 0.9rem;
+}
+
+.service-card > * { padding-block: 0; }
+
+.eyebrow,
+.section-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+}
+
+.metric { font-weight: 600; }
+
+/* --- controls ------------------------------------------------------------- */
+
+.ui-search,
+.btn-ghost { border-radius: 0.5rem; }
+
+:focus-visible { outline-color: var(--accent); }
+
+/* Tidy scrollbars in the main pane */
+.ui-main { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--foreground) 22%, transparent) transparent; }
+
+/* The earlier dashboard pass painted a 3px gradient bar on every tile; with
+   nine tiles on a page it reads as noise. Status colour now lives on the
+   values, chips and sparklines instead. */
+.stat-tile::before { display: none; }
+.stat-tile:hover { transform: none; }
+
+/* ==========================================================================
+   Motion
+   An opening sequence for the console and entrance choreography for the
+   stats and dashboard surfaces. Everything is transform/opacity (cheap), runs
+   once on mount, and is switched off under prefers-reduced-motion.
+   ========================================================================== */
+
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes m-fade { from { opacity: 0; } }
+@keyframes m-rise { from { opacity: 0; transform: translateY(10px); } }
+@keyframes m-slide-in { from { opacity: 0; transform: translateX(-10px); } }
+@keyframes m-drop { from { opacity: 0; transform: translateY(-8px); } }
+@keyframes m-pop { from { opacity: 0; transform: scale(0.94); } }
+@keyframes m-grow-x { from { transform: scaleX(0); } }
+@keyframes m-reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes m-ring { from { stroke-dashoffset: 190; } }
+@keyframes m-spin { to { transform: rotate(360deg); } }
+@keyframes m-sheen {
+  from { background-position: 160% 0; }
+  to { background-position: -60% 0; }
+}
+
+/* --- opening sequence ----------------------------------------------------- */
+
+.ui-sidebar { animation: m-fade 420ms var(--ease-out) both; }
+.ui-topbar { animation: m-drop 420ms var(--ease-out) 80ms both; }
+.ui-brand-mark { animation: m-pop 520ms var(--ease-out) 120ms both; }
+
+.ui-nav-item,
+.ui-nav-heading { animation: m-slide-in 380ms var(--ease-out) both; }
+
+.ui-nav > .ui-nav-group:nth-child(1) { --g: 0; }
+.ui-nav > .ui-nav-group:nth-child(2) { --g: 1; }
+.ui-nav > .ui-nav-group:nth-child(3) { --g: 2; }
+.ui-nav > .ui-nav-group:nth-child(4) { --g: 3; }
+.ui-nav > .ui-nav-group:nth-child(n+5) { --g: 4; }
+.ui-nav-group > * { animation-delay: calc(140ms + var(--g, 0) * 70ms); }
+
+/* Page switches: content rises in, then its parts follow. */
+.ui-content { animation: m-rise 360ms var(--ease-out) both; }
+
+/* The boot / panel-loading pulse becomes a proper spinner. */
+.animate-pulse.rounded-full.border-2 {
+  animation: m-spin 800ms linear infinite;
+}
+
+/* --- stats & dashboard choreography -------------------------------------- */
+
+.page-title { animation: m-rise 420ms var(--ease-out) 40ms both; }
+.meta-pill { animation: m-fade 500ms ease 200ms both; }
+
+/* Tiles, cards and metric blocks cascade in reading order. */
+.ui-content .stat-tile,
+.ui-content .service-card,
+.ui-content .artifact-metric,
+.ui-content .threat-metric,
+.ui-content .threat-header,
+.ui-content .threat-api-card {
+  animation: m-rise 480ms var(--ease-out) both;
+  animation-delay: calc(110ms + var(--i, 0) * 55ms);
+}
+
+.ui-content :is(.grid, .threat-metrics, .threat-api-grid) > :nth-child(1) { --i: 0; }
+.ui-content :is(.grid, .threat-metrics, .threat-api-grid) > :nth-child(2) { --i: 1; }
+.ui-content :is(.grid, .threat-metrics, .threat-api-grid) > :nth-child(3) { --i: 2; }
+.ui-content :is(.grid, .threat-metrics, .threat-api-grid) > :nth-child(4) { --i: 3; }
+.ui-content :is(.grid, .threat-metrics, .threat-api-grid) > :nth-child(5) { --i: 4; }
+.ui-content :is(.grid, .threat-metrics, .threat-api-grid) > :nth-child(6) { --i: 5; }
+.ui-content :is(.grid, .threat-metrics, .threat-api-grid) > :nth-child(n+7) { --i: 6; }
+
+/* Second row of tiles starts after the first has landed. */
+.ui-content .mt-4 .stat-tile { animation-delay: calc(330ms + var(--i, 0) * 70ms); }
+
+/* Sparklines draw left to right; the area fill is part of the same reveal. */
+.stat-tile svg[role="img"],
+.service-card svg[role="img"] {
+  animation: m-reveal 900ms var(--ease-out) 350ms both;
+}
+
+/* Health ring sweeps to its value (the inline style supplies the end state). */
+.stat-tile svg circle[stroke-dasharray] {
+  animation: m-ring 1100ms var(--ease-out) 400ms both;
+}
+
+/* Progress bars fill from the left. */
+.stat-tile .rounded-full.bg-success,
+.stat-tile .rounded-full.bg-accent,
+.stat-tile .rounded-full.bg-warning,
+.stat-tile .rounded-full.bg-danger {
+  transform-origin: left center;
+  animation: m-grow-x 900ms var(--ease-out) 450ms both;
+}
+
+/* Status chips and dots get a soft arrival. */
+.stat-tile li { animation: m-fade 400ms ease both; animation-delay: calc(500ms + var(--r, 0) * 40ms); }
+.stat-tile li:nth-child(1) { --r: 0; } .stat-tile li:nth-child(2) { --r: 1; }
+.stat-tile li:nth-child(3) { --r: 2; } .stat-tile li:nth-child(4) { --r: 3; }
+.stat-tile li:nth-child(5) { --r: 4; } .stat-tile li:nth-child(6) { --r: 5; }
+.stat-tile li:nth-child(n+7) { --r: 6; }
+
+/* A live status dot breathes, so "connected" feels live. */
+.ui-status.ok .ui-dot { animation: meta-pill-pulse 2.4s ease-in-out infinite; }
+
+/* Interaction: gentle, not bouncy. */
+.stat-tile,
+.service-card {
+  transition: border-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out);
+}
+.ui-nav-item { transition: background-color 140ms, color 140ms, transform 140ms var(--ease-out); }
+.ui-nav-item:active { transform: scale(0.98); }
+
+/* Skeleton shimmer for anything still loading. */
+.skeleton,
+[data-slot="skeleton"] {
+  background: linear-gradient(100deg, var(--surface-secondary) 30%, var(--default) 50%, var(--surface-secondary) 70%);
+  background-size: 200% 100%;
+  animation: m-sheen 1.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-sidebar, .ui-topbar, .ui-brand-mark, .ui-nav-item, .ui-nav-heading,
+  .ui-content, .page-title, .meta-pill,
+  .ui-content .stat-tile, .ui-content .service-card, .ui-content .artifact-metric,
+  .ui-content .threat-metric, .ui-content .threat-header, .ui-content .threat-api-card,
+  .stat-tile svg, .service-card svg, .stat-tile li,
+  .stat-tile .rounded-full, .ui-status.ok .ui-dot, .skeleton, [data-slot="skeleton"] {
+    animation: none !important;
+  }
+}
+
+/* ==========================================================================
+   Services: colour only means "look at this".
+   Healthy cards were green on five different parts (edge, chip, sparkline,
+   header figure, badge). Healthy is now neutral; warning and danger keep
+   their colour, so a failing service is the only coloured thing on the page.
+   ========================================================================== */
+
+.service-card.tone-success {
+  --success: color-mix(in oklab, var(--muted) 85%, var(--foreground));
+  --tile-tone: var(--muted);
+  border-left-color: var(--border);
+}
+
+/* Healthy chip: neutral text with a small status dot instead of a green pill. */
+.service-card.tone-success [class*="chip"] {
+  background: var(--surface-secondary);
+  color: var(--muted);
+}
+
+/* Sparklines on healthy cards are quiet grey. */
+.service-card.tone-success svg[role="img"] path[stroke] { stroke: var(--muted); opacity: 0.7; }
+.service-card.tone-success svg[role="img"] stop { stop-color: var(--muted); }
+.service-card.tone-success svg[role="img"] circle { fill: var(--muted); }
+
+/* "token" and "HTTP GET" badges are metadata, not alerts. */
+.service-card [title="Probed with a bearer token"] {
+  background: var(--surface-secondary);
+  color: var(--muted);
+}
+
+/* Header: the up-count stays neutral; only "N down" is red. */
+.ui-content .text-3xl.font-mono { color: var(--foreground); }
+.ui-content .rounded-full.bg-success\/12 {
+  background: var(--surface-secondary);
+  color: var(--muted);
+}
+
+/* Role headings and the segmented filter use the accent only when selected. */
+.ui-content .section-label { color: var(--muted); }
+
+/* ==========================================================================
+   Brand block: logo mark + wordmark on one line, no subtitle.
+   ========================================================================== */
+
+.ui-brand {
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.4rem 0.6rem;
+}
+
+.ui-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.6rem;
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in oklab, var(--accent) 88%, #000), color-mix(in oklab, var(--accent) 55%, #000));
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.22), 0 1px 2px oklch(0.2 0.05 260 / 0.25);
+}
+
+.ui-brand-text {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.ui-brand-name {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+}
+
+.ui-brand-tag {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.64rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+}
+
+/* ==========================================================================
+   Da Orks logo: compact brand tile, boot screen, in-page loader
+   ========================================================================== */
+
+/* Smaller tile; the skull inside is 16px. */
+.ui-brand { gap: 0.55rem; padding: 0.95rem 0.95rem 0.6rem; }
+.ui-brand-mark { width: 1.75rem; height: 1.75rem; border-radius: 0.5rem; }
+.ui-brand-mark svg { display: block; }
+.ui-brand-name { font-size: 0.95rem; }
+
+.ui-banner-mark { flex: none; color: var(--warning); opacity: 0.9; }
+
+/* --- boot screen ---------------------------------------------------------- */
+/* Always dark: a near-black stage with the theme's blue accent as the only
+   colour, regardless of the light/dark setting, so the opening looks the same
+   and the white skull always has contrast. Literal fallbacks keep it visible
+   even before theme tokens resolve. */
+
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.6rem;
+  color: #eef3fb;
+  background: #0b0f14;
+  overflow: hidden;
+}
+
+.boot-stage { position: relative; display: grid; place-items: center; }
+
+.boot-glow {
+  position: absolute;
+  width: min(34rem, 80vw);
+  height: min(34rem, 80vw);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(239 59 54 / 0.16), transparent);
+  animation: boot-breathe 2.8s ease-in-out infinite;
+}
+
+/* Big and responsive: ~46% of the viewport height, capped. Fully visible by
+   default; the scan is a one-shot wipe, not a hidden starting state. */
+.boot-logo {
+  position: relative;
+  height: min(46vh, 22rem);
+  width: auto;
+  color: #ef3b36;
+  filter: drop-shadow(0 0 18px rgb(239 59 54 / 0.35));
+  animation:
+    boot-scan 1000ms steps(27, end),
+    boot-float 3.4s ease-in-out 1000ms infinite;
+}
+
+.boot-bar {
+  position: relative;
+  width: 12rem;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #ffffff22;
+}
+
+.boot-bar i {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent, #3b82f6);
+  box-shadow: 0 0 10px var(--accent, #3b82f6);
+  animation: boot-sweep 1.15s var(--ease-out, ease) infinite;
+}
+
+.boot-label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: #8f9bb0;
+}
+
+.boot-caret {
+  width: 0.45rem;
+  height: 0.9em;
+  margin-left: 0.25rem;
+  background: var(--accent, #3b82f6);
+  animation: boot-blink 1s steps(2, start) infinite;
+}
+
+@keyframes boot-scan { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes boot-float { 50% { transform: translateY(-4px); } }
+@keyframes boot-breathe { 50% { opacity: 0.6; transform: scale(1.07); } }
+@keyframes boot-sweep { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
+@keyframes boot-blink { to { visibility: hidden; } }
+
+/* --- in-page loader (panel fallbacks, Loading) ----------------------------- */
+
+.lspin {
+  --lspin: 44px;
+  --lspin-red: #ef3b36;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: var(--lspin);
+  height: var(--lspin);
+  color: var(--foreground);
+}
+
+.lspin > * { grid-area: 1 / 1; }
+
+.lspin-ring,
+.lspin-orbit {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.lspin-ring { border: 2px solid color-mix(in oklab, var(--foreground) 10%, transparent); }
+
+/* A short red arc that circles the ring, fading out behind its head. */
+.lspin-orbit {
+  border: 2px solid transparent;
+  border-top-color: var(--lspin-red);
+  border-right-color: color-mix(in oklab, var(--lspin-red) 35%, transparent);
+  filter: drop-shadow(0 0 4px color-mix(in oklab, var(--lspin-red) 60%, transparent));
+  animation: lspin-turn 1s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite;
+}
+
+.lspin-face { position: relative; display: grid; place-items: center; }
+.lspin-face > * { grid-area: 1 / 1; }
+
+.lspin-base { opacity: 0.3; }
+
+/* The same skull in red, revealed only through a moving band: a scan beam. */
+.lspin-scan {
+  color: var(--lspin-red);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0 35%, #000 47% 53%, transparent 65%);
+  mask-image: linear-gradient(180deg, transparent 0 35%, #000 47% 53%, transparent 65%);
+  -webkit-mask-size: 100% 300%;
+  mask-size: 100% 300%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  animation: lspin-scan 1.4s ease-in-out infinite;
+}
+
+@keyframes lspin-turn { to { transform: rotate(360deg); } }
+@keyframes lspin-scan {
+  from { -webkit-mask-position: 0 100%; mask-position: 0 100%; }
+  to { -webkit-mask-position: 0 0; mask-position: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-logo, .boot-glow, .boot-bar i, .boot-caret, .lspin-orbit, .lspin-scan { animation: none !important; }
+  .lspin-scan { -webkit-mask-position: 0 50%; mask-position: 0 50%; }
+  .boot-bar i { width: 100%; }
+}
+
+/* The Services-page neutral chip rule must not leak into Statistics tiles. */
+.stat-tile .rounded-full.bg-success\/12 {
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+  color: var(--success);
+}
+
+/* ==========================================================================
+   Shell command + output
+   A real terminal: near-black surface in both themes, a calm palette that is
+   legible on it, a quiet line-number gutter, and a prompt-style command bar.
+   ========================================================================== */
+
+.build-log,
+.cmdline {
+  --t-bg: #0b0f14;
+  --t-bg-2: #111821;
+  --t-bd: #1e2733;
+  --t-fg: #d5dde9;
+  --t-mu: #6f7d91;
+  --t-dim: #465366;
+  --t-ok: #4ade80;
+  --t-warn: #fbbf24;
+  --t-err: #ff6b6b;
+  --t-acc: #6cb2ff;
+}
+
+/* --- output pane ---------------------------------------------------------- */
+
+.build-log,
+.console-body {
+  padding: 0.6rem 0;
+  border: 1px solid var(--t-bd);
+  border-radius: 0.65rem;
+  background: var(--t-bg);
+  color: var(--t-fg);
+  font-size: 12px;
+  line-height: 1.7;
+  box-shadow: inset 0 1px 0 #ffffff08;
+  scrollbar-width: thin;
+  scrollbar-color: #2b384a transparent;
+}
+
+/* ANSI / tone classes were tuned for a light surface; remap for the dark pane. */
+.build-log .text-foreground { color: var(--t-fg); }
+.build-log .text-success { color: var(--t-ok); }
+.build-log .text-warning { color: var(--t-warn); }
+.build-log .text-danger { color: var(--t-err); }
+.build-log .text-accent { color: var(--t-acc); }
+.build-log .text-muted,
+.build-log .text-default-400,
+.build-log .text-default-500 { color: var(--t-mu); }
+
+.build-log ::selection { background: #3b82f640; }
+
+.build-log-line {
+  gap: 0;
+  padding: 0 1rem 0 0;
+  border-left: 2px solid transparent;
+}
+
+.build-log-line:hover { background: #ffffff09; }
+
+.build-log-line.is-notable { border-left-color: var(--t-mu); background: #ffffff05; }
+.build-log-line.is-notable:has(.text-danger) { border-left-color: var(--t-err); background: #ff6b6b10; }
+.build-log-line.is-notable:has(.text-warning) { border-left-color: var(--t-warn); background: #fbbf2410; }
+.build-log-line.is-notable:has(.text-success) { border-left-color: var(--t-ok); background: #4ade8010; }
+
+.build-log-line.is-step { margin-top: 0.55rem; color: var(--t-acc); font-weight: 600; }
+.build-log-line.is-step:first-child { margin-top: 0; }
+.build-log-line.is-truncated { color: var(--t-mu); }
+
+.build-log-num {
+  width: 3.1rem;
+  margin-right: 0.85rem;
+  padding-right: 0.7rem;
+  border-right: 1px solid var(--t-bd);
+  color: var(--t-dim);
+}
+
+.build-empty {
+  padding: 2.25rem 1rem;
+  color: var(--t-mu);
+  font-size: 0.78rem;
+}
+
+.run-cursor { background: var(--t-ok); }
+
+/* --- console card chrome -------------------------------------------------- */
+
+.console-card > :first-child { padding: 0.8rem 0.9rem 0.65rem; }
+.console-card .console-accent { margin: 0 0.9rem 0.2rem; opacity: 0.6; box-shadow: none; }
+.console-card > :last-child { padding: 0.5rem 0.65rem 0.65rem; }
+
+.console-count {
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-secondary);
+}
+
+.log-toggle { border-radius: 999px; font-size: 11px; }
+
+/* --- command bar ---------------------------------------------------------- */
+
+.cmdline {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.65rem 0.65rem 0.65rem 0.9rem;
+  border: 1px solid var(--t-bd);
+  border-left: 3px solid var(--t-ok);
+  border-radius: 0.65rem;
+  background: var(--t-bg);
+  box-shadow: inset 0 1px 0 #ffffff08;
+}
+
+.cmdline.is-compact { padding-block: 0.45rem; }
+
+.cmdline-prompt {
+  flex: none;
+  color: var(--t-ok);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.55;
+  user-select: none;
+}
+
+.cmdline-main { flex: 1; min-width: 0; }
+
+.cmdline-label {
+  margin: 0 0 0.15rem;
+  color: var(--t-mu);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cmdline-code {
+  display: block;
+  color: var(--t-fg);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cmdline-copy {
+  flex: none;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--t-bd);
+  border-radius: 0.4rem;
+  background: var(--t-bg-2);
+  color: var(--t-mu);
+  font-size: 11px;
+  font-weight: 500;
+  transition: color 140ms, border-color 140ms, background-color 140ms;
+}
+
+.cmdline-copy:hover { color: var(--t-fg); border-color: #2d3b4f; background: #16202c; }
+.cmdline-copy.is-copied { color: var(--t-ok); border-color: color-mix(in oklab, var(--t-ok) 40%, var(--t-bd)); }
+
+.console-card { gap: 0.15rem; }
+
+.console-glyph {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 0.45rem;
+  background: #0b0f14;
+  color: #4ade80;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}

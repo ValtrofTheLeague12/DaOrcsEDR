@@ -23,12 +23,8 @@ from pathlib import Path
 
 from ..core import config
 
-# The admin terminal captures child stdout with its SGR colour codes intact -
-# qiling_setup.py in particular writes lines like "\x1b[94m[=)]\x1b[39m ...".
-# A browser would render those as literal "[94m" text, so they are stripped here
-# rather than shipped and cleaned client-side. The viewer applies its own
-# semantic colouring from the log content instead.
-_ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+# Keep SGR sequences intact so the browser's ANSI parser can render the
+# command's original colors rather than replacing them with semantic guesses.
 
 # (key, label, directory, glob, max files per location or None for no cap)
 #
@@ -209,8 +205,6 @@ def tail(key: str, lines: int = 80, max_bytes: int = 512 * 1024) -> dict:
         total = fh.tell()
 
     text = data.decode("utf-8", "replace")
-    stripped = len(_ANSI.findall(text))
-    text = _ANSI.sub("", text)
     out = text.splitlines()
     truncated = pos > 0
     if len(out) > want:
@@ -225,8 +219,7 @@ def tail(key: str, lines: int = 80, max_bytes: int = 512 * 1024) -> dict:
         "lines": out,
         "truncated": truncated,
         "returned": len(out),
-        # Reported so the viewer can say so rather than silently dropping data.
-        "ansi_stripped": stripped,
+        "ansi_stripped": 0,
         "jsonl": path.suffix == ".jsonl" or path.name.endswith(".json"),
     }
 

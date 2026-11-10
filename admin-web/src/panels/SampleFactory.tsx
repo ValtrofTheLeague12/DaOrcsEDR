@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
 import { Alert, Card, Chip } from '@heroui/react'
 import { api } from '../api'
 import Icon from '../components/Icon'
+import CommandLine from '../components/CommandLine'
 import Loading from '../components/Loading'
 import CodeBlock from '../components/CodeBlock'
 import Checkbox from '../components/Checkbox'
@@ -1186,7 +1187,7 @@ export default function SampleFactoryCard({
                 {result.command && (
                   <div>
                     <dt>command</dt>
-                    <dd><code>{result.command}</code></dd>
+                    <dd><CommandLine value={result.command} compact /></dd>
                   </div>
                 )}
               </dl>

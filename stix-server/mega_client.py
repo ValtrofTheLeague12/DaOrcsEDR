@@ -43,6 +43,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
+_log = logger.bind(sdk="mega")
+
 __all__ = [
     "Bundle",
     "CommandResult",
@@ -184,12 +188,13 @@ class CommandResult:
 
     def require_ok(self) -> "CommandResult":
         if not self.ok:
-            raise MegaCommandError(
+            message = (
                 f"{Path(self.command[1] if len(self.command) > 1 else self.command[0]).name} "
                 f"failed (exit {self.returncode}): "
-                + (self.stderr.strip() or self.stdout.strip() or "(no output)"),
-                self,
+                + (self.stderr.strip() or self.stdout.strip() or "(no output)")
             )
+            _log.error(message)
+            raise MegaCommandError(message, self)
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -218,6 +223,7 @@ class _ModuleLoader:
     def get(self, name: str):
         with self._lock:
             if name in self._cache:
+                _log.trace("Using cached mega module {!r}", name)
                 return self._cache[name]
 
             for dep in _DEPENDENCIES.get(name, ()):
@@ -225,29 +231,38 @@ class _ModuleLoader:
 
             path = self.mega_dir / f"{name}.py"
             if not path.is_file():
-                raise MegaSDKError(f"{path} does not exist")
+                message = f"{path} does not exist"
+                _log.error("Cannot load mega module {!r}: {}", name, message)
+                raise MegaSDKError(message)
 
             module_name = name if name in _REAL_NAMES else f"ia_mega_{name}"
             existing = sys.modules.get(module_name)
             if (existing is not None
                     and Path(getattr(existing, "__file__", "")).resolve() == path.resolve()):
+                _log.trace("Reusing already imported mega module {!r}", module_name)
                 self._cache[name] = existing
                 return existing
 
+            _log.debug("Loading mega module {!r} from {}", name, path)
             spec = importlib.util.spec_from_file_location(module_name, path)
             if spec is None or spec.loader is None:
-                raise MegaSDKError(f"{path} could not be loaded")
+                message = f"{path} could not be loaded"
+                _log.error("Cannot load mega module {!r}: {}", name, message)
+                raise MegaSDKError(message)
             module = importlib.util.module_from_spec(spec)
             # Register BEFORE exec: megacmd.py's @dataclass needs its defining
             # module to be present in sys.modules on Python 3.13+.
             sys.modules[module_name] = module
             try:
                 spec.loader.exec_module(module)
-            except Exception:
+            except Exception as exc:
                 sys.modules.pop(module_name, None)
+                _log.opt(exception=exc).error(
+                    "Failed to import mega module {!r} from {}", name, path)
                 raise
 
             self._cache[name] = module
+            _log.debug("Loaded mega module {!r}", name)
             return module
 
 
@@ -280,6 +295,7 @@ class Job:
     def _read(self) -> None:
         stream = self._popen.stdout
         if stream is None:
+            _log.warning("Job {!r} has no stdout stream to read", self.label)
             return
         try:
             for raw in stream:
@@ -287,6 +303,9 @@ class Job:
                 with self._lock:
                     self._lines.append(line)
                     self._seen += 1
+        except OSError as exc:
+            _log.opt(exception=exc).warning(
+                "Lost the output stream for job {!r}", self.label)
         finally:
             try:
                 stream.close()
@@ -313,25 +332,36 @@ class Job:
 
     def cancel(self) -> None:
         if self.poll() is None:
+            _log.warning("Cancelling job {!r} (pid {})", self.label, self.pid)
             try:
                 self._popen.kill()
-            except OSError:
-                pass
+            except OSError as exc:
+                _log.opt(exception=exc).error(
+                    "Could not kill job {!r} (pid {})", self.label, self.pid)
 
     def wait(self, timeout: float | None = None) -> CommandResult:
         try:
             code = self._popen.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            _log.error(
+                "Job {!r} exceeded its {!s}s deadline; cancelling", self.label, timeout)
             self.cancel()
             raise MegaJobTimeout(self.label, timeout, self.lines()) from None
         self._thread.join(timeout=5)
-        return CommandResult(
+        result = CommandResult(
             command=self.command,
             returncode=code,
             stdout="\n".join(self.lines()),
             stderr="",
             data=dict(self.data),
         )
+        if not result.ok:
+            _log.error(
+                "Job {!r} failed (exit {}):\n{}",
+                self.label, code, _tail(result.text))
+        else:
+            _log.debug("Job {!r} finished successfully (exit 0)", self.label)
+        return result
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -396,7 +426,9 @@ class MegaClient:
         self.repo_root = Path(repo_root).resolve()
         self.mega_dir = self.repo_root / "mega"
         if not self.mega_dir.is_dir():
-            raise MegaSDKError(f"no mega/ directory under {self.repo_root}")
+            message = f"no mega/ directory under {self.repo_root}"
+            _log.error(message)
+            raise MegaSDKError(message)
 
         self.remote_root = self._normalise_root(remote_root)
         self.timeout = int(timeout)
@@ -406,6 +438,12 @@ class MegaClient:
         self.python_executable = str(python_executable or sys.executable)
         self.max_job_lines = int(max_job_lines)
         self._modules = _ModuleLoader(self.mega_dir)
+        _log.debug(
+            "MegaClient ready: repo_root={} mega_dir={} remote_root={} "
+            "timeout={}s quick_timeout={}s retrieve_timeout={}s",
+            self.repo_root, self.mega_dir, self.remote_root,
+            self.timeout, self.quick_timeout, self.retrieve_timeout,
+        )
 
     # -- escape hatch -------------------------------------------------------
 
@@ -422,18 +460,26 @@ class MegaClient:
     @staticmethod
     def _plain_name(name: str) -> str:
         if not isinstance(name, str):
-            raise MegaArgumentError("artifact name must be a string")
+            message = "artifact name must be a string"
+            _log.warning("Rejected artifact name: {}", message)
+            raise MegaArgumentError(message)
         value = name.strip()
         if not value:
-            raise MegaArgumentError("artifact name is empty")
+            message = "artifact name is empty"
+            _log.warning("Rejected artifact name: {}", message)
+            raise MegaArgumentError(message)
         if value.endswith(ARTIFACT_SUFFIX):
-            raise MegaArgumentError(
+            message = (
                 f"{value!r} is the bundle folder name; pass the artifact name "
                 f"without {ARTIFACT_SUFFIX!r} (e.g. {value[:-len(ARTIFACT_SUFFIX)]!r})")
+            _log.warning("Rejected artifact name: {}", message)
+            raise MegaArgumentError(message)
         if not _NAME_RE.match(value):
-            raise MegaArgumentError(
+            message = (
                 f"invalid artifact name {value!r}: use letters, digits, '.', '_' "
                 "or '-', starting with a letter or digit")
+            _log.warning("Rejected artifact name: {}", message)
+            raise MegaArgumentError(message)
         return value
 
     @staticmethod
@@ -444,10 +490,14 @@ class MegaClient:
         if not value:
             return "/"
         if "\x00" in value:
-            raise MegaArgumentError("remote root contains a NUL byte")
+            message = "remote root contains a NUL byte"
+            _log.warning("Rejected remote root: {}", message)
+            raise MegaArgumentError(message)
         value = value.replace("\\", "/")
         if any(part == ".." for part in value.split("/")):
-            raise MegaArgumentError(f"remote root may not contain '..': {root!r}")
+            message = f"remote root may not contain '..': {root!r}"
+            _log.warning("Rejected remote root: {}", message)
+            raise MegaArgumentError(message)
         parts = [p for p in value.split("/") if p not in ("", ".")]
         return "/" + "/".join(parts) if parts else "/"
 
@@ -465,8 +515,10 @@ class MegaClient:
         value = self._normalise_root(bundle_path)
         name = value.rsplit("/", 1)[-1]
         if not name.endswith(ARTIFACT_SUFFIX):
-            raise MegaArgumentError(
+            message = (
                 f"remote bundle path must end in {ARTIFACT_SUFFIX!r}: {bundle_path!r}")
+            _log.warning("Rejected bundle path: {}", message)
+            raise MegaArgumentError(message)
         artifact = self._plain_name(name[:-len(ARTIFACT_SUFFIX)])
         root = value.rsplit("/", 1)[0] or "/"
         return artifact, root
@@ -475,7 +527,9 @@ class MegaClient:
         """Resolve an artifact name or an absolute remote path for link calls."""
         value = str(name_or_path or "").strip()
         if not value:
-            raise MegaArgumentError("remote path or artifact name is empty")
+            message = "remote path or artifact name is empty"
+            _log.warning("Rejected link target: {}", message)
+            raise MegaArgumentError(message)
         if value.startswith("/") or "/" in value or "\\" in value:
             return self._normalise_root(value)
         return self.bundle_path(value, remote_root)
@@ -523,16 +577,24 @@ class MegaClient:
             if out["available"]:
                 out["account"] = mc.whoami(self.quick_timeout)
                 out["session_ok"] = out["account"] is not None
+            else:
+                _log.warning("MEGAcmd is not available: {}", mc.missing_message())
+            if out["available"] and not out["session_ok"]:
+                _log.warning("MEGAcmd is installed but no session is logged in")
         except Exception as exc:  # noqa: BLE001 - status is a report, not a crash
             out["error"] = f"{type(exc).__name__}: {exc}"
+            _log.opt(exception=exc).warning("MEGA status check failed")
             return out
 
         try:
             protect = self._modules.get("protect")
             out["password_file"] = str(protect.password_file())
             out["password_present"] = bool(protect.password_present())
+            if not out["password_present"]:
+                _log.warning("No bundle password is present at {}", out["password_file"])
         except Exception as exc:  # noqa: BLE001
             out["error"] = f"password: {type(exc).__name__}: {exc}"
+            _log.opt(exception=exc).warning("MEGA password check failed")
 
         try:
             credential = self._modules.get("credential")
@@ -541,8 +603,14 @@ class MegaClient:
             if out["expected_account"] and out["account"]:
                 out["account_matches"] = (
                     out["expected_account"].lower() == out["account"].lower())
+                if not out["account_matches"]:
+                    _log.warning(
+                        "MEGA session account {!r} does not match the sealed "
+                        "expected account {!r}",
+                        out["account"], out["expected_account"])
         except Exception as exc:  # noqa: BLE001
             out["error"] = f"credential: {type(exc).__name__}: {exc}"
+            _log.opt(exception=exc).warning("MEGA credential check failed")
 
         return out
 
@@ -554,11 +622,16 @@ class MegaClient:
         """Return the account, or raise ``MegaNotAvailable``/``MegaNotLoggedIn``."""
         mc = self.megacmd
         if not mc.available():
-            raise MegaNotAvailable(mc.missing_message())
+            message = mc.missing_message()
+            _log.error("MEGA session required but MEGAcmd is unavailable: {}", message)
+            raise MegaNotAvailable(message)
         account = mc.whoami(self.quick_timeout)
         if not account:
-            raise MegaNotLoggedIn(
+            message = (
                 "no MEGAcmd session. Run: python mega/login.py --emit check --mega")
+            _log.error("MEGA session required but none is logged in")
+            raise MegaNotLoggedIn(message)
+        _log.debug("MEGA session is logged in as {!r}", account)
         return account
 
     @staticmethod
@@ -581,10 +654,14 @@ class MegaClient:
         mc = self.megacmd
         listing = self._modules.get("list")
         path = self._normalise_root(remote_path)
+        _log.debug("Listing MEGA path {!r}", path)
         try:
-            return listing.ls(path, timeout or self.timeout)
+            rows = listing.ls(path, timeout or self.timeout)
         except mc.MegaError as exc:
+            _log.opt(exception=exc).error("Could not list MEGA path {!r}", path)
             raise MegaRemoteError(str(exc)) from exc
+        _log.debug("MEGA path {!r} returned {} row(s)", path, len(rows))
+        return rows
 
     def list_bundles(self, remote_root: str | Path | None = None, *,
                      all: bool = False, timeout: int | None = None) -> list[Bundle]:
@@ -606,6 +683,7 @@ class MegaClient:
                 date=row.get("date", ""),
                 is_dir=True,
             ))
+        _log.debug("Found {} bundle(s) under {!r}", len(bundles), root)
         return bundles
 
     def exists(self, name: str, remote_root: str | Path | None = None) -> bool:
@@ -613,9 +691,154 @@ class MegaClient:
         target = self.bundle_path(name, remote_root)
         try:
             res = self.megacmd.run("ls", target, timeout=self.quick_timeout, check=False)
-        except self.megacmd.MegaError:
+        except self.megacmd.MegaError as exc:
+            _log.opt(exception=exc).debug("Existence check failed for {!r}", target)
             return False
+        _log.debug("Existence check for {!r}: {}", target, res.code == 0)
         return res.code == 0
+
+    def bundle_files(
+        self,
+        name: str,
+        remote_root: str | Path | None = None,
+        timeout: int | None = None,
+    ) -> list[dict]:
+        """The files inside one bundle, with per-file SHA-256 hashes.
+
+        Downloads the bundle's ``manifest.json`` (written by ``mega/upload.py``)
+        and returns one entry per file::
+
+            {"path": "notes.txt", "size": 16, "hash": "f0852a..."}
+
+        Bundles built before per-file hashes were added will have entries
+        without a ``hash`` value. Returns an empty list when the bundle
+        does not exist or its manifest cannot be read.
+        """
+        plain = self._plain_name(name)
+        root = self._root(remote_root)
+        bundle_path = f"{root}/{plain}{ARTIFACT_SUFFIX}".replace("//", "/")
+
+        rows = self.ls(bundle_path, timeout or self.quick_timeout)
+        files = [r for r in rows if not r["is_dir"]]
+
+        hashes = self._manifest_hashes(bundle_path)
+
+        out: list[dict] = []
+        for r in files:
+            out.append({
+                "path": r["name"],
+                "size": r["size"],
+                "hash": hashes.get(r["name"], ""),
+            })
+        return out
+
+    def _manifest_hashes(self, bundle_path: str) -> dict[str, str]:
+        """Download ``manifest.json`` from a bundle and return {filename: sha256}."""
+        import tempfile
+        import shutil
+        from pathlib import Path
+
+        manifest_name = "manifest.json"
+        remote_manifest = f"{bundle_path}/{manifest_name}".replace("//", "/")
+        tmpdir = Path(tempfile.mkdtemp(prefix="ia-bundle-files-"))
+        hashes: dict[str, str] = {}
+        try:
+            res = self.megacmd.run("get", remote_manifest, str(tmpdir),
+                                   timeout=self.quick_timeout)
+            if res.code != 0:
+                return hashes
+            candidates = list(tmpdir.rglob(manifest_name))
+            if not candidates:
+                return hashes
+            manifest = json.loads(candidates[0].read_text(encoding="utf-8"))
+            for entry in manifest.get("files", []):
+                if isinstance(entry, dict) and "path" in entry and "hash" in entry:
+                    hashes[entry["path"]] = entry["hash"]
+        except Exception:
+            pass
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        return hashes
+
+    def _manifest_document(self, bundle_path: str) -> dict[str, Any]:
+        """Download and parse a bundle's ``manifest.json``, or return ``{}``."""
+        import tempfile
+        import shutil
+
+        manifest_name = "manifest.json"
+        remote_manifest = f"{bundle_path}/{manifest_name}".replace("//", "/")
+        tmpdir = Path(tempfile.mkdtemp(prefix="ia-bundle-manifest-"))
+        try:
+            res = self.megacmd.run("get", remote_manifest, str(tmpdir),
+                                   timeout=self.quick_timeout)
+            if res.code != 0:
+                return {}
+            candidates = list(tmpdir.rglob(manifest_name))
+            if not candidates:
+                return {}
+            manifest = json.loads(candidates[0].read_text(encoding="utf-8"))
+            return manifest if isinstance(manifest, dict) else {}
+        except Exception as exc:
+            _log.debug("Could not read manifest for bundle {!r}: {}", bundle_path, exc)
+            return {}
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def find_bundles_by_hash(
+        self,
+        sha256_hash: str,
+        remote_root: str | Path | None = None,
+        *,
+        timeout: int | None = None,
+    ) -> list[str]:
+        """Artifact names whose bundle manifest contains ``sha256_hash``.
+
+        Every bundle under ``remote_root`` is checked by reading its
+        ``manifest.json``. A bundle matches when either its ``archive_sha256``
+        or one of its ``files[].hash`` values equals the digest. Matching is
+        case-insensitive and ignores surrounding whitespace.
+
+        Returns plain artifact names (no ``_artifact`` suffix), ready to pass
+        to :meth:`retrieve`. Bundles without a readable manifest are skipped.
+        """
+        if not isinstance(sha256_hash, str):
+            message = "sha256_hash must be a string"
+            _log.warning("Rejected SHA-256 lookup: {}", message)
+            raise MegaArgumentError(message)
+        digest = sha256_hash.strip().lower()
+        if not digest:
+            message = "sha256_hash is empty"
+            _log.warning("Rejected SHA-256 lookup: {}", message)
+            raise MegaArgumentError(message)
+
+        _log.debug("Searching bundles under {!r} for sha256_hash={}",
+                   remote_root, digest)
+        matches: list[str] = []
+        for bundle in self.list_bundles(remote_root, timeout=timeout):
+            manifest = self._manifest_document(bundle.remote_path)
+            if not manifest:
+                _log.debug("Skipping bundle {!r}: no readable manifest",
+                           bundle.artifact)
+                continue
+
+            archive_hash = str(manifest.get("archive_sha256") or "").strip().lower()
+            found = archive_hash == digest
+            if not found:
+                for entry in manifest.get("files") or []:
+                    if not isinstance(entry, dict):
+                        continue
+                    file_hash = str(entry.get("hash") or "").strip().lower()
+                    if file_hash == digest:
+                        found = True
+                        break
+            if found:
+                _log.debug("Bundle {!r} matches sha256_hash={}",
+                           bundle.artifact, digest)
+                matches.append(bundle.artifact)
+
+        _log.info("SHA-256 lookup {} matched {} bundle(s): {}",
+                  digest, len(matches), matches)
+        return matches
 
     # -- links --------------------------------------------------------------
 
@@ -623,24 +846,34 @@ class MegaClient:
         """Every current export, optionally filtered to one remote subtree."""
         share = self._modules.get("share")
         root = self._root(remote_root)
+        _log.debug("Listing MEGA exports under {!r}", root)
         try:
             exports = share.list_exports(self.quick_timeout)
         except self.megacmd.MegaError as exc:
+            _log.opt(exception=exc).error("Could not list MEGA exports")
             raise MegaRemoteError(str(exc)) from exc
         if root == "/":
+            _log.debug("Found {} export(s)", len(exports))
             return exports
-        return [e for e in exports
-                if e["path"] == root or e["path"].startswith(root + "/")]
+        filtered = [e for e in exports
+                    if e["path"] == root or e["path"].startswith(root + "/")]
+        _log.debug("Found {} export(s) under {!r}", len(filtered), root)
+        return filtered
 
     def exported_link(self, name_or_path: str,
                       remote_root: str | Path | None = None) -> str | None:
         """Read an existing public link. Never creates one."""
         target = self._target(name_or_path, remote_root)
         share = self._modules.get("share")
+        _log.debug("Reading existing public link for {!r}", target)
         try:
-            return share.show(target, self.quick_timeout)
+            link = share.show(target, self.quick_timeout)
         except self.megacmd.MegaError as exc:
+            _log.opt(exception=exc).error(
+                "Could not read public link for {!r}", target)
             raise MegaRemoteError(str(exc)) from exc
+        _log.debug("Public link for {!r}: {}", target, "present" if link else "absent")
+        return link
 
     def link(self, name_or_path: str, remote_root: str | Path | None = None, *,
              create: bool = False, expire: str | None = None,
@@ -666,19 +899,28 @@ class MegaClient:
         elif expire is not None:
             chosen = str(expire).strip()
             if not mc.valid_duration(chosen):
-                raise MegaArgumentError(
+                message = (
                     f"invalid MEGA expiry {expire!r}: use e.g. 12h, 7d or 1m12d3h "
                     "(M = minutes, m = months)")
+                _log.warning("Rejected MEGA expiry: {}", message)
+                raise MegaArgumentError(message)
         else:
             try:
                 chosen = share.configured_expire()
             except ValueError as exc:
-                raise MegaArgumentError(f"{exc}. Pass permanent=True to override.") from exc
+                message = f"{exc}. Pass permanent=True to override."
+                _log.opt(exception=exc).warning("Invalid configured MEGA expiry")
+                raise MegaArgumentError(message) from exc
 
+        _log.info("Creating public link for {!r} (expire={!r})", target, chosen)
         try:
             created, link = share.create(target, self.quick_timeout, expire=chosen)
         except mc.MegaError as exc:
+            _log.opt(exception=exc).error(
+                "Could not create public link for {!r}", target)
             raise MegaRemoteError(str(exc)) from exc
+        _log.debug("Public link for {!r} created={} expire={!r}",
+                   target, created, chosen)
         return {"ok": True, "path": target, "link": link, "exported": True,
                 "created": created, "expire": chosen}
 
@@ -687,10 +929,15 @@ class MegaClient:
         """Revoke a public link. ``deleted=False`` means it was not exported."""
         target = self._target(name_or_path, remote_root)
         share = self._modules.get("share")
+        _log.info("Revoking public link for {!r}", target)
         try:
             removed = share.revoke(target, self.quick_timeout)
         except self.megacmd.MegaError as exc:
+            _log.opt(exception=exc).error(
+                "Could not revoke public link for {!r}", target)
             raise MegaRemoteError(str(exc)) from exc
+        if not removed:
+            _log.warning("No public link existed for {!r}", target)
         return {"ok": True, "path": target, "deleted": bool(removed)}
 
     # -- protection ---------------------------------------------------------
@@ -702,17 +949,23 @@ class MegaClient:
     def password_present(self, password_file: str | Path | None = None) -> bool:
         protect = self._modules.get("protect")
         path = Path(password_file) if password_file else None
-        return bool(protect.password_present(path))
+        present = bool(protect.password_present(path))
+        _log.debug("Bundle password present={} (file={!s})", present,
+                   path or self.password_file())
+        return present
 
     def set_password(self, value: str | bytes,
                      password_file: str | Path | None = None) -> Path:
         """Write the operator password byte-exact. Minimum 8 bytes."""
         protect = self._modules.get("protect")
         try:
-            return Path(protect.set_password(
+            path = Path(protect.set_password(
                 value, Path(password_file) if password_file else None))
         except protect.PasswordError as exc:
+            _log.opt(exception=exc).error("Could not store the MEGA bundle password")
             raise MegaProtectionError(str(exc)) from exc
+        _log.info("Stored the MEGA bundle password in {}", path)
+        return path
 
     def generate_password(self, length: int = 24,
                           password_file: str | Path | None = None) -> tuple[str, Path]:
@@ -721,9 +974,14 @@ class MegaClient:
         try:
             value, path = protect.generate_password(
                 length, Path(password_file) if password_file else None)
-            return value, Path(path)
+            path = Path(path)
         except protect.PasswordError as exc:
+            _log.opt(exception=exc).error(
+                "Could not generate the MEGA bundle password")
             raise MegaProtectionError(str(exc)) from exc
+        _log.info("Generated a {} character MEGA bundle password in {}",
+                  length, path)
+        return value, path
 
     def encrypt_archive(self, archive: str | Path,
                         out_zip: str | Path | None = None,
@@ -732,22 +990,28 @@ class MegaClient:
         protect = self._modules.get("protect")
         source = Path(archive)
         target = Path(out_zip) if out_zip else source.with_suffix(".zip")
+        _log.debug("Encrypting archive {!s} -> {!s}", source, target)
         try:
             password = protect.read_password(
                 Path(password_file) if password_file else None)
             return protect.zip_bundle(source, target, password)
         except protect.PasswordError as exc:
+            _log.opt(exception=exc).error(
+                "Could not encrypt archive {!s}", source)
             raise MegaProtectionError(str(exc)) from exc
 
     def decrypt_archive(self, zip_path: str | Path, out_dir: str | Path,
                         password_file: str | Path | None = None) -> Path:
         """Recover the archive from a protected zip."""
         protect = self._modules.get("protect")
+        _log.debug("Decrypting archive {!s} -> {!s}", zip_path, out_dir)
         try:
             password = protect.read_password(
                 Path(password_file) if password_file else None)
             return Path(protect.unzip_bundle(Path(zip_path), Path(out_dir), password))
         except protect.PasswordError as exc:
+            _log.opt(exception=exc).error(
+                "Could not decrypt archive {!s}", zip_path)
             raise MegaProtectionError(str(exc)) from exc
 
     # -- export -------------------------------------------------------------
@@ -775,8 +1039,13 @@ class MegaClient:
             expect_account=expect_account, dry_run=dry_run,
             no_upload=no_upload, link=link, expire=expire,
             permanent=permanent, color=color)
+        _log.info(
+            "Exporting bundle {!r} (encrypt={} dry_run={} no_upload={} link={})",
+            name, encrypt, dry_run, no_upload, link)
         result = self._run(command, timeout=deadline)
         result.data.update(data)
+        if result.ok:
+            _log.info("Bundle {!r} exported successfully", name)
         if result.ok and not no_upload and link:
             try:
                 info = self.link(name, remote_root=remote_root, create=True,
@@ -785,6 +1054,8 @@ class MegaClient:
                 result.data["link_created"] = info["created"]
                 result.data["link_expire"] = info["expire"]
             except Exception as exc:  # noqa: BLE001 - bytes are safe; link is extra
+                _log.opt(exception=exc).warning(
+                    "Bundle {!r} was exported but its public link failed", name)
                 result.data["link"] = None
                 result.data["link_error"] = f"{type(exc).__name__}: {exc}"
         return result
@@ -793,6 +1064,7 @@ class MegaClient:
         """Start ``export`` as a job. Same keyword arguments; returns ``Job``."""
         command, data, _deadline = self._export_command(name, **kwargs)
         popen = self._popen(command)
+        _log.info("Started export job for {!r} (pid {})", name, popen.pid)
         return Job(popen, command, label=f"export {name}",
                    max_lines=self.max_job_lines, data=data)
 
@@ -870,15 +1142,19 @@ class MegaClient:
             name, remote_root=remote_root, dest=dest, out_root=out_root,
             mode=mode, timeout=timeout, force=force,
             verify_only=verify_only, bundle=bundle)
+        _log.info("Retrieving bundle {!r} (mode={})", name, data.get("mode", mode))
         result = self._run(command, timeout=deadline)
         result.data.update(data)
+        if result.ok:
+            _log.info("Bundle {!r} retrieved successfully", name)
         return result
 
     def retrieve_bundle(self, bundle_path: str | Path, **kwargs: Any) -> CommandResult:
         """Retrieve a bundle by its full remote path, e.g. ``/evidence/foo_artifact``."""
         if "remote_root" in kwargs:
-            raise MegaArgumentError(
-                "remote_root cannot be combined with a full bundle path")
+            message = "remote_root cannot be combined with a full bundle path"
+            _log.warning("Rejected retrieve_bundle call: {}", message)
+            raise MegaArgumentError(message)
         artifact, root = self._bundle_location(bundle_path)
         return self.retrieve(artifact, remote_root=root, **kwargs)
 
@@ -886,6 +1162,7 @@ class MegaClient:
         """Start ``retrieve`` as a job. Same keyword arguments; returns ``Job``."""
         command, data, _deadline = self._retrieve_command(name, **kwargs)
         popen = self._popen(command)
+        _log.info("Started retrieve job for {!r} (pid {})", name, popen.pid)
         return Job(popen, command, label=f"retrieve {name}",
                    max_lines=self.max_job_lines, data=data)
 
@@ -896,8 +1173,9 @@ class MegaClient:
         if isinstance(name, (str, Path)) and ("/" in str(name) or "\\" in str(name)):
             plain, root = self._bundle_location(name)
             if remote_root is not None:
-                raise MegaArgumentError(
-                    "remote_root cannot be combined with a full bundle path")
+                message = "remote_root cannot be combined with a full bundle path"
+                _log.warning("Rejected retrieve call: {}", message)
+                raise MegaArgumentError(message)
         else:
             plain = self._plain_name(name)
             root = self._root(remote_root)
@@ -905,7 +1183,9 @@ class MegaClient:
         op_timeout = int(timeout or self.timeout)
 
         if chosen_mode not in ("restore", "recover"):
-            raise MegaArgumentError("mode must be 'restore' or 'recover'")
+            message = "mode must be 'restore' or 'recover'"
+            _log.warning("Rejected retrieve call: {}", message)
+            raise MegaArgumentError(message)
 
         dest_path = self._resolve(dest)
         out_root_path = self._resolve(out_root)
@@ -914,10 +1194,14 @@ class MegaClient:
             command = [self.python_executable, str(self.mega_dir / "restore.py")]
             if verify_only:
                 if bundle is None:
-                    raise MegaArgumentError("verify_only needs bundle=<local *_artifact dir>")
+                    message = "verify_only needs bundle=<local *_artifact dir>"
+                    _log.warning("Rejected restore verification: {}", message)
+                    raise MegaArgumentError(message)
                 bundle_path = self._resolve(bundle)
                 if bundle_path is None or not bundle_path.is_dir():
-                    raise MegaArgumentError(f"bundle directory not found: {bundle}")
+                    message = f"bundle directory not found: {bundle}"
+                    _log.warning("Rejected restore verification: {}", message)
+                    raise MegaArgumentError(message)
                 command += ["--verify-only", "--bundle", str(bundle_path),
                             "--artifact", plain]
                 if dest_path is not None:
@@ -964,18 +1248,25 @@ class MegaClient:
     # -- process helpers ----------------------------------------------------
 
     def _popen(self, command: list[str]) -> subprocess.Popen:
-        return subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            cwd=str(self.repo_root),
-        )
+        _log.debug("Starting MEGA subprocess: {}", _command_text(command))
+        try:
+            return subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                cwd=str(self.repo_root),
+            )
+        except OSError as exc:
+            _log.opt(exception=exc).error(
+                "Could not start MEGA subprocess: {}", _command_text(command))
+            raise
 
     def _run(self, command: list[str], timeout: float | None) -> CommandResult:
+        _log.debug("Running MEGA subprocess: {}", _command_text(command))
         try:
             proc = subprocess.run(
                 command,
@@ -986,16 +1277,36 @@ class MegaClient:
                 timeout=timeout,
                 cwd=str(self.repo_root),
             )
-            return CommandResult(command, proc.returncode,
-                                 proc.stdout or "", proc.stderr or "")
+            result = CommandResult(command, proc.returncode,
+                                   proc.stdout or "", proc.stderr or "")
         except subprocess.TimeoutExpired as exc:
+            _log.error(
+                "MEGA subprocess timed out after {}s: {}",
+                timeout, _command_text(command))
             return CommandResult(
                 command, -1,
                 _as_text(exc.stdout),
                 _as_text(exc.stderr) or f"timed out after {timeout}s",
             )
         except OSError as exc:
+            _log.opt(exception=exc).error(
+                "Could not start MEGA subprocess: {}", _command_text(command))
             return CommandResult(command, -1, "", f"could not start: {exc}")
+
+        if not result.ok:
+            _log.error(
+                "MEGA subprocess failed (exit {}): {}\n{}",
+                result.returncode, _command_text(command), _tail(result.text))
+        return result
+
+
+def _command_text(command: list[str]) -> str:
+    return " ".join(str(part) for part in command)
+
+
+def _tail(text: str, limit: int = 2000) -> str:
+    value = (text or "").strip()
+    return value if len(value) <= limit else "..." + value[-limit:]
 
 
 def _as_text(value: Any) -> str:

@@ -15,6 +15,8 @@ that could drift away from the code.
 
 from __future__ import annotations
 
+import ipaddress
+import json
 import subprocess
 import sys
 import shutil
@@ -27,7 +29,7 @@ from flask import Flask, jsonify, make_response, request, send_file
 
 from .analysis import analysis, analysis_settings, memory_profiling
 from .analysis import cti_settings
-from .artifacts import artifacts, share_settings
+from .artifacts import artifacts, cti_listener, cti_server, share_settings
 from .build import build, build_checks, hardening
 from .clamd import clamd
 from .core import auth, config, docs
@@ -1436,6 +1438,549 @@ def create_app() -> Flask:
         except (OSError, subprocess.SubprocessError):
             return jsonify(error="CTI settings could not be saved securely"), 500
 
+    @app.get("/api/threat-intelligence/server")
+    def threat_intelligence_server_settings():
+        """Generated CTI Server Listener Configuration
+        ---
+        tags: [threat-intelligence]
+        responses:
+          200:
+            description: >
+              stix-server/config/cti_config.json's bind address and port, plus
+              the file path and any read error
+        description: >
+          The listener address used by the generated STIX artifact catalog
+          server, plus the artifacts hidden from its catalog UI. Only
+          server.ip, server.port and banned_artifacts are managed here; other
+          keys in the file, such as catalog_file, are left alone.
+        """
+        return jsonify(cti_server.read(config.REPO))
+
+    @app.put("/api/threat-intelligence/server")
+    def update_threat_intelligence_server_settings():
+        """Save the Generated CTI Server Listener Address
+        ---
+        tags: [threat-intelligence]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                ip:
+                  type: string
+                  description: IPv4 or IPv6 bind address, e.g. 0.0.0.0 or 127.0.0.1
+                port:
+                  type: integer
+                  description: Listener port from 1 to 65535
+                banned:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        nullable: true
+                        description: Artifact name, or null when only the hash is known
+                      hash:
+                        type: string
+                        nullable: true
+                        description: SHA-256 of the sealed bundle, or null when only the name is known
+                  description: >
+                    Structured {name, hash} entries hidden from the catalog UI.
+                    Each entry needs at least one of the two fields. Legacy flat
+                    strings are accepted and stored as hash-only entries.
+        responses:
+          200:
+            description: The listener address and hide-list as they now stand on disk
+          400:
+            description: An unknown key or an invalid address, port or ban entry
+          500:
+            description: The file exists but could not be written
+        description: >
+          Writes stix-server/config/cti_config.json with a temp file and
+          rename. A file that cannot be read is never overwritten, because that
+          is how an unrelated setting would disappear during a repair. A ban
+          entry keeps both the artifact name and the sealed bundle's SHA-256 so
+          the UI can unban the same pair later; it hides the artifact from the
+          generated UI without deleting the row from the catalog file.
+          /api/threat-intelligence/ban-bundles is a compatibility alias that
+          accepts the same entries under a "bundles" key.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(error="body must be a JSON object"), 400
+        try:
+            return jsonify(cti_server.write(config.REPO, body))
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        except OSError as exc:
+            return jsonify(error=f"CTI server settings could not be saved: {exc}"), 500
+
+    @app.put("/api/threat-intelligence/ban-bundles")
+    def ban_threat_intelligence_bundles():
+        """Ban selected remote bundles by name + SHA-256 hash.
+        ---
+        tags: [threat-intelligence]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required:
+                - bundles
+              properties:
+                bundles:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - name
+                      - hash
+                    properties:
+                      name:
+                        type: string
+                        description: Remote bundle artifact name
+                      hash:
+                        type: string
+                        description: SHA-256 hash of the bundle
+        responses:
+          200:
+            description: Bans applied and persisted
+          400:
+            description: Invalid request body
+          500:
+            description: Could not persist the bans
+        description: >
+          Receives a list of remote bundles (name + SHA-256 hash) selected by
+          the operator for banning and persists them to
+          stix-server/config/cti_config.json (banned_artifacts). The generated
+          catalog server reads that file on every request, so the ban takes
+          effect without regenerating or restarting it.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or "bundles" not in body:
+            return jsonify(error="body must be a JSON object with a 'bundles' array"), 400
+        bundles = body["bundles"]
+        if not isinstance(bundles, list):
+            return jsonify(error="'bundles' must be an array"), 400
+
+        # Persist banned entries as structured {name, hash} objects.
+        banned_entries: list[dict[str, str | None]] = []
+        seen_pairs: set[tuple[str | None, str | None]] = set()
+        for entry in bundles:
+            if not isinstance(entry, dict) or not entry.get("name"):
+                continue
+            name = str(entry["name"]).strip() or None
+            h = str(entry.get("hash", "")).strip() or None
+            pair = (name, h)
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                banned_entries.append({"name": name, "hash": h})
+
+        try:
+            state = cti_server.write(config.REPO, {"banned": banned_entries})
+        except (ValueError, OSError) as exc:
+            return jsonify(error=f"Could not persist bans: {exc}"), 500
+
+        return jsonify({
+            "banned": state.get("banned", []),
+            "skipped": [],
+            "error": state.get("error"),
+        })
+
+    @app.post("/api/threat-intelligence/generate")
+    def generate_threat_intelligence_server():
+        """Build the Catalog and Regenerate the Generated Server
+        ---
+        tags: [threat-intelligence]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: false
+            schema:
+              type: object
+              properties:
+                pull:
+                  type: boolean
+                  description: >
+                    Download every remote bundle from MEGA before building the
+                    catalog. Default false: use exported_evidence/ as it is.
+        responses:
+          200:
+            description: host_server.py finished; output and artefact paths
+          404:
+            description: stix-server/host_server.py is not present
+          500:
+            description: host_server.py failed or could not be started
+        description: >
+          Runs stix-server/host_server.py as a subprocess, rebuilding
+          artifact_catalog.json from exported_evidence/ and rendering
+          index.html plus server.py from the Jinja templates. This is the
+          action behind the panel's Generate Server button. It does not start
+          a long-running listener: the returned paths are the generated files.
+        """
+        body = request.get_json(silent=True)
+        if body is None:
+            body = {}
+        if not isinstance(body, dict):
+            return jsonify(error="body must be a JSON object"), 400
+
+        stix_dir = config.REPO / "stix-server"
+        script = stix_dir / "host_server.py"
+        if not script.is_file():
+            return jsonify(error="Not found: stix-server/host_server.py"), 404
+
+        # Prefer the stix-server virtualenv: it declares host_server.py's own
+        # dependencies (bcrypt, numpy, Flask). Falling back to the panel's
+        # interpreter keeps this working when the two share an environment.
+        interpreters = [
+            stix_dir / "Scripts" / "python.exe",
+            stix_dir / "Scripts" / "python",
+            stix_dir / "bin" / "python",
+        ]
+        python = next((str(p) for p in interpreters if p.is_file()), sys.executable)
+
+        command = [python, str(script)]
+        if not bool(body.get("pull", False)):
+            command.append("--skip-pull")
+
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(stix_dir),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            return jsonify(error="host_server.py timed out after 600 seconds"), 500
+        except OSError as exc:
+            return jsonify(error=f"Could not start host_server.py: {exc}"), 500
+
+        output = [
+            line for line in ((completed.stdout or "") + (completed.stderr or "")).splitlines()
+            if line.strip()
+        ]
+        payload = {
+            "ok": completed.returncode == 0,
+            "returncode": completed.returncode,
+            "output": output,
+            "catalog": "stix-server/artifact_catalog.json",
+            "server": "stix-server/server.py",
+            "index": "stix-server/index.html",
+        }
+        if completed.returncode != 0:
+            return jsonify({**payload, "error": "host_server.py failed"}), 500
+        return jsonify(payload)
+
+    @app.get("/api/threat-intelligence/listener")
+    def threat_intelligence_listener():
+        """Status of the Generated CTI Listener
+        ---
+        tags: [threat-intelligence]
+        responses:
+          200:
+            description: >
+              running, stopped, unhealthy, foreign or error, with the URL the
+              dashboard answers on and the process holding the port
+        description: >
+          Reports the generated server as it stands now. `running` means the
+          process holding the configured port is stix-server/server.py and its
+          own /health route answered. `foreign` means something else holds the
+          port, and `error` means cti_config.json cannot be understood. This
+          never starts or stops anything.
+        """
+        return jsonify(cti_listener.status(config.REPO))
+
+    @app.post("/api/threat-intelligence/listener/<action>")
+    def control_threat_intelligence_listener(action):
+        """Start or Stop the Generated CTI Listener
+        ---
+        tags: [threat-intelligence]
+        parameters:
+          - name: action
+            in: path
+            required: true
+            type: string
+            description: start or stop
+        responses:
+          200:
+            description: The action result, including the listener status after it
+          400:
+            description: Action is not start or stop
+        description: >
+          `start` launches stix-server/server.py with the bind address and port
+          saved in cti_config.json and waits until its /health route answers, so
+          a 200 means the dashboard is actually reachable. It refuses a missing
+          server.py, an unreadable config or a port held by another process.
+          `stop` only kills a listener whose command line points at
+          stix-server/server.py; a busy port owned by something else is refused.
+          The action result carries `ok`, `code`, a human-readable `detail`, the
+          log path and the post-action `status` for the panel's Launch/Stop UI.
+        """
+        if action not in ("start", "stop"):
+            return jsonify(ok=False, error="action must be start or stop",
+                           code="bad-action"), 400
+        return jsonify(cti_listener.control(action, config.REPO))
+
+    @app.get("/api/threat-intelligence/users")
+    def threat_intelligence_users():
+        """List all users with their IP allow/block status.
+        ---
+        tags: [threat-intelligence]
+        responses:
+          200:
+            description: Users and their IP decisions
+        description: >
+          Reads allowed_users and ip_list from Supabase and returns every
+          user with their current boolean decision (true / false / unset).
+        """
+        try:
+            import sys
+            stix_path = config.REPO / "stix-server"
+            if str(stix_path) not in sys.path:
+                sys.path.insert(0, str(stix_path))
+            supabase_path = config.REPO / "supabase"
+            if str(supabase_path) not in sys.path:
+                sys.path.append(str(supabase_path))
+            import User as _User
+            client = _User.SupabaseClient()
+        except Exception as exc:
+            return jsonify(error=f"Supabase SDK unavailable: {exc}"), 500
+
+        try:
+            user_with_ips = client.get_all_users()
+        except Exception as exc:
+            return jsonify(error=f"Could not read users: {exc}"), 500
+
+        users = [u.to_dict() for u in user_with_ips]
+        return jsonify({"users": users})
+
+    @app.put("/api/threat-intelligence/users/<int:id_user>/toggle")
+    def threat_intelligence_user_toggle(id_user: int):
+        """Toggle a user's IP decision between allow and block.
+        ---
+        tags: [threat-intelligence]
+        parameters:
+          - in: path
+            name: id_user
+            required: true
+            schema:
+              type: integer
+        responses:
+          200:
+            description: Decision toggled
+        description: >
+          Flips the boolean ip_list.decision for the user between true and
+          false. Creates an ip_list row if none exists.
+        """
+        try:
+            import sys
+            stix_path = config.REPO / "stix-server"
+            if str(stix_path) not in sys.path:
+                sys.path.insert(0, str(stix_path))
+            supabase_path = config.REPO / "supabase"
+            if str(supabase_path) not in sys.path:
+                sys.path.append(str(supabase_path))
+            import User as _User
+            client = _User.SupabaseClient()
+        except Exception as exc:
+            return jsonify(error=f"Supabase SDK unavailable: {exc}"), 500
+
+        try:
+            updated = client.toggle_ip_decision(id_user)
+        except Exception as exc:
+            return jsonify(error=f"Could not toggle user: {exc}"), 500
+
+        if updated is None:
+            return jsonify(error=f"User {id_user} not found"), 404
+
+        return jsonify({
+            "id_user": updated.id_user,
+            "decision": updated.decision,
+            "allowed": updated.allowed,
+        })
+
+    @app.post("/api/threat-intelligence/users/<int:id_user>/verify")
+    def threat_intelligence_user_verify(id_user: int):
+        """Check a candidate password against a user's stored credentials.
+        ---
+        tags: [threat-intelligence]
+        parameters:
+          - in: path
+            name: id_user
+            required: true
+            schema:
+              type: integer
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  description: Candidate password; never logged or stored
+                ip_address:
+                  type: string
+                  description: >
+                    Address to test against ip_list. Defaults to the address
+                    provisioned for the user.
+        responses:
+          200:
+            description: Password and access verdict
+          400:
+            description: Missing/invalid password or IP
+          404:
+            description: User does not exist
+        description: >
+          Runs the same checks the generated CTI server performs at login:
+          bcrypt verification of `password + unique_peper`, then
+          `ip_list.decision` and the provisioned address (honouring
+          `auth.allow_loopback`). The candidate password is used in memory only
+          and is never written to a log or returned in the response. `allowed`
+          is true only when both the password and the access gate pass.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(error="body must be a JSON object"), 400
+
+        password = body.get("password")
+        if not isinstance(password, str) or not password:
+            return jsonify(error="password is required"), 400
+
+        supplied_ip = body.get("ip_address")
+        if supplied_ip is not None and not isinstance(supplied_ip, str):
+            return jsonify(error="ip_address must be a string"), 400
+
+        try:
+            stix_path = config.REPO / "stix-server"
+            if str(stix_path) not in sys.path:
+                sys.path.insert(0, str(stix_path))
+            supabase_path = config.REPO / "supabase"
+            if str(supabase_path) not in sys.path:
+                sys.path.append(str(supabase_path))
+            import cti_auth
+            import User as _User
+            client = _User.SupabaseClient()
+        except Exception as exc:
+            return jsonify(error=f"Supabase SDK unavailable: {exc}"), 500
+
+        try:
+            user = client.get_user(id_user)
+        except Exception as exc:
+            return jsonify(error=f"Could not read user: {exc}"), 500
+        if user is None:
+            return jsonify(error=f"User {id_user} not found"), 404
+
+        try:
+            entry = client.get_ip_entry(id_user)
+        except Exception as exc:
+            return jsonify(error=f"Could not read IP decision: {exc}"), 500
+
+        test_ip: str | None = None
+        if isinstance(supplied_ip, str) and supplied_ip.strip():
+            test_ip = cti_auth.normalise_ip(supplied_ip)
+            if test_ip is None:
+                return jsonify(error="ip_address is not a valid IP address"), 400
+
+        stored_ip = entry.ip_address if entry is not None else None
+        decision = entry.decision if entry is not None else None
+        effective_ip = test_ip
+        if effective_ip is None and isinstance(stored_ip, str) and stored_ip.strip():
+            # No test address was supplied. A bare address can be tested
+            # directly; for a CIDR grant, pick a representative host so the
+            # same membership check the login gate runs still answers.
+            raw_stored = stored_ip.strip()
+            if "/" in raw_stored:
+                try:
+                    network = ipaddress.ip_network(raw_stored, strict=False)
+                    effective_ip = str(
+                        next(network.hosts(), network.network_address))
+                except ValueError:
+                    effective_ip = None
+            else:
+                effective_ip = cti_auth.normalise_ip(raw_stored)
+
+        # allow_loopback is a listener setting, not a user setting: a loopback
+        # client bypasses the stored-address comparison (but never `decision`).
+        allow_loopback = False
+        try:
+            raw = cti_server.config_path(config.REPO).read_text(encoding="utf-8-sig")
+            saved = json.loads(raw or "{}")
+            auth_cfg = saved.get("auth") if isinstance(saved, dict) else None
+            if isinstance(auth_cfg, dict):
+                allow_loopback = auth_cfg.get("allow_loopback") is True
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            # A missing or malformed config keeps the safe default.
+            pass
+
+        password_ok = cti_auth.verify_password(
+            password, user.password, user.unique_peper)
+        hash_valid = cti_auth.is_bcrypt_hash(user.password)
+        pepper_present = isinstance(user.unique_peper, str) and bool(user.unique_peper)
+
+        loopback_bypass = bool(
+            allow_loopback and effective_ip and cti_auth.is_loopback(effective_ip))
+        ip_ok = bool(
+            effective_ip
+            and stored_ip
+            and (cti_auth.ip_matches(effective_ip, stored_ip) or loopback_bypass)
+        )
+
+        access_ok, access_detail = cti_auth.check_access(
+            entry, effective_ip, allow_loopback)
+        allowed = bool(password_ok and access_ok)
+
+        reasons: list[str] = []
+        if not hash_valid:
+            reasons.append(
+                "The stored digest is not a bcrypt hash; reset this user's password.")
+        if not pepper_present:
+            reasons.append("No per-user pepper is stored for this account.")
+        if not password_ok:
+            reasons.append("Password does not match the stored bcrypt digest.")
+        if decision is not True:
+            reasons.append("The account's IP decision is not 'allow'.")
+        if not stored_ip:
+            reasons.append("No IP address is provisioned for this account.")
+        elif effective_ip is None:
+            reasons.append("No test address was supplied and no stored address was found.")
+        elif not ip_ok:
+            reasons.append(
+                f"{effective_ip} does not match the provisioned address {stored_ip}.")
+
+        if allowed:
+            detail = "Password matches and the IP decision grants access."
+        elif not password_ok:
+            detail = "Login would be refused: password does not match."
+        else:
+            detail = f"Login would be refused: {access_detail}"
+
+        return jsonify({
+            "id_user": user.id_user,
+            "username": user.username,
+            "password_ok": password_ok,
+            "hash_valid": hash_valid,
+            "pepper_present": pepper_present,
+            "decision": decision,
+            "stored_ip": stored_ip,
+            "test_ip": effective_ip,
+            "ip_ok": ip_ok,
+            "allowed": allowed,
+            "detail": detail,
+            "reasons": reasons,
+        })
+
     @app.get("/api/artifacts/settings")
     def artifact_settings():
         """Effective MEGA settings used by the Artifacts dashboard
@@ -1918,6 +2463,48 @@ def create_app() -> Flask:
             return jsonify(ok=False, **info), status
         return jsonify(ok=True, **info), 202
 
+    @app.get("/api/artifacts/links")
+    def artifact_links():
+        """Existing Public MEGA Links for the Remote Bundles
+        ---
+        tags: [artifacts]
+        parameters:
+          - name: remote_root
+            in: query
+            required: false
+            type: string
+            description: MEGA folder to inspect instead of the configured root
+        responses:
+          200:
+            description: Existing exports keyed by artifact name
+          400:
+            description: Invalid MEGA root
+          502:
+            description: MEGAcmd could not list the exports
+          503:
+            description: MEGAcmd is missing or has no session
+        description: >
+          Read-only: this route never creates a link. The artifact listing is
+          polled on a timer and must not publish evidence as a side effect, so
+          the Remote tab asks for the exports separately when it opens and
+          after a create or revoke. A bundle with no export is simply absent
+          from `links`.
+        """
+        remote_root = request.args.get("remote_root")
+        if remote_root is None:
+            remote_root = analysis.artifact_remote_root()
+        result = artifacts.links_for(remote_root)
+        if result.get("ok"):
+            return jsonify(result)
+        error = str(result.get("error") or "")
+        if error.startswith("invalid"):
+            status = 400
+        elif "MEGAcmd" in error or "session" in error:
+            status = 503
+        else:
+            status = 502
+        return jsonify(result), status
+
     @app.post("/api/artifacts/link")
     def artifact_link():
         """Get or Create a Public MEGA Link for a Remote Bundle
@@ -1952,9 +2539,10 @@ def create_app() -> Flask:
           not password-protected, anyone who receives it can download the
           evidence. The page shows it with a copy button for that reason.
 
-          The links are also attached to GET /api/artifacts bundles that were
-          already exported; this route exists for bundles that were not, and for
-          the explicit "share this" action.
+          The links that already exist are read separately from
+          GET /api/artifacts/links and shown in the Remote tab, because the
+          listing poll must not publish anything. This route is the explicit
+          "share this" action; POST /api/artifacts/link/delete is its inverse.
         """
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
@@ -1977,6 +2565,58 @@ def create_app() -> Flask:
             status = 502
         return jsonify(result), status
 
+    @app.post("/api/artifacts/link/delete")
+    def artifact_link_delete():
+        """Revoke a Bundle's Public MEGA Link
+        ---
+        tags: [artifacts]
+        consumes: [application/json]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                remote_root: {type: string}
+        responses:
+          200:
+            description: >
+              The link is gone. `deleted` is false when no export existed, so
+              "nothing to revoke" is not reported as a failure.
+          400:
+            description: Invalid artifact name or MEGA root
+          502:
+            description: MEGAcmd could not revoke or verify the export
+          503:
+            description: MEGAcmd is missing or has no session
+        description: >
+          Removes MEGA's public export for the bundle folder; the bundle itself
+          stays on the account. This is the inverse of POST /api/artifacts/link
+          and is deliberately explicit - revocation cannot be undone by the
+          next poll, and a link that has been handed out stops working for
+          everyone immediately.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(ok=False, error="body must be a JSON object"), 400
+        raw_name = body.get("name")
+        if not isinstance(raw_name, str):
+            return jsonify(ok=False, error="artifact name must be a string"), 400
+        result = artifacts.revoke_link(raw_name.strip(),
+                                       str(body.get("remote_root") or "/"))
+        if result.get("ok"):
+            return jsonify(result)
+        error = str(result.get("error") or "")
+        if error.startswith("invalid"):
+            status = 400
+        elif "MEGAcmd" in error or "session" in error:
+            status = 503
+        else:
+            status = 502
+        return jsonify(result), status
 
     @app.get("/api/artifacts/export/<job_id>")
     def artifact_export_job(job_id: str):

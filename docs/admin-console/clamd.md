@@ -13,7 +13,7 @@ integration:
 | --- | --- |
 | `python/clamd/scan_remote.py` | SSH into the VM, deploy the sample with SFTP, scan it there, bring the result JSON home |
 | `python/clamd/clamd-python.py` | the in-VM scanner; speaks to `clamd` over the unix socket or TCP |
-| `python/panel/utils/socket_validator.py` | the operator's TCP client, used as-is for the direct-socket transport |
+| `python/panel/utils/socket_validator.py` | opens the TCP connection to the VM utility server |
 | `python/clamd/results/*.json` | one document per scan, the only source of verdicts |
 
 The panel reads those documents and, when asked, spawns the drivers. It does
@@ -44,18 +44,41 @@ page; the service-status card has a shortcut there.
 | selection | checks | network |
 | --- | --- | --- |
 | `sftp` | `scan_remote.py`, `clamd-python.py`, `vm_info.json` and `paramiko` - the driver files in `python/clamd/` | none: no SSH session is opened by a status poll |
-| `tcp` | `socket_validator.py`, `ifaddr`, `colorama`, then the client opens the socket and clamd is asked for `PING` and `VERSION` | one connect, bounded by the client's own 3s timeout |
+| `tcp` | `socket_validator.py`, the resolved target, then the client opens the socket the transport actually dials | one connect, bounded by the client's own timeout. It does not send a clamd command: the endpoint can be the VM utility server, whose protocol is newline-delimited JSON |
 
 | field | meaning |
 | --- | --- |
 | `ready` | every hard check for the selected transport passed |
-| `reachable` | a daemon answered (`true` only for TCP `PING`; SFTP is not probed here) |
+| `reachable` | the selected transport's socket opened (TCP connect). SFTP is not probed here. Service health is the separate ping |
 | `communication.mode` / `.path` / `.error` | the choice, the file it came from, and why it could not be read |
-| `version` | clamd's own `VERSION` reply (TCP only) |
+| `version` | empty in this build: the status check no longer asks clamd for `VERSION` |
 
 A malformed config is an error the page shows and refuses to submit on: a typo
 must not silently put the sample on a transport nobody selected. `ready: false`
 with green rows is not possible - failed rows are named in the banner.
+
+### Service ping
+
+**Ping** (in the facts panel and in the connection-test header) is a separate,
+on-demand request: `POST /api/clamd/ping`. It opens the VM utility socket with
+`socket_validator.py` and calls `VirtualUtility.ping_service(Service.CLAMD_SERVICE)`
+from `python/panel/utils/vm_utility.py` - the same newline-delimited JSON
+protocol the panel already uses to list and upload samples. It sends no clamd
+command and opens no SSH session, so it works even when clamd's own TCP listener
+is not exposed.
+
+| field | meaning |
+| --- | --- |
+| `ok` | the utility server answered the request (not the same as clamav being up) |
+| `alive` | the guest's own verdict: the ping reply contained `PONG` |
+| `detail` | the utility server's sentence, verbatim (`Response successfull : PONG`) |
+| `state` | systemd's state word from the follow-up `service_info` call, when available |
+| `endpoint` / `seconds` / `checked_at` | where the socket went, how long it took, and when |
+| `response` | the utility server's reply, verbatim |
+| `error` / `code` | why the request failed (`connect-failed`, `no-pong`, ...) |
+
+Because `ok` and `alive` are separate, the page can tell "clamav is down" from
+"the utility server is unreachable" - the two failures need different fixes.
 
 ### Run check and output
 
@@ -97,7 +120,8 @@ Below the pair, one card lists the same steps as a numbered stepper - number,
 name, evidence, and `ok` / `fail` / `info` - with a segment strip in its header
 so the whole result reads at a glance. Each step draws the glyph for the kind of
 thing it checked (`file-code` for a driver, `code` for an imported module,
-`wifi` for an address, `plug` for a socket, `activity` for the PING), and every
+`wifi` for an address, `plug` for a socket; the separate Ping button uses
+`activity`), and every
 element of a row - bubble, connector, glyph, state pill - mixes from the row's
 own state colour, so a failure is red from end to end rather than only in the
 text. The other card lists **both** transports with their availability, so a
@@ -121,22 +145,20 @@ scrolling up stops following - and its **Copy** button takes the whole log.
 | transport | how the sample moves | limit |
 | --- | --- | --- |
 | **SFTP - analysis VM** | `scan_remote.py` deploys over SSH/SFTP, runs `clamd-python.py` in the guest, downloads the result JSON | 25 MiB |
-| **TCP socket - INSTREAM** | `socket_validator.py` opens the TCP socket, then the panel sends `zINSTREAM` frames on it | 25 MiB |
+| **TCP - VM utility** | `socket_validator.py` opens the VM utility connection; the panel uploads binary chunks, then the VM scans the assembled file through ClamAV's Unix socket | 25 MiB |
 
-The 25 MiB is clamd's `StreamMaxLength`, not an arbitrary panel limit: a larger
-stream is refused by the daemon, so the uploader refuses it first.
+The 25 MiB limit bounds the sample upload before it reaches the VM.
 
 **Why two transports.** SFTP is the path the lab's scripts already drive and the
 only one that can update signatures and start a user-space daemon when the
-configured one is down. The TCP path exists for a `clamd` that is reachable
-directly from the host; it is one `INSTREAM` request and needs no SSH account.
+configured one is down. TCP sends the file to the VM utility server, which
+scans it locally; it does not send ClamAV `INSTREAM` data over the utility port.
 
 **The TCP path uses the operator's client unchanged.** `socket_validator.py`
-owns the interface check, the connection timeout and the socket itself; the
-panel loads it by file path (so the operator's tool stays a standalone script
-rather than a panel submodule), calls `establish_tcp_connection()`, and speaks
-`INSTREAM` on the socket it returns.
-Its `print()` narration is captured into the job log with ANSI stripped.
+owns the interface check and the connection; the panel loads it by file path,
+calls `establish_tcp_connection()`, and uses the VM utility JSON protocol to
+upload chunks. The VM server assembles the file and asks its local ClamAV Unix
+socket to scan it. Upload progress and the scan transition appear in the job log.
 
 A request that carries a different `mode` is refused with `mode-locked` rather
 than obeyed; omitting `mode` (what the page does) uses the config.
@@ -195,6 +217,7 @@ from, with the `verdict` and `signature` lines coloured.
 | route | method | purpose |
 | --- | --- | --- |
 | `/api/clamd/status` | GET | transport-aware checks for the `communication` selection, endpoint, transports |
+| `/api/clamd/ping` | POST | on-demand service ping through `vm_utility.ping_service` (`ok` = answered, `alive` = `PONG`) |
 | `/api/clamd/results` | GET | result files, newest first |
 | `/api/clamd/results/<name>` | GET | one result document verbatim (`name` must be a bare `.json` file name; `400 bad-name`, `404 not-found`) |
 | `/api/clamd/submit` | GET | the scan in progress or the last one |

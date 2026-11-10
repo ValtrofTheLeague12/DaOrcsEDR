@@ -12,6 +12,7 @@ import { api, usePoll } from '../api'
 import { ago, bytes, shortDuration } from '../lib/format'
 import type {
   ClamdCheck,
+  ClamdPing,
   ClamdResultDocument,
   ClamdStatus,
   ClamdSubmitJob,
@@ -240,6 +241,11 @@ export default function Clamd({ onNavigate }: {
   const [status, setStatus] = useState<ClamdStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [checkError, setCheckError] = useState<string | null>(null)
+  // The ping is its own request: it asks the guest over the VM utility socket,
+  // so it is a button rather than part of the 10-second status poll.
+  const [ping, setPing] = useState<ClamdPing | null>(null)
+  const [pinging, setPinging] = useState(false)
+  const [pingError, setPingError] = useState<string | null>(null)
   useEffect(() => { if (polledStatus) setStatus(polledStatus) }, [polledStatus])
   // The daemon's own health, the action, and the verdicts it produced are
   // different questions. They shared one scroll once, and a long result list
@@ -328,6 +334,21 @@ export default function Clamd({ onNavigate }: {
       setCheckError(e instanceof Error ? e.message : String(e))
     } finally {
       setChecking(false)
+    }
+  }
+
+  // Ask the guest directly. This goes through vm_utility.py's ping_service,
+  // not clamd's zPING, so it works even when the TCP transport is not exposed.
+  const runPing = async () => {
+    setPinging(true)
+    setPingError(null)
+    try {
+      setPing(await api.clamdPing())
+    } catch (e) {
+      setPing(null)
+      setPingError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPinging(false)
     }
   }
 
@@ -504,7 +525,9 @@ export default function Clamd({ onNavigate }: {
                     ? `${status.vm.host}@${status.vm.ip}:${status.vm.port}`
                     : 'not configured'}
                 </Fact>
-                <Fact label="Version" title={status.version}>{status.version || '—'}</Fact>
+                {status.version && (
+                  <Fact label="Version" title={status.version}>{status.version}</Fact>
+                )}
                 <Fact label="Checked">
                   {status.checked_at
                     ? <span title={new Date(status.checked_at * 1000).toLocaleString()}>
@@ -512,6 +535,50 @@ export default function Clamd({ onNavigate }: {
                       </span>
                     : '—'}
                 </Fact>
+                <div className="mt-2 border-t border-default-100 pt-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-default-500">Service ping</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      {ping ? (
+                        <Chip size="sm" variant="soft"
+                          color={!ping.ok ? 'warning' : ping.alive ? 'success' : 'danger'}>
+                          {!ping.ok ? 'no answer' : ping.alive ? 'active' : 'down'}
+                        </Chip>
+                      ) : (
+                        <span className="text-[10px] text-default-400">
+                          {pinging ? 'pinging…' : 'not checked'}
+                        </span>
+                      )}
+                      <Button size="sm" variant="outline" isDisabled={pinging}
+                        onPress={() => void runPing()}>
+                        <Icon name="activity" size={12} />
+                        {pinging ? 'Pinging…' : 'Ping'}
+                      </Button>
+                    </span>
+                  </div>
+                  {ping && (
+                    <div className="mt-1 flex flex-col gap-0.5">
+                      <span
+                        className={`break-words font-mono text-[10px] ${
+                          ping.ok && ping.alive ? 'text-success'
+                            : ping.ok ? 'text-danger' : 'text-warning'
+                        }`}
+                        title={ping.detail}
+                      >
+                        {ping.detail}
+                      </span>
+                      <span className="font-mono text-[10px] text-default-400"
+                        title={ping.response ? JSON.stringify(ping.response) : undefined}>
+                        {ping.endpoint} · {ping.seconds}s
+                        {ping.state ? ` · ${ping.state}` : ''}
+                        {' · '}{ago(ping.checked_at)}
+                      </span>
+                    </div>
+                  )}
+                  {pingError && (
+                    <p className="mt-1 break-words text-[10px] text-danger">{pingError}</p>
+                  )}
+                </div>
                 <p className="mt-2 border-t border-default-100 pt-2 text-[10px] leading-relaxed text-default-400">
                   {status.note}
                 </p>
@@ -522,7 +589,7 @@ export default function Clamd({ onNavigate }: {
               title="Connection test"
               subtitle={chosen === 'sftp'
                 ? 'file checks only · no SSH session is opened'
-                : 'socket_validator.py · connect, PING, VERSION'}
+                : 'socket_validator.py · connect check · health is the ping'}
               status={{
                 label: ready ? 'ready' : 'not ready',
                 tone: communication?.error ? 'danger' : ready ? 'success' : 'warning',
@@ -531,11 +598,18 @@ export default function Clamd({ onNavigate }: {
                 ? `${passed}/${checks.length} steps · ${new Date(status.checked_at * 1000).toLocaleTimeString()}`
                 : `${passed}/${checks.length} steps`}
               actions={(
-                <Button size="sm" variant="outline" isDisabled={checking}
-                  onPress={() => void runCheck()}>
-                  <Icon name="play" size={12} />
-                  {checking ? 'Checking…' : 'Run check'}
-                </Button>
+                <span className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" isDisabled={pinging}
+                    onPress={() => void runPing()}>
+                    <Icon name="activity" size={12} />
+                    {pinging ? 'Pinging…' : 'Ping service'}
+                  </Button>
+                  <Button size="sm" variant="outline" isDisabled={checking}
+                    onPress={() => void runCheck()}>
+                    <Icon name="play" size={12} />
+                    {checking ? 'Checking…' : 'Run check'}
+                  </Button>
+                </span>
               )}
               lines={status.output ?? []}
               lineClass={statusLineClass}
@@ -550,7 +624,7 @@ export default function Clamd({ onNavigate }: {
                 <Card.Title className="text-sm font-semibold">
                   {chosen === 'sftp' ? 'SFTP checks' : 'TCP checks'}
                   <span className="ml-2 text-[10px] font-normal text-default-400">
-                    {chosen === 'sftp' ? 'python/clamd/ driver files' : 'socket client, then clamd'}
+                    {chosen === 'sftp' ? 'python/clamd/ driver files' : 'socket client + connect'}
                   </span>
                 </Card.Title>
                 <span className="flex items-center gap-2">

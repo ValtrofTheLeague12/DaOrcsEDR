@@ -74,6 +74,7 @@ _running: str | None = None
 # Replaced by tests so no test starts processes.
 _RUN = subprocess.run
 _POPEN = subprocess.Popen
+_SPAWN = subprocess.Popen
 
 
 def config_path(repo: Path) -> Path:
@@ -81,10 +82,15 @@ def config_path(repo: Path) -> Path:
 
 
 def defaults() -> dict:
-    return {"enabled": False, "target": DEFAULT_TARGET, "sample": ""}
+    return {
+        "enabled": False,
+        "target": DEFAULT_TARGET,
+        "sample": "",
+        "keep_open": False,
+    }
 
 
-def _coerce_bool(value: object) -> bool:
+def _coerce_bool(value: object, key: str = "enabled") -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, int) and value in (0, 1):
@@ -95,7 +101,7 @@ def _coerce_bool(value: object) -> bool:
             return True
         if low in ("0", "false", "no", "off", ""):
             return False
-    raise ValueError("'enabled' must be a boolean")
+    raise ValueError(f"'{key}' must be a boolean")
 
 
 def _coerce_target(value: object) -> str:
@@ -141,10 +147,12 @@ def load(repo: Path) -> dict:
                 settings["sample"] = value
             else:
                 raise ValueError("'sample' must be a string")
+        elif key == "keep_open":
+            settings["keep_open"] = _coerce_bool(value, "keep_open")
         else:
             raise ValueError(
                 f"not a memory-profiling setting: {key} "
-                f"(known: enabled, target, sample)")
+                f"(known: enabled, target, sample, keep_open)")
     return settings
 
 
@@ -152,7 +160,8 @@ def write(repo: Path, patch: dict) -> dict:
     """Set the option. The file is rewritten whole, like the other JSON config."""
     if not isinstance(patch, dict):
         raise ValueError("body must be a JSON object")
-    unknown = [k for k in patch if k not in ("enabled", "target", "sample")]
+    unknown = [k for k in patch
+               if k not in ("enabled", "target", "sample", "keep_open")]
     if unknown:
         raise ValueError("not a memory-profiling setting: " + ", ".join(sorted(unknown)))
 
@@ -170,6 +179,8 @@ def write(repo: Path, patch: dict) -> dict:
                 current["sample"] = value
             else:
                 raise ValueError("'sample' must be a string")
+        if "keep_open" in patch:
+            current["keep_open"] = _coerce_bool(patch["keep_open"], "keep_open")
 
         path = config_path(repo)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -320,6 +331,92 @@ def _now() -> float:
     return time.time()
 
 
+def _csv_process_name(path: Path) -> str | None:
+    """Read just the ``Process:`` line from a VMMap CSV, for recovery."""
+    try:
+        raw = path.read_bytes()[:4096]
+    except OSError:
+        return None
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("mbcs" if os.name == "nt" else "cp1252",
+                          errors="replace")
+    for row in csv.reader(io.StringIO(text, newline="")):
+        if row and row[0].strip() == "Process:" and len(row) > 1:
+            return row[1].strip() or None
+        if len(row) > 5:
+            break
+    return None
+
+
+def _recover_recent(repo: Path) -> dict | None:
+    """Register the newest completed export after a restart or TTL expiry.
+
+    Jobs live in memory so a capture does not leak into the next process, but
+    that also meant the last capture disappeared from the page after a restart
+    (or an hour). The exports are on disk, so rebuild the minimum job view the
+    tree and downloads need from the newest directory that has a CSV.
+    """
+    root = repo / OUTPUT_RELATIVE
+    try:
+        candidates = [
+            path for path in root.iterdir()
+            if path.is_dir() and (path / "memory-map.csv").is_file()
+        ]
+    except OSError:
+        return None
+    if not candidates:
+        return None
+
+    def modified(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    directory = max(candidates, key=modified)
+    csv_path = directory / "memory-map.csv"
+    snapshot_path = directory / "snapshot.mmp"
+    target_log_path = directory / "target.log"
+    process_name = _csv_process_name(csv_path)
+    target = ("analyzer" if process_name
+              and "analyzer" in process_name.lower() else "sample")
+
+    target_log: list[str] = []
+    try:
+        if target_log_path.is_file():
+            with target_log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                target_log = handle.read().splitlines()[-MAX_LOG_LINES:]
+    except OSError:
+        target_log = []
+
+    return {
+        "id": directory.name,
+        "state": "done",
+        "target": target,
+        "sample": process_name,
+        "started_at": modified(directory),
+        "finished_at": _now(),
+        "exit_code": 0,
+        "error": None,
+        "warning": ("Recovered the newest export from disk; the original "
+                    "capture metadata is not available."),
+        "command": None,
+        "container": None,
+        "output_dir": str(directory),
+        "report_dir": str(directory),
+        "snapshot_path": str(snapshot_path) if snapshot_path.is_file() else None,
+        "csv_path": str(csv_path),
+        "keep_open": False,
+        "log": [],
+        "target_log": target_log,
+        "log_line_count": 0,
+        "log_dropped": 0,
+        "duration_sec": None,
+    }
+
+
 def _prune(now: float) -> None:
     global _running
     for jid in [k for k, v in _jobs.items()
@@ -346,10 +443,11 @@ def _append(job_id: str, line: str) -> None:
 def _job_view(job: dict) -> dict:
     keys = ("id", "state", "target", "sample", "started_at", "finished_at",
             "exit_code", "error", "warning", "command", "container", "output_dir",
-            "report_dir", "snapshot_path", "csv_path", "log_line_count",
-            "log_dropped", "duration_sec")
+            "report_dir", "snapshot_path", "csv_path", "keep_open",
+            "log_line_count", "log_dropped", "duration_sec")
     out = {k: job.get(k) for k in keys}
     out["log"] = list(job.get("log") or [])
+    out["target_log"] = list(job.get("target_log") or [])
     return out
 
 
@@ -382,6 +480,35 @@ def _vmmap_command(repo: Path, pid: int, output: Path) -> list[str]:
     if Path(state["executable"]).name.lower() == "vmmap.exe":
         args.append("-64")
     return [*args, "-p", str(pid), str(output)]
+
+
+def _gui_command(repo: Path, snapshot: Path) -> list[str]:
+    """Open a saved .mmp in VMMap's GUI and leave it running.
+
+    VMMap's command-line capture terminates after writing the export. The
+    documented `-o inputfile` option is the way back into the GUI: it opens the
+    snapshot at startup instead of starting a new scan.
+    """
+    state = vmmap_state(repo)
+    if not state["installed"] or not state["executable"]:
+        raise ValueError(state["error"] or "VMMap is not installed")
+    args = [state["executable"], "-accepteula"]
+    if Path(state["executable"]).name.lower() == "vmmap.exe":
+        args.append("-64")
+    return [*args, "-o", str(snapshot)]
+
+
+def _open_gui(job_id: str, repo: Path, snapshot: Path) -> bool:
+    """Launch VMMap detached so the panel's worker can finish."""
+    try:
+        args = _gui_command(repo, snapshot)
+        _SPAWN(args, cwd=str(repo), close_fds=True)
+    except (OSError, ValueError) as exc:
+        _append(job_id, f"could not open the VMMap GUI: {exc}")
+        return False
+    _append(job_id, f"$ {subprocess.list2cmdline(args)}")
+    _append(job_id, "VMMap GUI opened on the saved snapshot and left running.")
+    return True
 
 
 def _run_profile(job_id: str, repo: Path, target: str,
@@ -472,6 +599,8 @@ def _run_profile(job_id: str, repo: Path, target: str,
                     _finish(
                         job_id, -1, error)
                     return
+            if job.get("keep_open"):
+                _open_gui(job_id, repo, snapshot)
             remaining = timeout - (time.monotonic() - started)
             if remaining <= 0:
                 if proc.poll() is None:
@@ -607,7 +736,9 @@ def start(repo: Path, target: str | None = None,
             "report_dir": str(out_dir),
             "snapshot_path": None,
             "csv_path": None,
+            "keep_open": bool(settings.get("keep_open")),
             "log": [],
+            "target_log": [],
             "log_line_count": 0,
             "log_dropped": 0,
             "duration_sec": None,
@@ -698,19 +829,18 @@ def _parse_vmmap_csv(path: Path) -> dict:
         })
     categories.sort(key=lambda entry: entry["size_bytes"] or 0, reverse=True)
 
-    layout_regions = []
-    total_regions = 0
+    # VMMap exports the address table as an indented tree: a region row at
+    # column zero is followed by its subregions two spaces to the right. Keep
+    # that shape instead of flattening it, so repeated start addresses read as
+    # a parent/child relationship rather than duplicate rows.
+    nodes = []
     for entry in regions:
         raw_address = entry.get("Address", "")
         address = raw_address.strip()
         if not re.fullmatch(r"(?:0x)?[0-9A-Fa-f]{1,16}", address):
             continue
-        if raw_address != raw_address.lstrip():
-            continue
-        total_regions += 1
-        if len(layout_regions) >= MAX_LAYOUT_REGIONS:
-            continue
-        layout_regions.append({
+        nodes.append({
+            "depth": len(raw_address) - len(raw_address.lstrip()),
             "address": address.removeprefix("0x").removeprefix("0X").upper(),
             "type": entry.get("Type", "").strip(),
             "size_bytes": amount(entry, "Size"),
@@ -718,9 +848,84 @@ def _parse_vmmap_csv(path: Path) -> dict:
             "total_ws_bytes": amount(entry, "Total WS"),
             "protection": entry.get("Protection", "").strip(),
             "details": entry.get("Details", "").strip(),
+            "children": [],
         })
 
+    region_total = len(nodes)
+    included = nodes[:MAX_LAYOUT_REGIONS]
+
+    layout_regions = []
+    stack = []
+    for node in included:
+        depth = node.pop("depth")
+        while stack and stack[-1][0] >= depth:
+            stack.pop()
+        if stack:
+            stack[-1][1]["children"].append(node)
+        else:
+            layout_regions.append(node)
+        stack.append((depth, node))
+
+    def signature(entry: dict) -> tuple:
+        return (
+            entry["address"], entry["type"], entry["size_bytes"],
+            entry["committed_bytes"], entry["total_ws_bytes"],
+            entry["protection"], entry["details"],
+        )
+
+    def prune(entry: dict) -> None:
+        """Drop leaf rows that repeat their parent or an earlier sibling.
+
+        VMMap emits an aggregate row and then a child at the same address for
+        some regions. When every field is identical the child adds no
+        information, so keep only the tree parent.
+        """
+        parent_signature = signature(entry)
+        kept = []
+        seen = set()
+        for child in entry["children"]:
+            child_signature = signature(child)
+            if not child["children"] and (
+                child_signature == parent_signature or child_signature in seen
+            ):
+                continue
+            seen.add(child_signature)
+            prune(child)
+            kept.append(child)
+        entry["children"] = kept
+
+    def fold_single_child(entry: dict) -> None:
+        """Fold a parent and its only child into one row when they are the same
+        region.
+
+        VMMap writes an aggregate row and then repeats the region one level
+        down, often with the detail (``Thread Environment Block``) on the child
+        and nothing on the parent. Keeping both produced two identical address
+        rows; folding them keeps the detail and the tree shape.
+        """
+        for child in entry["children"]:
+            fold_single_child(child)
+        while len(entry["children"]) == 1:
+            child = entry["children"][0]
+            if (child["address"] != entry["address"]
+                    or child["type"] != entry["type"]
+                    or child["size_bytes"] != entry["size_bytes"]):
+                break
+            for key in ("committed_bytes", "total_ws_bytes", "protection",
+                        "details"):
+                if not entry.get(key) and child.get(key):
+                    entry[key] = child[key]
+            entry["children"] = child["children"]
+
+    for entry in layout_regions:
+        prune(entry)
+        fold_single_child(entry)
     layout_regions.sort(key=lambda entry: int(entry["address"], 16))
+
+    def count_nodes(entry: dict) -> int:
+        return 1 + sum(count_nodes(child) for child in entry["children"])
+
+    region_count = sum(count_nodes(entry) for entry in layout_regions)
     return {
         "process_name": process_name,
         "process_id": process_id,
@@ -734,8 +939,10 @@ def _parse_vmmap_csv(path: Path) -> dict:
         },
         "categories": categories,
         "regions": layout_regions,
-        "region_count": total_regions,
-        "regions_truncated": total_regions > len(layout_regions),
+        "root_count": len(layout_regions),
+        "region_count": region_count,
+        "region_total": region_total,
+        "regions_truncated": region_total > len(included),
     }
 
 
@@ -762,6 +969,14 @@ def snapshot_file(job_id: str) -> Path | None:
     return path if path is not None and path.is_file() else None
 
 
+def csv_file(job_id: str) -> Path | None:
+    """Return the CSV memory map path for a known in-memory job."""
+    with _jobs_lock:
+        entry = _jobs.get(job_id)
+        path = Path(entry["csv_path"]) if entry and entry.get("csv_path") else None
+    return path if path is not None and path.is_file() else None
+
+
 def snapshot(repo: Path) -> dict:
     """The option, the environment it needs, and the last/current profile."""
     try:
@@ -774,6 +989,13 @@ def snapshot(repo: Path) -> dict:
     state = vmmap_state(repo)
     with _jobs_lock:
         _prune(_now())
+        empty = not _jobs
+    if empty:
+        recovered = _recover_recent(repo)
+        if recovered is not None:
+            with _jobs_lock:
+                _jobs.setdefault(recovered["id"], recovered)
+    with _jobs_lock:
         current = _jobs.get(_running) if _running else None
         recent = sorted(
             _jobs.values(),

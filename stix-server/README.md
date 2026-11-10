@@ -108,6 +108,7 @@ credential. `False` means you are about to upload to the wrong account.
 | `bundle_path(name)` | `remote_root/<name>_artifact` |
 | `ls(path)` | raw `ls -l` rows: `name`, `kind`, `size`, `date`, `is_dir` |
 | `list_bundles(all=False)` | `Bundle` objects; `all=True` includes non-bundle folders |
+| `find_bundles_by_hash(sha256)` | plain artifact names whose manifest `archive_sha256` or `files[].hash` matches |
 | `exists(name)` | best-effort, never raises |
 
 `Bundle` fields: `name` (the folder, e.g. `quick_test_artifact`), `artifact`
@@ -325,6 +326,23 @@ All of them subclass `MegaSDKError`:
 and `link` will reject `..`, separators, an empty name and the
 `_artifact`-suffixed form.
 
+## Logging
+
+`mega_client.py` logs through [loguru](https://github.com/Delgan/loguru). Failed
+MEGA calls, missing CLI/session, password problems, timeouts and rejected
+arguments are logged at `WARNING`/`ERROR` with the exception traceback where
+available. Routine operations are `DEBUG`/`TRACE` so they stay out of the way
+until you configure a verbose sink:
+
+```python
+from loguru import logger
+
+logger.remove()
+logger.add("stix-server.log", level="DEBUG", rotation="10 MB", retention=5)
+```
+
+Secrets (passwords, peppers, API keys) are never logged.
+
 ## Environment
 
 | Variable | Effect |
@@ -334,6 +352,41 @@ and `link` will reject `..`, separators, an empty name and the
 | `IA_BUNDLE_PASSWORD_FILE` | default bundle password file |
 | `MEGA_AUTH_CODE` | login code for `mega/login.py` |
 | `MEGA_FETCH_CMD` | overrides the remote fetch command |
+| `CTI_SESSION_KEY` | signs dashboard session cookies; overrides `config/.session-key` |
+
+## Running the generated dashboard
+
+Generate Server only writes `server.py`; it does not start a listener. The
+Threat Intelligence panel's **Launch Server** button starts it and waits until
+`/health` answers, and **Stop Server** shuts it down again. Stop refuses to kill
+a listener whose command line is not `stix-server/server.py`, so a port owned by
+another process is left alone.
+
+The manual equivalent is:
+
+```powershell
+python stix-server/server.py
+```
+
+It reads `server.ip` and `server.port` from `config/cti_config.json` on every
+start and binds that address. The working directory does not matter: paths are
+resolved from `server.py`'s own directory.
+
+### Bundle (ZIP) password
+
+Protected bundles are WinZip AES-256 archives, so the dashboard publishes the
+password that opens them to users who are already signed in. `host_server.py`
+copies it from the operator password file into
+`stix-server/config/bundle-password` at generation time; that path is
+git-ignored, and the value is never written into `artifact_catalog.json` or the
+templates. The live server reads the sidecar (or `IA_BUNDLE_PASSWORD_FILE` when
+set) on each request and renders it on the catalog and artifact detail pages
+only. If the sidecar is absent, no password is shown. The static `index.html`
+generated for preview is deliberately left without the value, because that file
+has no login gate.
+
+One operator password protects every bundle, so rotating it means earlier
+bundles still need the password they were sealed with.
 
 ## Inspect from the shell
 
@@ -342,6 +395,89 @@ python stix-server/mega_client.py status
 python stix-server/mega_client.py bundles --remote-root /evidence
 python stix-server/mega_client.py links   --remote-root /evidence
 ```
+
+## Dashboard authentication
+
+The generated Flask dashboard (`server.py`) is gated by Supabase's
+`allowed_users` and `ip_list` tables. Every route except `/login`, `/logout`,
+`/health` and `/static/*` requires a signed session cookie.
+
+A login succeeds only when **all** of these hold:
+
+1. `allowed_users.username` matches and `bcrypt(password + unique_peper)`
+   verifies the submitted password.
+2. The user has an `ip_list` row whose `decision is true` (not `false`, not
+   unset).
+3. The connection's client address matches `ip_list.ip_address`. An exact
+   address or a CIDR network (`10.0.0.0/24`) both work.
+
+The client address is `request.remote_addr`. `X-Forwarded-For` is ignored
+unless `auth.trust_proxy` is `true`, because an untrusted client could
+otherwise claim any address.
+
+### Configuration
+
+`config/cti_config.json`:
+
+```json
+"auth": {
+  "enabled": true,
+  "session_ttl_hours": 12,
+  "cookie_secure": false,
+  "trust_proxy": false,
+  "allow_loopback": false,
+  "max_attempts": 5,
+  "lockout_seconds": 300
+}
+```
+
+| Key | Effect |
+| --- | --- |
+| `enabled` | `false` opens the catalog (default `true`; fail closed) |
+| `session_ttl_hours` | Cookie lifetime, and the signed payload's max age |
+| `cookie_secure` | Set `true` when the dashboard is served over HTTPS |
+| `trust_proxy` | Honour `X-Forwarded-For` from a reverse proxy |
+| `allow_loopback` | Skip the stored-address comparison for loopback clients (an address must still be provisioned). Never bypasses `decision` |
+| `max_attempts` | Failed logins per `username + address` before a temporary lockout |
+| `lockout_seconds` | Sliding lockout window |
+
+Sessions are signed with `CTI_SESSION_KEY` when set, otherwise with
+`config/.session-key` (created on first run). Rotating either invalidates
+every existing session. The file is deliberately not tracked by git.
+
+### Provisioning users and IP rights
+
+```powershell
+# List accounts, their address and allow/block state.
+python stix-server/manage_users.py list
+
+# Create an operator, allowed only from 10.0.0.5. Omit --password to generate
+# one; it is printed exactly once.
+python stix-server/manage_users.py create --username alice --ip 10.0.0.5 --allow
+
+# Rotate a password (also resets a legacy unverifiable digest).
+python stix-server/manage_users.py set-password --username alice
+
+# Move the account to another address, or block it outright.
+python stix-server/manage_users.py set-ip --username alice --ip 10.0.0.9 --allow
+python stix-server/manage_users.py set-ip --username alice --ip 10.0.0.9 --block
+
+# Remove the account and its ip_list row.
+python stix-server/manage_users.py delete --username alice --yes
+```
+
+The CLI writes `bcrypt(password + unique_peper)` through the same
+`cti_auth` functions the server verifies with. Passwords are never echoed
+unless the CLI generated them, and digests are never printed.
+
+**Legacy rows need a reset.** An earlier `host_server.hash_password()` shuffled
+the peppered string before hashing and did not store the permutation, so those
+digests cannot be verified by any code. Run `set-password` for any account
+created before this change.
+
+The admin console's **Available Users** page manages the same rows: Allow
+sets `decision = true`, Block sets it to `false`. A user with no IP row cannot
+sign in until `set-ip` gives them one.
 
 ## Tests
 
