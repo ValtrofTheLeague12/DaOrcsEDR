@@ -2070,20 +2070,23 @@ class abuseipdb_provider final : public base_provider {
 // ===========================================================================
 // Keyless by design: the Community endpoint answers without credentials, so
 // this provider is never skipped for a missing GREYNOISE_API_KEY - the key is
-// optional and only raises the quota.
-//
-// That quota is small and measured per day / week, not per minute (see
-// docs.greynoise.io "Using the GreyNoise Community API": 10 IP lookups per day
-// unauthenticated, 50 per week for a free-tier key). The keyless rate is
-// therefore one lookup every five minutes: a 10-minute run spends at most two
-// and the rest of the day still works, instead of one sample eating the whole
-// allowance. A paid key answers far more often, hence the higher keyed rate.
+// optional and only raises the quota. The keyless quota is per source IP and
+// per day (about 50 lookups; older docs said 10/day), and the endpoint
+// tolerates a few requests per minute. The rate below is deliberately modest:
+// enough that a normal artifact set is not stalled, not so high that one scan
+// burns the daily allowance. A 429 trips the base provider's circuit breaker.
 class greynoise_provider final : public base_provider {
  public:
   explicit greynoise_provider(const config& cfg)
+      // The community endpoint works without a key but is throttled per source
+      // IP (roughly 50 lookups/day). The old keyless rate was 0.2/min - one
+      // request every five minutes - which stalled a round on the second IP
+      // for minutes while the phase looked hung. Two tokens at a time is
+      // enough for a typical artifact set, and 6/min keeps the daily quota
+      // from being burned by a single scan; a 429 trips the circuit breaker.
       : base_provider("greynoise",
-                      cfg.keys.greynoise.empty() ? 0.2 : 20,
-                      cfg.keys.greynoise.empty() ? 1 : 5,
+                      cfg.keys.greynoise.empty() ? 6 : 20,
+                      cfg.keys.greynoise.empty() ? 2 : 5,
                       1, 0.8),
         url_(cfg.urls.greynoise), key_(cfg.keys.greynoise) {}
   bool supports(artifact_type t) const override { return t == artifact_type::ip; }
@@ -3022,6 +3025,32 @@ std::vector<std::unique_ptr<provider>> make_default_providers(const config& cfg)
   return all;
 }
 
+std::string provider_label(const std::string& provider) {
+  // Keys are the ids returned by provider::name(); values are what the
+  // operator sees in the progress log and the report. Anything unknown (a
+  // future provider) falls back to its id so it is never silently hidden.
+  static const std::map<std::string, std::string> labels = {
+      {"dns", "DNS (dig/DoH)"},
+      {"rdap", "RDAP"},
+      {"shodan_internetdb", "Shodan InternetDB"},
+      {"abuseipdb", "AbuseIPDB"},
+      {"greynoise", "GreyNoise"},
+      {"otx", "AlienVault OTX"},
+      {"threatfox", "abuse.ch ThreatFox"},
+      {"urlhaus", "abuse.ch URLhaus"},
+      {"malwarebazaar", "abuse.ch MalwareBazaar"},
+      {"virustotal", "VirusTotal"},
+      {"circl_hashlookup", "CIRCL hashlookup"},
+      {"crtsh", "crt.sh"},
+      {"cisa_kev", "CISA KEV"},
+      {"epss", "EPSS"},
+      {"nvd", "NVD"},
+      {"mitre_attack", "MITRE ATT&CK"},
+  };
+  const auto it = labels.find(provider);
+  return it == labels.end() ? provider : it->second;
+}
+
 // ===========================================================================
 // cti_pipeline.cpp
 // ===========================================================================
@@ -3124,6 +3153,124 @@ void score_item(enrichment& e) {
   if (e.reason.empty() && e.outcome == verdict::unknown) e.reason = e.findings.empty() ? "no provider had data" : "no provider flagged it";
 }
 
+// ---------------------------------------------------------------------------
+// progress detail: what the provider actually answered
+// ---------------------------------------------------------------------------
+// The provider-specific `data` object already holds the exact numbers an
+// operator wants to see (VirusTotal detection counts, AbuseIPDB confidence,
+// DNS answers, Shodan ports, ...). Rendering it as compact key=value pairs is
+// both accurate and readable; a raw JSON dump is not.
+std::string progress_value(const json& value);
+
+// True when the summary already mentions this value (for example DNS puts the
+// PTR, ASN and prefix in its summary; printing them again as key=value is just
+// noise). Short values are never matched: "US", "80" or "12" appear in too
+// many places to be a reliable signal.
+bool progress_shown(const std::string& text, const json& value) {
+  if (value.is_string()) {
+    const std::string s = value.get<std::string>();
+    return s.size() >= 3 && text.find(s) != std::string::npos;
+  }
+  if (value.is_number_integer()) {
+    const std::string s = std::to_string(value.get<long long>());
+    return s.size() >= 3 && text.find(s) != std::string::npos;
+  }
+  if (value.is_number_unsigned()) {
+    const std::string s = std::to_string(value.get<unsigned long long>());
+    return s.size() >= 3 && text.find(s) != std::string::npos;
+  }
+  if (value.is_array()) {
+    for (const json& item : value) if (progress_shown(text, item)) return true;
+    return false;
+  }
+  return false;
+}
+
+std::string progress_data(const json& data, const std::string& existing) {
+  if (!data.is_object()) return {};
+  std::string out;
+  for (auto it = data.begin(); it != data.end(); ++it) {
+    if (progress_shown(existing, it.value())) continue;
+    const std::string piece = progress_value(it.value());
+    if (piece.empty() || piece == "[]" || piece == "{}") continue;
+    if (!out.empty()) out += ", ";
+    out += it.key() + "=" + piece;
+  }
+  return out;
+}
+
+std::string progress_value(const json& value) {
+  if (value.is_null()) return {};
+  if (value.is_boolean()) return value.get<bool>() ? "true" : "false";
+  if (value.is_string()) {
+    std::string s = value.get<std::string>();
+    if (s.size() > 120) s = s.substr(0, 117) + "...";
+    for (char& c : s) if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+    return s;
+  }
+  if (value.is_number_integer()) return std::to_string(value.get<long long>());
+  if (value.is_number_unsigned()) return std::to_string(value.get<unsigned long long>());
+  if (value.is_number_float()) {
+    std::ostringstream out;
+    out << value.get<double>();
+    return out.str();
+  }
+  if (value.is_array()) {
+    std::string out;
+    std::size_t n = 0;
+    for (const json& item : value) {
+      if (n++ >= 8) { out += out.empty() ? "..." : ", ..."; break; }
+      const std::string piece = progress_value(item);
+      if (piece.empty()) continue;
+      if (!out.empty()) out += ", ";
+      out += piece;
+    }
+    return "[" + out + "]";
+  }
+  if (value.is_object()) return "{" + progress_data(value, {}) + "}";
+  return {};
+}
+
+void append_detail(std::string& out, const std::string& part) {
+  if (part.empty()) return;
+  if (!out.empty()) out += " | ";
+  out += part;
+}
+
+std::string progress_result(const query_result& result) {
+  std::string out;
+  if (!result.findings.empty()) {
+    if (result.findings.size() > 1) out = std::to_string(result.findings.size()) + " findings: ";
+    const finding& f = result.findings.front();
+    if (f.outcome != verdict::unknown) out += std::string(to_string(f.outcome)) + ": ";
+    out += f.summary;
+    append_detail(out, progress_data(f.data, out));
+    if (f.from_cache) out += " (cached)";
+  }
+
+  // Network context is often the point of an IP/domain lookup and is kept
+  // outside finding.data, so show it too when the provider filled it in.
+  std::string net;
+  const auto add_net = [&net, &out](const char* label, const std::string& value) {
+    if (value.empty()) return;
+    if (value.size() >= 3 &&
+        (out.find(value) != std::string::npos || net.find(value) != std::string::npos)) return;
+    if (!net.empty()) net += ", ";
+    net += std::string(label) + "=" + value;
+  };
+  add_net("country", result.net.country);
+  add_net("org", result.net.org);
+  add_net("asn", result.net.asn);
+  add_net("as_name", result.net.asn_name);
+  add_net("prefix", result.net.prefix);
+  append_detail(out, net);
+
+  if (out.empty() && !result.errors.empty()) out = "error: " + result.errors.front().message;
+  if (out.empty()) out = "no data";
+  if (out.size() > 600) out = out.substr(0, 597) + "...";
+  return out;
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -3171,7 +3318,15 @@ pipeline::pipeline(config cfg, std::unique_ptr<http_client> http)
 pipeline::~pipeline() = default;
 
 bool pipeline::network_available() const {
-  if (!http_ || cfg_.offline) return false;
+  network_probe_error_.clear();
+  if (!http_) {
+    network_probe_error_ = "HTTP client unavailable";
+    return false;
+  }
+  if (cfg_.offline) {
+    network_probe_error_ = "offline mode";
+    return false;
+  }
 
   try {
     http_request request;
@@ -3181,8 +3336,16 @@ bool pipeline::network_available() const {
     request.max_response_bytes = 1;
     request.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     const http_response response = http_->perform(request);
+    if (!response.transport_ok) {
+      network_probe_error_ = "HEAD " + request.url + ": " +
+                             (response.error.empty() ? "transport failure" : response.error);
+    }
     return response.transport_ok;
+  } catch (const std::exception& ex) {
+    network_probe_error_ = "probe failed: " + std::string(ex.what());
+    return false;
   } catch (...) {
+    network_probe_error_ = "probe failed: unknown exception";
     return false;
   }
 }
@@ -3336,7 +3499,7 @@ void pipeline::run_round(int round, const progress_callback& progress, std::vect
 
   for (const auto& p : providers_) {
     if (!p->configured()) {
-      const std::string message = "provider '" + p->name() + "' skipped: set " + p->requirement();
+      const std::string message = "provider '" + provider_label(p->name()) + "' skipped: set " + p->requirement();
       if (std::find(warnings_.begin(), warnings_.end(), message) == warnings_.end()) warnings_.push_back(message);
       continue;
     }
@@ -3376,6 +3539,10 @@ void pipeline::run_round(int round, const progress_callback& progress, std::vect
       {
         std::lock_guard<std::mutex> lock(mutex);
         art = items_[index].art;
+        // Announce the query before it is issued. A provider that is waiting
+        // on its rate limiter (or an endpoint that never answers) otherwise
+        // looks like a stalled phase: nothing is printed until it finishes.
+        if (progress) progress({round, finished, total, j->p->name(), art.key(), true});
       }
       query_result result;
       try {
@@ -3393,6 +3560,8 @@ void pipeline::run_round(int round, const progress_callback& progress, std::vect
         j->expired.store(true);
         return;
       }
+      // Render the answer before the findings are moved into the enrichment.
+      const std::string detail = progress_result(result);
       enrichment& e = items_[index];
       provider_stat& stat = stats_[j->p->name()];
       stat.provider = j->p->name();
@@ -3417,7 +3586,7 @@ void pipeline::run_round(int round, const progress_callback& progress, std::vect
       for (artifact& d : result.derived) new_derived.push_back(std::move(d));
       done_[index].insert(j->p->name());
       ++finished;
-      if (progress) progress({round, finished, total, j->p->name(), art.key()});
+      if (progress) progress({round, finished, total, j->p->name(), art.key(), false, detail});
     }
   };
 
@@ -3434,7 +3603,7 @@ void pipeline::run_round(int round, const progress_callback& progress, std::vect
     for (std::size_t i : j->indices) pending += done_[i].count(j->p->name()) == 0 ? 1 : 0;
     if (pending == 0) continue;
     if (!budget_warned_.insert(j->p->name()).second) continue;      // one warning per provider
-    warnings_.push_back("provider '" + j->p->name() + "' stopped: time budget of " +
+    warnings_.push_back("provider '" + provider_label(j->p->name()) + "' stopped: time budget of " +
                         std::to_string(cfg_.provider_budget_seconds) + " s exhausted (" +
                         std::to_string(pending) + "+ artifact(s) not queried)");
   }
@@ -4691,7 +4860,7 @@ void print_summary(const report& r, std::ostream& out, std::size_t max_items) {
   if (!r.provider_stats.empty()) {
     section("Providers");
     for (const provider_stat& s : r.provider_stats) {
-      out << "    " << std::left << std::setw(18) << s.provider << std::right
+      out << "    " << std::left << std::setw(22) << provider_label(s.provider) << std::right
           << " queries " << std::setw(3) << s.queries
           << "  answers " << std::setw(3) << s.answers
           << "  mal " << paint(s.malicious == 0 ? console::grey : console::red,
@@ -4712,7 +4881,7 @@ void print_summary(const report& r, std::ostream& out, std::size_t max_items) {
     for (const enrichment& e : r.items) {
       for (const provider_error& err : e.errors) {
         if (n++ >= 10) break;
-        bullet(e.art.key() + "  [" + err.provider + "] " + err.message, console::red);
+        bullet(e.art.key() + "  [" + provider_label(err.provider) + "] " + err.message, console::red);
       }
     }
   }

@@ -41,6 +41,7 @@ const std::vector<std::string>& known_analysis_keys() {
       "MEGA_UPLOAD",            // upload the evidence bundle (analysis.yaml wins)
       "MEGA_REMOTE_ROOT",       // MEGA destination parent
       "MEGA_SEAL",              // password-protect the bundle before upload
+      "MEGA_PER_BUNDLE_PASSWORD", // unique zip password per exported bundle
       "MEGA_TIMEOUT",           // upload command timeout, seconds
   };
   return kKeys;

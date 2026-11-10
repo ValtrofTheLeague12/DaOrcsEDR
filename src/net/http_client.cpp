@@ -1,19 +1,60 @@
 #include "http_client.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <mutex>
 #include <thread>
 
 #include <curl/curl.h>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace cti {
 
 namespace {
+
+// OpenSSL-backed libcurl resolves its compiled-in CA path relative to the
+// installation it was built in (UCRT64: /ucrt64/etc/ssl/certs/ca-bundle.crt).
+// Copy libcurl-4.dll next to this executable and that path no longer exists,
+// so every HTTPS request dies with CURLE_SSL_CACERT_BADFILE. CMake ships the
+// bundle beside the exe; find it (or a conventional alternative) here.
+std::string executable_dir() {
+#if defined(_WIN32)
+  char buf[MAX_PATH] = {};
+  const DWORD n = ::GetModuleFileNameA(nullptr, buf, MAX_PATH);
+  if (n > 0 && n < MAX_PATH) {
+    return std::filesystem::path(buf).parent_path().string();
+  }
+#else
+  std::error_code ec;
+  const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe", ec);
+  if (!ec) return self.parent_path().string();
+#endif
+  return {};
+}
+
+std::string default_ca_bundle() {
+  // An explicit environment override belongs to libcurl; do not shadow it.
+  if (std::getenv("CURL_CA_BUNDLE") != nullptr || std::getenv("SSL_CERT_FILE") != nullptr) {
+    return {};
+  }
+  const std::string dir = executable_dir();
+  if (dir.empty()) return {};
+  for (const char* name : {"ca-bundle.crt", "cacert.pem", "curl-ca-bundle.crt"}) {
+    const std::filesystem::path candidate = std::filesystem::path(dir) / name;
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(candidate, ec)) return candidate.string();
+  }
+  return {};
+}
 
 struct transfer {
   std::string body;
@@ -54,7 +95,9 @@ bool g_curl_ready = false;
 
 class curl_http_client final : public http_client {
  public:
-  explicit curl_http_client(http_options options) : options_(std::move(options)) {}
+  explicit curl_http_client(http_options options)
+      : options_(std::move(options)),
+        ca_bundle_(options_.ca_bundle.empty() ? default_ca_bundle() : options_.ca_bundle) {}
 
   http_response perform(const http_request& request) override {
     const auto started = std::chrono::steady_clock::now();
@@ -132,7 +175,7 @@ class curl_http_client final : public http_client {
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, options_.connect_timeout_ms);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, options_.verify_tls ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, options_.verify_tls ? 2L : 0L);
-    if (!options_.ca_bundle.empty()) curl_easy_setopt(curl, CURLOPT_CAINFO, options_.ca_bundle.c_str());
+    if (!ca_bundle_.empty()) curl_easy_setopt(curl, CURLOPT_CAINFO, ca_bundle_.c_str());
     if (!options_.proxy.empty()) curl_easy_setopt(curl, CURLOPT_PROXY, options_.proxy.c_str());
 #if LIBCURL_VERSION_NUM >= 0x075500
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");   // never follow into file:// etc.
@@ -181,6 +224,7 @@ class curl_http_client final : public http_client {
   }
 
   http_options options_;
+  std::string ca_bundle_;
 };
 
 }  

@@ -109,6 +109,12 @@ struct artifact_options {
   // operator opts in; when it is on, a failed protection aborts the upload
   // rather than falling back to plaintext.
   bool encrypt_artifacts = false;
+  // Give each exported bundle its OWN generated zip password instead of the
+  // shared operator password. The passwords never cross this process: the
+  // uploader generates and stores each one in the operator profile, and the
+  // CTI catalog shows them per artifact to signed-in users. Off keeps the one
+  // shared password from the operator password file.
+  bool per_bundle_password = false;
   // The password file the zip reads. empty = the uploader's default operator
   // password file outside the repo (the one the admin console manages); the
   // password bytes themselves never enter this process.

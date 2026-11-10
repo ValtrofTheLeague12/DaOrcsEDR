@@ -263,6 +263,34 @@ class TestTheChildProcess:
         }
         assert not observed["path"].exists()
 
+    def test_dotenv_provider_key_reaches_the_child_environment(
+            self, repo, monkeypatch):
+        env_file = repo / ".env"
+        env_file.write_text(
+            "VT_API_KEY=dotenv-vt-secret\nOTX_API_KEY=\n", encoding="utf-8")
+        monkeypatch.setattr(pr.config, "ENV_FILE", env_file)
+        for name in pr.cti_settings._ENV_NAMES:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv("CTI_CONFIG", raising=False)
+        observed = {}
+
+        def popen(argv, **kwargs):
+            observed["argv"] = argv
+            observed.update(kwargs)
+            return FakeProc([], 0)
+
+        monkeypatch.setattr(pr, "_POPEN", popen)
+        out = pr.start("quick", "samples/sample.exe")
+        assert out["ok"], out
+        deadline = time.time() + 30
+        while time.time() < deadline and pr.job(out["job_id"])["state"] == "running":
+            time.sleep(0.02)
+
+        env = observed["env"]
+        assert env["VT_API_KEY"] == "dotenv-vt-secret"
+        assert "OTX_API_KEY" not in env
+        assert "dotenv-vt-secret" not in " ".join(observed["argv"])
+
     def test_startup_logo_is_forced_into_the_captured_log(self, started):
         # stdout is a pipe, so the analyzer would otherwise drop daorcs.logo.
         # The panel log is the operator's screen; the env flag is what makes the

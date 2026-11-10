@@ -559,6 +559,11 @@ class provider {
 // Builds every provider (minus config::disabled_providers).
 std::vector<std::unique_ptr<provider>> make_default_providers(const config& cfg);
 
+// Human-readable name for a provider id ("shodan_internetdb" -> "Shodan
+// InternetDB"). Progress output and the summary use this so the operator sees
+// the API that was actually called instead of the internal identifier.
+std::string provider_label(const std::string& provider);
+
 // ===========================================================================
 // cti_pipeline.hpp
 // ===========================================================================
@@ -566,8 +571,16 @@ struct progress_info {
   int         round = 0;          // 0 = the collected artifacts, 1.. = follow-up rounds
   std::size_t done = 0;
   std::size_t total = 0;          // tasks in this round
-  std::string provider;
+  std::string provider;           // internal id; use provider_label() to display it
   std::string artifact;           // "ip:1.2.3.4"
+  // True when the query has just started (done does not include it yet). The
+  // callback fires before the request goes out, so a rate-limit wait or a slow
+  // endpoint is visible in the log instead of looking like a stalled phase.
+  bool        started = false;
+  // Completed queries only: verdict + one-line summary + the provider's own
+  // detail fields ("malicious=12, suspicious=4, ..."), so the progress log
+  // shows what the API actually answered instead of just a task counter.
+  std::string detail;
 };
 using progress_callback = std::function<void(const progress_info&)>;
 
@@ -649,6 +662,12 @@ class pipeline {
   // failures, and probe exceptions.
   bool network_available() const;
 
+  // Human-readable reason for the most recent failed network_available() probe.
+  // Empty when the probe succeeded (or has not run yet). Kept separate from
+  // warnings() because the probe can fail before the pipeline has anything to
+  // report, and the phase prints it to explain why CTI was skipped.
+  const std::string& network_probe_error() const { return network_probe_error_; }
+
   // Loads ATT&CK + KEV now (run() does it otherwise). Problems become warnings.
   // Network/filesystem errors are handled as warnings; a missing connection must not
   // throw out of this method.
@@ -680,6 +699,7 @@ class pipeline {
   std::vector<std::set<std::string>> done_;             // providers already run per item
   std::map<std::string, provider_stat> stats_;
   std::vector<std::string> warnings_;
+  mutable std::string network_probe_error_;
   std::size_t derived_count_ = 0;
   std::set<std::string> budget_warned_;
   std::chrono::steady_clock::time_point run_started_ = std::chrono::steady_clock::now();

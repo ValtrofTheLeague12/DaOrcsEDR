@@ -32,7 +32,8 @@ Protection is the password zip in mega/protect.py: when --encrypt is given the
 archive is wrapped in a WinZip AES-256 encrypted zip whose password comes from
 the operator profile (never the repo), and only the zip is a candidate for
 upload - the plaintext archive stays local. see protect.py for the scheme and
-the password file's location.
+the password file's location. --per-bundle-password generates a fresh password
+for this bundle alone instead of reading the shared operator password.
 
 Uploads go through the MEGAcmd CLI. When it is not installed, the bundle is
 still built and verified locally and the script says exactly what is missing -
@@ -232,6 +233,28 @@ def write_readme(out_dir: Path, artifact: str, source: Path, archive: Path,
     now = datetime.now(timezone.utc).astimezone()
     readme = out_dir / "README.txt"
     if encryption:
+        if encryption.get("password_scope") == "bundle":
+            password_note = """To open the protected file, on any machine that holds THIS BUNDLE's password:
+
+    python mega/protect.py unzip {sealed} --out-dir .
+
+This bundle was protected with its own generated password (not the shared
+operator password). The value is stored outside the repo in the operator
+profile and shown to signed-in CTI catalog users on this artifact's page;
+it is deliberately never written here, because this README travels with
+the bundle. A password that is lost is a bundle that is gone - there is no
+recovery path, by design.
+""".format(sealed=encryption['sealed_file'])
+        else:
+            password_note = """To open the protected file, on any machine that holds the PASSWORD:
+
+    python mega/protect.py unzip {sealed} --out-dir .
+    (accepting a --password-file/-stdin override; the default reads the
+    operator password file outside the repo)
+
+A password that is lost is a bundle that is gone. There is no recovery path,
+by design.
+""".format(sealed=encryption['sealed_file'])
         crypto = f"""
 Protection
 ----------
@@ -243,18 +266,11 @@ never left this host.
     format           : {encryption['format']}
     protected file   : {encryption['sealed_file']} ({encryption['sealed_bytes']} bytes)
     protected sha256 : {sha256_file(out_dir / encryption['sealed_file'])}
+    password scope   : {encryption.get('password_scope', 'operator')}
     library          : python 'pyzipper' - WinZip AES-256 (WZ_AES), entirely
                        in-process (no gpg/openssl)
 
-To open the protected file, on any machine that holds the PASSWORD:
-
-    python mega/protect.py unzip {encryption['sealed_file']} --out-dir .
-    (accepting a --password-file/-stdin override; the default reads the
-    operator password file outside the repo)
-
-A password that is lost is a bundle that is gone. There is no recovery path,
-by design.
-"""
+{password_note}"""
     else:
         crypto = """
 Protection
@@ -307,7 +323,10 @@ def write_manifest(out_dir: Path, artifact: str, source: Path, archive: Path,
         "archive_sha256": digest,
         "archive_bytes": archive.stat().st_size,
         "file_count": len(members),
-        "files": [{"path": p, "size": s} for p, s in members],
+        "files": [
+            {"path": p, "size": s, "hash": h}
+            for p, s, h in members
+        ],
         "tool": "mega/upload.py",
         # Machine-readable counterpart of the README's Protection section: a
         # consumer that has the manifest can tell whether the remote copy is
@@ -317,7 +336,10 @@ def write_manifest(out_dir: Path, artifact: str, source: Path, archive: Path,
     if encryption:
         # The operator's password file path is deliberately NOT mirrored into
         # a manifest that itself travels to remote storage: the remote folder
-        # does not need insight into the local profile.
+        # does not need insight into the local profile. password_scope says
+        # WHICH password opens the zip - "operator" (the shared one) or
+        # "bundle" (this artifact's own) - and nothing more: the value itself
+        # never travels with the bundle, by the same rule.
         manifest["encryption"] = {
             "algorithm": encryption["algorithm"],
             "format": encryption["format"],
@@ -325,6 +347,7 @@ def write_manifest(out_dir: Path, artifact: str, source: Path, archive: Path,
             "sealed_bytes": encryption["sealed_bytes"],
             "sealed_sha256": sha256_file(out_dir / encryption["sealed_file"]),
             "library": encryption["library"],
+            "password_scope": encryption.get("password_scope", "operator"),
         }
     path = out_dir / "manifest.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -417,6 +440,47 @@ def remote_exists(remote_path: str) -> bool:
                        timeout=megacmd.QUICK_TIMEOUT).code == 0
 
 
+def sync_catalog_bundle_password(artifact: str,
+                                 password: str | bytes | None) -> None:
+    """Mirror one per-bundle password into the CTI catalog's sidecar.
+
+    ``stix-server/config/bundle-passwords.json`` is git-ignored and read by
+    the generated catalog server at request time, so a password generated
+    here is visible to signed-in CTI users without a new Generate Server
+    run. Passing ``None`` removes the artifact's entry, which is what a
+    re-export under the shared password does - a stale per-bundle value must
+    never outlive the zip it belonged to. Best-effort by design: a checkout
+    without a stix-server (a packaged analyzer tree) simply does not have a
+    catalog to keep in sync, and that must not fail the upload.
+    """
+    path = REPO_ROOT / "stix-server" / "config" / "bundle-passwords.json"
+    try:
+        if not path.parent.is_dir():
+            return
+        mapping: dict[str, str] = {}
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                mapping = {k: v for k, v in loaded.items()
+                           if isinstance(k, str) and isinstance(v, str)}
+        except (OSError, ValueError):
+            mapping = {}
+        if password is None:
+            mapping.pop(artifact, None)
+        else:
+            if isinstance(password, bytes):
+                password = password.decode("utf-8")
+            mapping[artifact] = password
+        tmp = path.with_name(path.name + ".uploader-tmp")
+        tmp.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n",
+                       encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, UnicodeError):
+        # The bundle itself is already protected and on its way; a failed
+        # mirror is a catalog that shows one password short, not data loss.
+        pass
+
+
 def sealed_email() -> str | None:
     """The account email held in the local seal, or None if unavailable.
 
@@ -457,6 +521,14 @@ def build_parser() -> argparse.ArgumentParser:
                          "(WinZip AES-256, in-process)")
     ap.add_argument("--no-encrypt", dest="encrypt", action="store_false",
                     help="upload the archive as-is, even when config asks for protection")
+    ap.add_argument("--per-bundle-password", dest="per_bundle_password",
+                    action="store_true", default=None,
+                    help="generate a fresh password for THIS bundle alone "
+                         "(stored in the operator profile, shown per artifact "
+                         "to signed-in CTI catalog users; never printed here)")
+    ap.add_argument("--no-per-bundle-password", dest="per_bundle_password",
+                    action="store_false",
+                    help="use the shared operator password file (default)")
     ap.add_argument("--password-file", default=None,
                     help="password file for the zip (default: the operator password "
                          "file outside the repo, or IA_BUNDLE_PASSWORD_FILE)")
@@ -517,8 +589,11 @@ def main() -> int:
         step(f"{archive.name}: {files} files, {raw_bytes} bytes source -> {archive_bytes} bytes")
 
         digest = sha256_file(archive)
-        members = [(str(rel).replace("\\", "/"), p.stat().st_size)
-                   for p, rel in collect(source)]
+        members = [
+            (str(rel).replace("\\", "/"), p.stat().st_size,
+             sha256_file(p))
+            for p, rel in collect(source)
+        ]
 
         step(f"sha256  {digest}")
 
@@ -526,7 +601,42 @@ def main() -> int:
         # both have to record what the protected bytes hash to. Writing them
         # first would produce a bundle whose own paperwork says it is plaintext.
         encryption = None
-        if args.encrypt:
+        # Per-bundle resolves the same way the analyzer's flags do: an explicit
+        # --(no-)per-bundle-password wins, then the environment the analyzer
+        # exported, then off. Truthiness matches planner::env_truthy().
+        per_bundle = args.per_bundle_password
+        if per_bundle is None:
+            env = os.environ.get("MEGA_PER_BUNDLE_PASSWORD", "")
+            per_bundle = env.strip().lower() in ("1", "true", "yes", "on")
+        if args.encrypt and per_bundle:
+            # Protect BEFORE anything leaves the machine. The plaintext archive
+            # stays local; only the zip is a candidate for upload.
+            out_zip = out_dir / f"{artifact}_evidence.zip"
+            # A per-bundle password is generated here, stored in the operator
+            # profile, and never printed: the CTI catalog shows it to signed-in
+            # users on this artifact's page, which is the delivery path.
+            try:
+                password, pw_path = protect.generate_bundle_password(artifact)
+            except protect.PasswordError as exc:
+                fail(f"upload: could not protect the bundle: {exc}")
+                warn("        Refusing to upload the unprotected archive.")
+                return 4
+            step(f"zipping {archive.name} under a fresh per-bundle password "
+                 f"(stored at {pw_path}; shown in the CTI catalog, never here)")
+            try:
+                encryption = protect.zip_bundle(archive, out_zip, password)
+                encryption["password_scope"] = "bundle"
+            except protect.PasswordError as exc:
+                # A failed protection must stop the upload. Falling through to
+                # "upload the plaintext anyway" is the one outcome that would
+                # silently undo the protection the operator asked for.
+                fail(f"upload: could not protect the bundle: {exc}")
+                warn("        Refusing to upload the unprotected archive.")
+                return 4
+            sync_catalog_bundle_password(artifact, password)
+            step(f"protected  {encryption['sealed_file']} "
+                 f"({encryption['sealed_bytes']} bytes, {encryption['algorithm']})")
+        elif args.encrypt:
             # Protect BEFORE anything leaves the machine. The plaintext archive
             # stays local; only the zip is a candidate for upload.
             out_zip = out_dir / f"{artifact}_evidence.zip"
@@ -543,6 +653,7 @@ def main() -> int:
                  f"(password file: {password_file_hint})")
             try:
                 encryption = protect.zip_bundle(archive, out_zip, password)
+                encryption["password_scope"] = "operator"
             except protect.PasswordError as exc:
                 # A failed protection must stop the upload. Falling through to
                 # "upload the plaintext anyway" is the one outcome that would
@@ -550,6 +661,14 @@ def main() -> int:
                 fail(f"upload: could not protect the bundle: {exc}")
                 warn("        Refusing to upload the unprotected archive.")
                 return 4
+            # A re-export under the shared password invalidates any per-bundle
+            # value an earlier export of this artifact left behind, in both
+            # places it lives: the profile file and the catalog sidecar.
+            try:
+                protect.clear_bundle_password(artifact)
+            except protect.PasswordError:
+                pass
+            sync_catalog_bundle_password(artifact, None)
             step(f"protected  {encryption['sealed_file']} "
                  f"({encryption['sealed_bytes']} bytes, {encryption['algorithm']})")
 

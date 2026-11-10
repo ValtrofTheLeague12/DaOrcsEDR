@@ -57,6 +57,7 @@ differs (a person versus the clock).
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import shlex
@@ -102,6 +103,11 @@ _jobs: dict[str, dict] = {}
 _procs: dict[str, subprocess.Popen] = {}
 _jobs_lock = threading.Lock()
 _running: str | None = None
+# Seconds-resolution time plus pid is not unique across two runs started in
+# the same second (and tests deliberately clear _running between runs, so a
+# previous run's daemon thread can still be alive). A monotonically increasing
+# suffix keeps a lingering thread from writing into a newer job's record.
+_jid_seq = itertools.count(1)
 
 # For tests: the constructor the runner uses, in one indirection that
 # monkeypatch can replace without touching the real subprocess module.
@@ -338,7 +344,7 @@ def start(pipeline: str, sample: str, duration: object = None,
         log.warning("packed gate OVERRIDDEN for %s by operator request (%s)",
                     full_sample, verdict["evidence"])
 
-    jid = f"r{_now():.0f}{os.getpid() % 1000:03d}"
+    jid = f"r{_now():.0f}{os.getpid() % 1000:03d}{next(_jid_seq)}"
     argv = [str(_exe()), "--no-curses", "--pipeline", pipeline, full_sample]
 
     job = {
@@ -478,6 +484,10 @@ def _run(job_id: str, argv: list[str]) -> None:
         cti_config = cti_settings.analyzer_config_path()
         if cti_config is not None:
             env["CTI_CONFIG"] = str(cti_config)
+        # The analyzer reads provider keys with getenv() and does not parse
+        # .env itself. Copy any keys declared there (or exported by the shell)
+        # into the child; a managed panel key still wins through CTI_CONFIG.
+        cti_settings.export_environment(env)
         # stdout is a pipe here, so the analyzer's startup logo is suppressed
         # by default. The panel's log IS the operator's view of the run, though,
         # so opt back in - and let a crash add crash.logo to the same log the

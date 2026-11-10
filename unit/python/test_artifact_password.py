@@ -162,8 +162,11 @@ class TestPanelPasswordHelpers:
         assert res["ok"] is True
         assert res["status"]["present"] is True
         # The value is not a response key even when the operator typed it in:
-        # only a generate shows the password once.
-        assert set(res) <= {"ok", "status"}
+        # only a generate shows the password once. The status is flattened so
+        # the card can update its chip from this response.
+        assert set(res) <= {"ok", "status", "present", "path", "error"}
+        assert "password" not in res
+        assert res["present"] is True
         assert protect.read_password(pfile) == b"operator-picks-this-1"
 
     def test_set_refuses_short_and_empty(self, pfile):
@@ -175,6 +178,7 @@ class TestPanelPasswordHelpers:
         res = analysis._bundle_password_generate()
         assert res["ok"] is True and res["shown_once"] is True
         assert len(res["password"]) == 24
+        assert res["present"] is True
         assert res["password"] not in str(res["status"])
         # ...and nothing later can produce it again from a status read.
         later = analysis._bundle_password_status()

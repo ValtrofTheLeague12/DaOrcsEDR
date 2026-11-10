@@ -13,6 +13,23 @@ from pathlib import Path
 from ..core import config
 
 _lock = threading.RLock()
+# Names the analyzer reads directly from its own environment. The two aliases
+# are accepted by cti::config::from_environment() and are kept here so a key
+# pasted under either spelling in .env reaches the child unchanged.
+_ENV_NAMES = (
+    "ABUSEIPDB_API_KEY",
+    "OTX_API_KEY",
+    "VT_API_KEY",
+    "VIRUSTOTAL_API_KEY",
+    "ABUSECH_AUTH_KEY",
+    "ABUSECH_API_KEY",
+    "GREYNOISE_API_KEY",
+    "NVD_API_KEY",
+)
+_ENV_ALIASES = {
+    "virustotal": ("VT_API_KEY", "VIRUSTOTAL_API_KEY"),
+    "abusech": ("ABUSECH_AUTH_KEY", "ABUSECH_API_KEY"),
+}
 _providers = {
     "abuseipdb": {
         "name": "AbuseIPDB",
@@ -100,6 +117,45 @@ def _read_managed_keys() -> dict[str, str]:
         return dict(_read_file(path).get("keys", {}))
 
 
+def _setting(name: str) -> str:
+    """Process environment, then the repository .env, then empty.
+
+    The value is only ever used to seed a child environment or to answer
+    "configured"; it is never logged or returned to the browser.
+    """
+    return config.setting(name, "").strip()
+
+
+def _environment_names(provider_id: str) -> tuple[str, ...]:
+    provider = _providers[provider_id]
+    return _ENV_ALIASES.get(provider_id, (provider["env"],))
+
+
+def environment_configured(provider_id: str) -> bool:
+    """True when a provider key is visible from the process env or .env."""
+    return any(_setting(name) for name in _environment_names(provider_id))
+
+
+def export_environment(env: dict[str, str]) -> None:
+    """Carry provider keys from the process env or .env into a child env.
+
+    The analyzer reads VT_API_KEY / OTX_API_KEY / ... with getenv(), and does
+    not parse .env itself. A panel-launched run therefore has to copy the
+    values across or .env would only be honoured by the Python side.
+    Values already present win, so an explicit caller override is preserved.
+    """
+    for name in _ENV_NAMES:
+        if env.get(name):
+            continue
+        value = _setting(name)
+        if value:
+            env[name] = value
+    if not env.get("CTI_CONFIG"):
+        overlay = _setting("CTI_CONFIG")
+        if overlay:
+            env["CTI_CONFIG"] = overlay
+
+
 def _atomic_write(path: Path, value: dict) -> None:
     directory = path.parent
     directory.mkdir(parents=True, exist_ok=True)
@@ -125,7 +181,13 @@ def _atomic_write(path: Path, value: dict) -> None:
 
 
 def status() -> dict:
-    """Return provider metadata and saved state, never credential values."""
+    """Return provider metadata and saved state, never credential values.
+
+    ``configured`` means a key is saved through this panel; ``environment``
+    means one is already visible from the process environment or .env. Both
+    are booleans, so the UI can explain where a working key comes from without
+    ever receiving the value.
+    """
     with _lock:
         keys = _read_managed_keys()
     return {
@@ -134,10 +196,14 @@ def status() -> dict:
                 "id": provider_id,
                 **provider,
                 "configured": provider_id in keys,
+                "environment": environment_configured(provider_id),
             }
             for provider_id, provider in _providers.items()
         ],
-        "source": "Panel-saved keys are stored in the user's application data folder.",
+        "source": (
+            "Panel-saved keys are stored in the user's application data folder; "
+            "runs also use provider keys from the process environment or .env."
+        ),
     }
 
 
@@ -188,7 +254,9 @@ def analyzer_config_path() -> Path | None:
 
     with _lock:
         managed = _read_file(managed_path)
-        env_path = os.environ.get("CTI_CONFIG")
+        # config.setting() checks the process environment first and .env
+        # second, so a CTI_CONFIG declared in .env is honoured here too.
+        env_path = _setting("CTI_CONFIG")
         if not env_path:
             return managed_path
 

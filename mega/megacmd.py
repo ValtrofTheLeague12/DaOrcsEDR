@@ -65,12 +65,19 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_TIMEOUT = 300
 QUICK_TIMEOUT = 60
+
+# CREATE_NO_WINDOW: keep MEGAclient from flashing a console when the analyzer or
+# the panel (which have no console of their own) spawn it. Only meaningful on
+# Windows; ignored everywhere else.
+_CREATE_NO_WINDOW = 0x08000000
 
 # Interactive front-end. Never a valid target for a scripted call.
 INTERACTIVE = {"megacmdshell.exe"}
@@ -216,28 +223,111 @@ def clean(text: str) -> str:
 # Running
 # ---------------------------------------------------------------------------
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill a MEGAcmd child and anything it started, without waiting on pipes.
+
+    `subprocess.run(..., timeout=...)` is not enough here. Its cleanup calls
+    communicate() again after killing the direct child, and if that child
+    spawned something that inherited stdout/stderr - MEGAclient starting its
+    daemon, or a `cmd /c mega-*.bat` shim - the pipe never reaches EOF and the
+    caller blocks forever even though the timeout already fired. That is the
+    hang this function exists to end: kill the tree, then stop listening.
+    """
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=15, check=False,
+                creationflags=_CREATE_NO_WINDOW)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        # start_new_session=True in run() made the child a process-group
+        # leader, so a negative pid reaches its whole tree.
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _read_output(path: Path, limit: int = 8 << 20) -> str:
+    """Read a capped snapshot of a redirect file, tolerating a live writer."""
+    try:
+        with path.open("rb") as fh:
+            raw = fh.read(limit)
+    except OSError:
+        return ""
+    return raw.decode("utf-8", errors="replace")
+
+
 def run(command: str, *args, timeout: int = DEFAULT_TIMEOUT,
         check: bool = True) -> Result:
-    """Invoke a MEGAcmd subcommand. Raises MegaError unless check=False."""
-    argv = build_argv(command, args)
-    try:
-        proc = subprocess.run(
-            argv, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise MegaError(
-            f"megacmd {command} did not finish within {timeout}s. "
-            "MEGAcmd may be starting its server, resuming a session, or "
-            "waiting on an MFA prompt.") from None
-    except OSError as exc:
-        raise MegaError(f"could not run {argv[0]}: {exc}") from None
+    """Invoke a MEGAcmd subcommand. Raises MegaError unless check=False.
 
-    res = Result(command, argv, proc.returncode,
-                 clean(proc.stdout or ""), clean(proc.stderr or ""))
-    if check and res.code != 0:
-        detail = res.err or res.out or "(no output)"
-        raise MegaError(f"megacmd {command} failed (exit {res.code}): {detail}")
-    return res
+    stdout/stderr are redirected to temporary FILES rather than pipes. A pipe
+    is the thing that can outlive the process holding it: if MEGAclient starts
+    MEGAcmdServer, or a .bat shim leaves a grandchild behind, the pipe's write
+    end stays open after the command exits and a reader waits for an EOF that
+    never comes. A file has no such conversation, so a timeout can be enforced
+    by the clock alone. `stdin=DEVNULL` closes the other way a CLI can wait
+    forever - an MFA or password prompt that no script can answer.
+    """
+    argv = build_argv(command, args)
+    if timeout is None or timeout <= 0:
+        timeout = DEFAULT_TIMEOUT
+
+    root = Path(tempfile.mkdtemp(prefix="megacmd-"))
+    out_path, err_path = root / "stdout", root / "stderr"
+    timed_out = False
+    try:
+        with out_path.open("wb") as out_file, err_path.open("wb") as err_file:
+            kwargs = {"stdin": subprocess.DEVNULL,
+                      "stdout": out_file, "stderr": err_file}
+            if os.name == "nt":
+                kwargs["creationflags"] = _CREATE_NO_WINDOW
+            else:
+                kwargs["start_new_session"] = True
+            try:
+                proc = subprocess.Popen(argv, **kwargs)
+            except OSError as exc:
+                raise MegaError(f"could not run {argv[0]}: {exc}") from None
+
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _kill_tree(proc)
+
+        if timed_out:
+            raise MegaError(
+                f"megacmd {command} did not finish within {timeout}s. "
+                "MEGAcmd may be starting its server, resuming a session, or "
+                "waiting on an MFA prompt.")
+
+        res = Result(command, argv, proc.returncode,
+                     clean(_read_output(out_path)),
+                     clean(_read_output(err_path)))
+        if check and res.code != 0:
+            detail = res.err or res.out or "(no output)"
+            raise MegaError(
+                f"megacmd {command} failed (exit {res.code}): {detail}")
+        return res
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
