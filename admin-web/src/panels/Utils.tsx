@@ -14,6 +14,7 @@ import type {
   MalapiState,
   SampleResourcesSnapshot,
   SbomState,
+  UnprotectState,
   UtilEntry,
   UtilsOverview,
   YaraState,
@@ -23,9 +24,10 @@ import type {
 // ---------------------------------------------------------------------------
 // Utils.
 //
-// Six things that can only be maintained by reading the source: the CycloneDX
+// Seven things that can only be maintained by reading the source: the CycloneDX
 // SBOM, the MalAPI rule checkout, the unpacked YARA rule packs, yarGen-Go's
-// databases, the sample factory's value pools, and the in-tree EagleVM build.
+// databases, the Unprotect.it scrape, the sample factory's value pools, and the
+// in-tree EagleVM build.
 //
 // One card per utility, each with its own button, rather than one picker with
 // five rows. The reason is that these are not variants of one operation - one
@@ -48,8 +50,8 @@ type ChipColor = 'accent' | 'danger' | 'success' | 'warning' | undefined
 // maintenance jobs", plus results and output floating at the end. The grouping
 // it answers with is the one the utilities' own work implies:
 //
-//   1. Detection content - YARA, MalAPI, yarGen-Go: what the analyzer READS at
-//      scan time. Stale here means blind, not slow.
+//   1. Detection content - YARA, MalAPI, yarGen-Go, Unprotect.it: what the
+//      analyzer READS at scan time. Stale here means blind, not slow.
 //   2. Software inventory - the SBOM: what this binary itself is made of.
 //      Stale here is an audit problem, not a detection one.
 //   3. Instruction virtualisation - the in-tree EagleVM the sample factory
@@ -423,6 +425,50 @@ function IgnoreCompileCheckbox({ checked, disabled, onSave }: {
         {!checked && ' — a compile failure fails the check'}
       </span>
     </label>
+  )
+}
+
+function UnprotectCard({ u, entry, busy, onRun }: {
+  u: UnprotectState; entry?: UtilEntry; busy: boolean; onRun: (ids: string[]) => void
+}) {
+  const verdict = !u.available
+    ? { text: 'unavailable', tone: 'warning' as ChipColor }
+    : u.yara_files > 0
+      ? { text: `${u.yara_files} yara file(s)`, tone: 'success' as ChipColor }
+      : { text: 'not generated', tone: 'warning' as ChipColor }
+
+  return (
+    <Shell title="Unprotect.it rules" verdict={verdict} note={u.note} entry={entry} busy={busy} onRun={onRun}>
+      {!u.available ? (
+        <p className="text-[12px] text-default-500">{u.reason}</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 md:grid-cols-4">
+            <Fact label="yara imported" value={`${u.yara_files.toLocaleString()} file(s)`} />
+            <Fact label="yara on disk" value={bytes(u.yara_bytes)} />
+            <Fact label="sigma staged" value={`${u.sigma_files.toLocaleString()} rule(s)`} />
+            <Fact label="capa ignored" value={`${u.capa_files.toLocaleString()} legacy`} />
+          </div>
+          <div className="grid grid-cols-1 gap-x-6 gap-y-2 md:grid-cols-2">
+            <Fact label="target" value={u.target_path ?? '—'} mono />
+            <Fact
+              label="generated"
+              value={u.generated_at ? ago(Date.parse(u.generated_at) / 1000) : '—'}
+            />
+          </div>
+          {/* The distinction is the whole reason this card is separate from the
+              YARA card: only the delta is imported, Sigma has nowhere to run,
+              and the site's CAPA syntax would fail capa 9 outright. */}
+          <p className="text-[11px] text-default-400">
+            Imports only rule identifiers that are not already in{' '}
+            <span className="font-mono">yara-rules/</span>. Sigma stays in{' '}
+            <span className="font-mono">{u.sigma_path ?? 'extracted_rules/sigma'}</span>{' '}
+            because the analyzer has no Sigma engine; CAPA is ignored because the
+            site publishes legacy syntax that capa 9 rejects.
+          </p>
+        </>
+      )}
+    </Shell>
   )
 }
 
@@ -820,7 +866,7 @@ export default function Utils() {
     [lines],
   )
 
-  if (loading && !data) return <Loading label="utils" />
+  if (loading && !data) return <Loading label="Loading utilities." hint="reading each utility's state" />
 
   // The section rails read the state the cards display - not a second, smarter
   // machine. One degraded utility is warning; a blocked one is danger only
@@ -828,7 +874,7 @@ export default function Utils() {
   // live mirror is 'warning', the lock alert already says why).
   const detectionTone: ChipColor = !data
     ? undefined
-    : [data.yara, data.yargen, data.malapi].every((s) => s.available)
+    : [data.yara, data.yargen, data.malapi, data.unprotect].every((s) => s.available)
       ? 'success'
       : data.malapi.blocked || data.malapi.generated_stale ? 'danger' : 'warning'
   const inventoryTone: ChipColor = !data
@@ -914,13 +960,14 @@ export default function Utils() {
           <Section
             n={1}
             title="Detection content"
-            hint="YARA rules, MalAPI classification, yarGen-Go's databases - what the analyzer reads at scan time. Stale here means blind, not slow."
+            hint="What the analyzer reads at scan time."
             tone={detectionTone}
           >
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <YaraCard y={data.yara} entry={entryOf('yara-check')} busy={starting || running} onRun={run} onToggleIgnore={saveYaraOptions} />
               <MalapiCard m={data.malapi} entry={entryOf('malapi-update')} busy={starting || running} onRun={run} />
               <YargenCard g={data.yargen} entry={entryOf('yargen-update')} busy={starting || running} onRun={run} />
+              <UnprotectCard u={data.unprotect} entry={entryOf('unprotect-update')} busy={starting || running} onRun={run} />
             </div>
           </Section>
       )}
@@ -929,7 +976,7 @@ export default function Utils() {
           <Section
             n={2}
             title="Software inventory"
-            hint="The CycloneDX SBOM - what this binary is made of. Stale here is an audit problem, not a detection one."
+            hint="What this binary is made of."
             tone={inventoryTone}
           >
             <SbomCard s={data.sbom} entry={entryOf('sbom')} busy={starting || running} onRun={run} />
@@ -940,7 +987,7 @@ export default function Utils() {
           <Section
             n={3}
             title="Instruction virtualisation"
-            hint="EagleVM — the in-tree virtualiser the sample factory calls. Build it here (CMake, Release, tests off); its artefacts are what the factory's virtualisation option requires."
+            hint="The virtualiser the sample factory calls."
             tone={eagleTone}
           >
             <EagleCard e={data.eagle} entry={entryOf('eagle-build')} busy={starting || running} onRun={run} />

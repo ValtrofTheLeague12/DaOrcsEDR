@@ -4,14 +4,15 @@
 
 #### Utils
 
-Five maintenance surfaces, grouped into four tabs - Detection content,
-Software inventory, Generator resources and the run log. Four of them report
-through `GET /api/utils` and run through `POST /api/utils` with
-`{"ids": [...]}`; generator resources is not a utility job and has its own
-endpoints (below). Each is a card with its own action, because they are not
-variants of one operation — one rewrites two JSON files, one mirrors a website
-and regenerates a server, one compiles three thousand rules, one downloads
-794 MB, one fetches value lists over http(s).
+Seven maintenance surfaces, grouped into five tabs - Detection content,
+Software inventory, Instruction virtualisation, Generator resources and the run
+log. Five of them report through `GET /api/utils` and run through
+`POST /api/utils` with `{"ids": [...]}`; generator resources is not a utility
+job and has its own endpoints (below). Each is a card with its own action,
+because they are not variants of one operation — one rewrites two JSON files,
+one mirrors a website and regenerates a server, one compiles three thousand
+rules, one downloads 794 MB, one re-scrapes Unprotect.it, one fetches value
+lists over http(s), one drives CMake.
 
 | card | state it reports | action |
 | --- | --- | --- |
@@ -19,6 +20,8 @@ and regenerates a server, one compiles three thousand rules, one downloads
 | **MalAPI classification** | mirror age, definition count, whether the generated API is older than its mirror, httrack presence, stale lock | re-mirror `malapi.io` and regenerate, then boot the result |
 | **YARA rules** | collections, counts, `yara` version | compile every rule file |
 | **yarGen-Go** | `dbs/`, `config.yaml`, `yargen.exe`, Go toolchain | run `update_and_check.ps1` |
+| **Unprotect.it rules** | imported YARA files and bytes, staged Sigma count, ignored CAPA count, last scrape time | re-scrape `unprotect.it` and import the new YARA identifiers |
+| **EagleVM** | repo, preset, build directory, toolchain | build the in-tree virtualiser |
 | **Generator resources** | per source: value count, last good fetch, last failed fetch | add a URL, refresh it, disable or remove it |
 
 ## Generator resources
@@ -155,8 +158,9 @@ This card used to run `git pull --ff-only` on `malt/`. That was the wrong
 repository, and it was retired — but the prose describing it outlived the code,
 which is why this section exists.
 
-`yara-rules/` deliberately offers **no** update. It is five unpacked
-collections with no recorded upstream, so the card says that rather than
+`yara-rules/` deliberately offers **no** update on the YARA card. It is five
+unpacked collections with no recorded upstream, plus `unprotect_it/`, which the
+Unprotect.it card regenerates, so the card says that rather than
 omitting a button the admin expects to find.
 
 **The rule compile check is per-file, and that is a real limitation.** Neither
@@ -182,6 +186,48 @@ That last bucket is the point of the card. As shipped it finds **7 dangling
 neither target exists anywhere in the pack. The analyzer tolerates this — its
 scanner logs to `logs/yara_errors.log` and returns `CALLBACK_CONTINUE` — which
 means those rules **silently never load during a scan**.
+
+## The Unprotect.it card
+
+`unprotect.it` publishes three kinds of detection rule behind one table, and the
+card treats them differently on purpose:
+
+| kind | what happens | why |
+| --- | --- | --- |
+| **YARA** | the new rule identifiers are imported into `yara-rules/unprotect_it/` | the anti-debug, anti-VM, packer and crypter rules are a real addition to the packs |
+| **Sigma** | kept in `unprotect_it_scraper/extracted_rules/sigma/` | the analyzer has no Sigma engine, so importing them would claim coverage it cannot use |
+| **CAPA** | ignored | the site publishes legacy syntax (`meta.scope`, `offset/x32`); capa 9 rejects the entire rule set with `legacy rule detected` (exit 12), and one bad file fails the analyzer's whole capa phase |
+
+**Only the delta is imported.** About 95% of the site's YARA is a copy of the
+PEiD pack already vendored under `Malekith_Rules/packers/peid.yar`. The wrapper
+reads every rule identifier under `yara-rules/` (excluding the target collection,
+so its own previous output never counts as old), keeps only the files that
+declare at least one identifier not seen elsewhere, and rewrites
+`yara-rules/unprotect_it/` wholesale so a rule removed upstream disappears on
+the next run. The last run's counts and file list are recorded in
+`yara-rules/unprotect_it/_manifest.json`.
+
+**The site publishes fragments, not whole files.** 21 of the 90 scraped YARA
+files use `pe.*` without `import "pe"` and do not compile alone; the wrapper
+prepends the import where it is missing. All 21 compile after that, so this is a
+one-line repair rather than broken content.
+
+**The scrape and the import are separate failures.** The scraper
+(`unprotect_it_scraper/scrape.py`) is run as a subprocess with its own directory
+as the working directory, because it resolves `html_src/` and `extracted_rules/`
+from `Path.cwd()` and calls `read_html()` at import time. The cached HTTrack
+mirror is moved aside first so the run sees rules added upstream, not last
+month's table; it is restored if the scrape produces no YARA files. The staging
+directory is moved aside too, so a failed run cannot leave a mix of old and new
+files or lose the staged Sigma rules. `yara-rules/unprotect_it/` is only replaced
+after the scraper exits successfully and at least one file survives the
+duplicate filter, so a failed scrape leaves the mirror, the staging directory
+and the previous import in place.
+
+The button needs `bs4`, `requests` and `colorama` in the Python interpreter the
+panel runs with, and `httrack` on `PATH` because it re-mirrors the site each
+run. A missing module or tool disables it with the missing piece named rather
+than starting a job that would fail with a traceback.
 
 ## The output pane
 

@@ -8,6 +8,13 @@ agent/*
 !agent/requirements.txt
 !agent/build.ps1
 !agent/DaOrcsAgent.iss
+!agent/windows-service.ps1
+!agent/post-install.ps1
+!agent/daorcs-agent-admin.cmd
+!agent/README-AGENT.md
+!agent/TERMS-OF-SERVICE.txt
+!agent/kafka/
+!agent/kafka/**
 !admin-terminal/
 admin-terminal/*
 !admin-terminal/admin.py
@@ -65,6 +72,14 @@ python/qiling/*
 !python/qiling/_build_dashboard.py
 !python/qiling/_cti_intel.py
 !python/qiling/requirements.txt
+# The Unprotect.it scraper is a tool, not a download. Its two working
+# directories are: html_src/ is the HTTrack mirror it reads, and
+# extracted_rules/ is what a scrape leaves behind (the YARA it imports, the
+# Sigma it stages, the legacy CAPA it ignores). Both are generated and stay
+# local, as does the editor backup beside it.
+!unprotect_it_scraper/
+unprotect_it_scraper/*
+!unprotect_it_scraper/scrape.py
 !tests/
 tests/*
 !tests/test_server_queue.py

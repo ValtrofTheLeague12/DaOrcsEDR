@@ -1973,6 +1973,30 @@ export interface YargenState {
   note?: string
 }
 
+export interface UnprotectState {
+  available: boolean
+  reason?: string | null
+  note?: string
+  source?: string
+  scraper_path?: string
+  /** `httrack` on PATH; the wrapper re-mirrors on every run, so this is required. */
+  httrack?: string | null
+  /** Whether the HTTrack mirror the scraper reads is present. */
+  html_src_present?: boolean
+  /** yara-rules/unprotect_it/ - the only collection the card imports into. */
+  target_path?: string
+  yara_files: number
+  yara_bytes: number
+  /** Sigma is staged only: there is no Sigma engine in the analyzer yet. */
+  sigma_files: number
+  sigma_path?: string
+  /** Legacy CAPA files downloaded but deliberately not imported. */
+  capa_files: number
+  generated_at?: string | null
+  last_import?: Record<string, unknown> | null
+  deps_missing?: string[]
+}
+
 export interface EagleArtifact {
   name: string
   exists: boolean
@@ -2004,7 +2028,7 @@ export interface EagleState {
 export interface UtilEntry {
   id: string
   label: string
-  utility: 'sbom' | 'malapi' | 'yara' | 'yargen' | 'eagle'
+  utility: 'sbom' | 'malapi' | 'yara' | 'yargen' | 'unprotect' | 'eagle'
   description: string
   effects: string[]
   available: boolean
@@ -2018,6 +2042,7 @@ export interface UtilsOverview {
   malapi: MalapiState
   yara: YaraState
   yargen: YargenState
+  unprotect: UnprotectState
   eagle: EagleState
 }
 
