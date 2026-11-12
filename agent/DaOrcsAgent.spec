@@ -3,12 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
-hiddenimports = [
-    'win32timezone',
-    'win32service',
-    'win32serviceutil',
-    'servicemanager',
-]
+hiddenimports = ['win32timezone', 'win32service', 'win32serviceutil', 'servicemanager']
 tmp_ret = collect_all('confluent_kafka')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 

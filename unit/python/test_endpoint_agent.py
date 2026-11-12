@@ -15,6 +15,8 @@ from endpoint_agent import (  # noqa: E402
     EndpointAgent,
     KafkaSamplePublisher,
     SampleState,
+    _pe_sections,
+    digest_section,
     is_pe_file,
     load_config,
 )
@@ -26,6 +28,23 @@ def _pe_bytes(payload: bytes = b"sample") -> bytes:
     header[0x3C:0x40] = (0x80).to_bytes(4, "little")
     header[0x80:0x84] = b"PE\0\0"
     return bytes(header) + payload
+
+
+def _pe_with_section(payload: bytes) -> bytes:
+    """A minimal PE with one .text section, so the table walk can be checked."""
+    pe_offset = 0x40
+    section_table = pe_offset + 24          # SizeOfOptionalHeader = 0
+    raw_offset = section_table + 40
+    image = bytearray(raw_offset) + bytearray(payload)
+    image[:2] = b"MZ"
+    image[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    image[pe_offset:pe_offset + 4] = b"PE\0\0"
+    image[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
+    entry = section_table
+    image[entry:entry + 5] = b".text"
+    image[entry + 16:entry + 20] = len(payload).to_bytes(4, "little")
+    image[entry + 20:entry + 24] = raw_offset.to_bytes(4, "little")
+    return bytes(image)
 
 
 class FakeProducer:
@@ -51,6 +70,36 @@ def test_detects_pe_signature_not_extension(tmp_path):
 
     assert is_pe_file(executable)
     assert not is_pe_file(text)
+
+
+def test_detects_a_pe_from_its_section_table(tmp_path):
+    executable = tmp_path / "sample.exe"
+    executable.write_bytes(_pe_with_section(b"section payload"))
+
+    assert is_pe_file(executable)
+
+
+def test_section_digests_are_sha256_of_each_sections_bytes(tmp_path):
+    executable = tmp_path / "sample.exe"
+    executable.write_bytes(_pe_with_section(b"section payload"))
+
+    assert _pe_sections(executable) == [
+        (".text", hashlib.sha256(b"section payload").hexdigest())
+    ]
+
+
+def test_digest_section_accepts_bytes_and_rejects_empty_input():
+    assert digest_section(b"abc") == hashlib.sha256(b"abc").hexdigest()
+    assert digest_section("") == ""
+    assert digest_section(b"") == ""
+
+
+def test_is_pe_file_rejects_missing_and_empty_files(tmp_path):
+    assert not is_pe_file(tmp_path / "missing.exe")
+    empty = tmp_path / "empty.exe"
+    empty.write_bytes(b"")
+    assert not is_pe_file(empty)
+    assert not is_pe_file(tmp_path)
 
 
 def test_publisher_sends_ordered_bounded_chunks_and_completion(tmp_path):

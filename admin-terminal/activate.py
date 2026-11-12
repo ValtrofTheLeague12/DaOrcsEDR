@@ -76,6 +76,27 @@ def _docker_compose_file() -> str | None:
     return None
 
 
+def _sc_exe() -> str:
+    return os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                        "System32", "sc.exe")
+
+
+def _native_kafka_present() -> bool:
+    """True when the no-Docker DaOrcsKafka service is installed."""
+    if os.name != "nt":
+        return False
+    sc = _sc_exe()
+    if not os.path.isfile(sc):
+        return False
+    try:
+        out = subprocess.run([sc, "query", "DaOrcsKafka"],
+                             capture_output=True, text=True, timeout=5,
+                             encoding="utf-8", errors="replace")
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.returncode == 0
+
+
 def _malapi_cmd() -> tuple[list[str], str, str]:
     """Use the repository venv, which contains MalAPI's Flask dependencies."""
     return [core.PY_VENV, "api/server.py"], core.PY_VENV, \
@@ -121,12 +142,21 @@ def _starter_list() -> list[Starter]:
             "guacamole", "Guacamole", [], core.REPO, ready=0.0,
             needs="__missing__",
             hint="compose.yaml missing (see docs/building.md)"))
-    out.append(Starter(
-        "kafka", "Kafka broker",
-        ["docker", "compose", "-f",
-         os.path.join(core.REPO, "kafka-agent", "docker-compose.yaml"),
-         "up", "-d", "kafka"],
-        core.REPO, ready=90.0))
+    if _native_kafka_present():
+        # A native KRaft install (agent/kafka/install-kafka-windows.ps1) does
+        # not need Docker; starting it through the service manager keeps the
+        # panel usable on a host without Docker Desktop.
+        out.append(Starter(
+            "kafka", "Kafka broker",
+            [_sc_exe(), "start", "DaOrcsKafka"],
+            core.REPO, ready=90.0))
+    else:
+        out.append(Starter(
+            "kafka", "Kafka broker",
+            ["docker", "compose", "-f",
+             os.path.join(core.REPO, "kafka-agent", "docker-compose.yaml"),
+             "up", "-d", "kafka"],
+            core.REPO, ready=90.0))
     return out
 
 
@@ -165,7 +195,7 @@ def _blocker(st: Starter) -> str:
             and not core.ml_token():
         return ("ML_HOST is off-loopback and ML_SERVE_TOKEN is unset - "
                 "serve.py refuses that bind (netcfg generates the token)")
-    if st.key == "kafka" and not os.path.isfile(
+    if st.key == "kafka" and exe == "docker" and not os.path.isfile(
             os.path.join(core.REPO, "kafka-agent", "docker-compose.yaml")):
         return "kafka-agent/docker-compose.yaml is missing"
     if exe == "docker":

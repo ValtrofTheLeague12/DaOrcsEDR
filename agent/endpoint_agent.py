@@ -12,25 +12,130 @@ import sqlite3
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.1.0"
-DEFAULT_CONFIG = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / (
-    Path("DaOrcs") / "Agent" / "agent.json"
-)
-DEFAULT_STATE = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / (
-    Path("DaOrcs") / "Agent" / "state.sqlite3"
-)
+VERSION = "0.2.0"
+LOG_DIR_ENV = "DAORCS_LOG_DIR"
+PROGRAM_DATA = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+
+
+def default_log_dir() -> Path:
+    """Return the AppData folder that holds every agent/installer log.
+
+    The service runs as LocalSystem, whose own ``%APPDATA%`` is the system
+    profile. The installer therefore sets ``DAORCS_LOG_DIR`` on the service to
+    the installing user's ``%APPDATA%\\DaOrcs\\Agent\\logs``. Interactive runs
+    use the current user's AppData.
+    """
+    override = os.environ.get(LOG_DIR_ENV)
+    if override:
+        return Path(os.path.expandvars(override)).expanduser()
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata) / "DaOrcs" / "Agent" / "logs"
+    return Path.home() / "AppData" / "Roaming" / "DaOrcs" / "Agent" / "logs"
+
+
+DEFAULT_CONFIG = PROGRAM_DATA / "DaOrcs" / "Agent" / "agent.json"
+DEFAULT_STATE = PROGRAM_DATA / "DaOrcs" / "Agent" / "state.sqlite3"
+DEFAULT_LOG = default_log_dir() / "agent.log"
+DEFAULT_SERVICE_LOG = default_log_dir() / "service.log"
 MAX_CHUNK_BYTES = 256 * 1024
 PE_SIGNATURE = b"PE\0\0"
 LOG = logging.getLogger("ia_endpoint_agent")
 
+# A PE has at most 96 sections; anything above that is a corrupt header, and
+# reading it as a table would allocate on a number the file controls.
+MAX_PE_SECTIONS = 96
+
+
+def digest_section(section_content: bytes | bytearray | memoryview | str) -> str:
+    """SHA-256 of a PE section's raw bytes, or '' when there is nothing to hash.
+
+    Section contents from the file are bytes. ``str`` is accepted because the
+    helper is also convenient for text, but a hash of the shipped bytes is the
+    only useful answer for a sample, so bytes are the normal path.
+    """
+    if isinstance(section_content, str):
+        data = section_content.encode("utf-8", errors="ignore")
+    else:
+        data = bytes(section_content or b"")
+    if not data:
+        return ""
+    return hashlib.sha256(data).hexdigest()
+
+
+def check_if_path_valid(path: Path) -> bool:
+    """True when ``path`` is a readable, non-empty regular file."""
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _pe_sections(path: Path) -> list[tuple[str, str]]:
+    """(name, sha256) for each section, parsed from the file itself.
+
+    Deliberately dependency-free: the agent runs as a frozen Windows service,
+    where a third-party PE library is another native DLL to ship and fail to
+    load. The section table is a small, fixed struct in the header; walking it
+    is enough for the digest this reports.
+    """
+    sections: list[tuple[str, str]] = []
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as sample:
+            dos = sample.read(0x40)
+            if len(dos) < 0x40:
+                return sections
+            pe_offset = int.from_bytes(dos[0x3C:0x40], "little")
+            if pe_offset < 0x40 or pe_offset + 24 > size:
+                return sections
+            sample.seek(pe_offset)
+            coff = sample.read(24)
+            if len(coff) < 24:
+                return sections
+            count = int.from_bytes(coff[6:8], "little")
+            optional_size = int.from_bytes(coff[20:22], "little")
+            table = pe_offset + 24 + optional_size
+            if (count <= 0 or count > MAX_PE_SECTIONS or
+                    table + count * 40 > size):
+                return sections
+            sample.seek(table)
+            entries = sample.read(count * 40)
+            if len(entries) < count * 40:
+                return sections
+            for index in range(count):
+                raw = entries[index * 40:(index + 1) * 40]
+                name = raw[:8].rstrip(b"\0").decode("ascii", errors="replace")
+                raw_size = int.from_bytes(raw[16:20], "little")
+                raw_ptr = int.from_bytes(raw[20:24], "little")
+                # A section may legitimately have no raw bytes (.bss is one);
+                # it has nothing to hash, not an error.
+                if not raw_size or raw_ptr + raw_size > size:
+                    continue
+                sample.seek(raw_ptr)
+                digest = digest_section(sample.read(raw_size))
+                if digest:
+                    sections.append((name, digest))
+    except OSError:
+        LOG.debug("Cannot read PE sections from %s", path, exc_info=True)
+    return sections
+
 
 def is_pe_file(path: Path) -> bool:
-    """Return true for a file with a valid DOS header and PE signature."""
+    """True for a file with a valid DOS header and PE signature.
+
+    The header is the answer. Section digests are logged when the table can be
+    read, but a small or unusual (yet valid) PE must not be rejected because a
+    parser could not walk its sections.
+    """
+    if not check_if_path_valid(path):
+        return False
     try:
         with path.open("rb") as sample:
             if sample.read(2) != b"MZ":
@@ -43,11 +148,15 @@ def is_pe_file(path: Path) -> bool:
             if pe_offset < 64 or pe_offset > 16 * 1024 * 1024:
                 return False
             sample.seek(pe_offset)
-            return sample.read(4) == PE_SIGNATURE
+            if sample.read(4) != PE_SIGNATURE:
+                return False
     except OSError:
         LOG.debug("Cannot inspect %s", path, exc_info=True)
         return False
 
+    for name, digest in _pe_sections(path):
+        LOG.debug("PE section %s sha256=%s", name, digest)
+    return True
 
 def load_config(path: Path) -> dict[str, Any]:
     try:
@@ -292,6 +401,37 @@ class EndpointAgent:
                 return
 
 
+def _configure_bootstrap_logging(
+    path: Path | None = None,
+) -> Path:
+    """Log before the config is read, so a bad config is never silent.
+
+    A Windows service has no console. Without this, a failure in
+    ``load_config()`` reached the SCM as a bare 1067 and nothing was written
+    anywhere - which is exactly the kind of failure the installer log has to
+    be able to explain. The service inherits ``DAORCS_LOG_DIR`` from the
+    installer, so this early log lands in AppData with the rest.
+    """
+    if path is None:
+        path = default_log_dir() / "service.log"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        path = Path(os.environ.get("TEMP", r"C:\Windows\Temp")) / "daorcs-agent.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[
+            RotatingFileHandler(
+                path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+            )
+        ],
+        force=True,
+    )
+    return path
+
+
 def _configure_logging(config: dict[str, Any]) -> None:
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     log_path = config.get("log_file")
@@ -315,8 +455,10 @@ def _run_agent(
     stop_event: threading.Event | None = None,
     once: bool = False,
 ) -> int:
+    LOG.info("DaOrcs endpoint agent %s starting (config %s)", VERSION, config_path)
     config = load_config(config_path)
     _configure_logging(config)
+    LOG.info("Configuration loaded from %s", config_path)
     from confluent_kafka import Producer
 
     kafka_settings = dict(config["kafka"].get("producer_config", {}))
@@ -334,7 +476,115 @@ def _run_agent(
     return 0
 
 
+def _self_test(config_path: Path, produce_test: bool = False) -> int:
+    """Validate the install and report whether the broker answers.
+
+    Exit codes are part of the installer contract:
+
+    * ``0`` - config, imports and broker metadata are all good;
+    * ``1`` - the install itself is broken (missing config, bad JSON, missing
+      runtime DLL) and the service must not be installed;
+    * ``2`` - the install is good but the broker is unreachable/refusing. That
+      is a warning: the agent retries on every scan, and a broker that is not
+      running yet is a normal setup state.
+    """
+    print(f"DaOrcs endpoint agent {VERSION}")
+    print(f"Python {platform.python_version()} on {platform.platform()}")
+    print(f"Config: {config_path}")
+    try:
+        config = load_config(config_path)
+    except (ValueError, OSError) as exc:
+        print(f"FAIL config: {exc}")
+        return 1
+
+    print("OK   config is valid JSON and required keys are present")
+    try:
+        _configure_logging(config)
+    except OSError as exc:
+        print(f"WARN could not open log file: {exc}")
+
+    for raw in config["watch_dirs"]:
+        path = expand_path(raw)
+        if path.is_dir():
+            print(f"OK   watch directory: {path}")
+        else:
+            print(f"WARN watch directory does not exist yet: {path}")
+
+    try:
+        import confluent_kafka
+        from confluent_kafka import Producer
+        from confluent_kafka.admin import AdminClient
+    except Exception as exc:  # noqa: BLE001 - DLL load errors are not ImportError
+        print(f"FAIL confluent-kafka runtime: {exc}")
+        LOG.exception("confluent-kafka runtime check failed")
+        return 1
+    print(f"OK   confluent-kafka {confluent_kafka.version()[0]} "
+          f"(librdkafka {confluent_kafka.libversion()[0]})")
+
+    brokers = config["kafka"]["bootstrap_servers"]
+    topic = config["kafka"]["topic"]
+    print(f"     bootstrap servers: {brokers}")
+    print(f"     topic: {topic}")
+
+    kafka_settings = dict(config["kafka"].get("producer_config", {}))
+    kafka_settings["bootstrap.servers"] = brokers
+    kafka_settings.setdefault("client.id", f"daorcs-selftest-{platform.node()}")
+    kafka_settings.setdefault("socket.timeout.ms", 5000)
+    kafka_settings.setdefault("request.timeout.ms", 5000)
+    try:
+        # Producer construction is also the check that the native librdkafka
+        # DLLs bundled by PyInstaller can actually be loaded.
+        producer = Producer(kafka_settings)
+        admin = AdminClient(kafka_settings)
+        metadata = admin.list_topics(timeout=6)
+    except Exception as exc:  # noqa: BLE001 - KafkaException and friends
+        print(f"WARN broker is not reachable: {exc}")
+        print("     The agent will keep retrying. Start the broker, then rerun")
+        print("     this check or restart the DaOrcsEndpointAgent service.")
+        print("FAIL connection test (broker offline)")
+        return 2
+
+    broker_ids = sorted(metadata.brokers.keys())
+    print(f"OK   broker answered: {len(broker_ids)} broker(s) "
+          f"(id {', '.join(str(item) for item in broker_ids)})")
+    if topic in metadata.topics:
+        partitions = len(metadata.topics[topic].partitions)
+        print(f"OK   topic '{topic}' exists ({partitions} partition(s))")
+    else:
+        auto = config["kafka"].get("producer_config", {}).get(
+            "allow.auto.create.topics", True
+        )
+        print(f"WARN topic '{topic}' does not exist yet; it will be created on "
+              f"first publish (auto-create={auto})")
+
+    if produce_test:
+        try:
+            producer.produce(
+                topic,
+                key=b"daorcs-selftest",
+                value=json.dumps({
+                    "event": "agent_selftest",
+                    "agent_version": VERSION,
+                    "host": platform.node(),
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                }).encode("utf-8"),
+            )
+            remaining = producer.flush(10)
+            if remaining:
+                raise TimeoutError(f"{remaining} message(s) not delivered")
+            print("OK   test message delivered to the topic")
+        except Exception as exc:  # noqa: BLE001
+            print(f"FAIL test message: {exc}")
+            return 2
+
+    print("OK   connection test passed")
+    return 0
+
+
 def _run_windows_service() -> int:
+    log_path = _configure_bootstrap_logging()
+    LOG.info("DaOrcs endpoint agent %s service mode starting; log=%s",
+             VERSION, log_path)
     if os.name != "nt":
         raise RuntimeError("The Windows service mode is only available on Windows")
 
@@ -360,8 +610,9 @@ def _run_windows_service() -> int:
         def SvcDoRun(self):
             try:
                 _run_agent(DEFAULT_CONFIG, stop_event=self.stop_event)
-            except Exception:
-                LOG.exception("Endpoint agent service stopped with an error")
+            except Exception as exc:  # noqa: BLE001 - must reach the log
+                LOG.error("Endpoint agent service stopped with an error: %s", exc)
+                LOG.error("%s", traceback.format_exc())
                 raise
 
     servicemanager.Initialize()
@@ -375,24 +626,32 @@ def main(argv: list[str] | None = None) -> int:
     if raw_argv == ["--service"]:
         try:
             return _run_windows_service()
-        except Exception as exc:
-            logging.basicConfig(level=logging.ERROR)
-            LOG.exception("Could not run the Windows service: %s", exc)
+        except Exception as exc:  # noqa: BLE001 - must reach the log
+            _configure_bootstrap_logging()
+            LOG.error("Could not run the Windows service: %s", exc)
+            LOG.error("%s", traceback.format_exc())
             return 1
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--once", action="store_true",
                         help="scan once and exit; useful for VM validation")
+    parser.add_argument("--self-test", action="store_true",
+                        help="check config, runtime and broker reachability")
+    parser.add_argument("--produce-test", action="store_true",
+                        help="with --self-test, also publish one test record")
     args = parser.parse_args(raw_argv)
+    if args.self_test:
+        return _self_test(args.config, produce_test=args.produce_test)
     try:
         return _run_agent(args.config, once=args.once)
     except KeyboardInterrupt:
         LOG.info("Stopping endpoint agent")
         return 0
     except (ValueError, ImportError, OSError, RuntimeError) as exc:
-        logging.basicConfig(level=logging.ERROR)
+        _configure_bootstrap_logging()
         LOG.error("%s", exc)
+        LOG.error("%s", traceback.format_exc())
         return 1
 
 
