@@ -269,9 +269,11 @@ export const api = {
   // returns a job handle to poll, not a synchronous result.
   qilingGenerateRootfs: () =>
     json<QilingRootfsJob>('/api/qiling/rootfs', { method: 'POST' }),
+  /** Newest queued/running build, so a reload can reattach to its console. */
+  qilingActiveRootfs: () =>
+    json<{ job: QilingRootfsJob | null }>('/api/qiling/rootfs'),
   qilingRootfsJob: (jobId: string) =>
-    json<QilingRootfsJob & { state: string; complete?: boolean; rootfs?: unknown }>(
-      `/api/qiling/rootfs/${encodeURIComponent(jobId)}`),
+    json<QilingRootfsJob>(`/api/qiling/rootfs/${encodeURIComponent(jobId)}`),
   /**
    * The transport the Dynamic Analysis page selected, whether it can run, and
    * the run in progress (if any) so a reload reattaches instead of showing an

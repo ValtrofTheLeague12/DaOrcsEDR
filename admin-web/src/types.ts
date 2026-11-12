@@ -1067,6 +1067,12 @@ export interface QilingRootfsJob {
   state: 'queued' | 'running' | 'done' | 'error'
   already_running: boolean
   detail: string
+  /** Phase lines plus the elevated collector's own output, oldest first. */
+  output?: string[]
+  /** Lines trimmed from the front of `output` because the console is bounded. */
+  dropped?: number
+  complete?: boolean | null
+  rootfs?: QilingRuns['rootfs']
 }
 
 /** One way to move a sample to Qiling, with the reason it cannot be used. */

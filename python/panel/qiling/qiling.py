@@ -462,11 +462,58 @@ def guest_metrics(timeout: float = 8.0) -> dict:
 # module-scope execution - importing it opens no SSH session and pushes no
 # rootfs. control()'s deploy path is deliberately NOT wired here; that would
 # upload 116 MB to the VM, which is a separate explicit action.
+#
+# Output: setup_rootfs() takes a log callback for its phase lines, and the
+# elevated collector's cmd.exe redirects its ECHO/COPY output to
+# qiling_dlls/dll_collector.log. A tail thread copies that file into the job so
+# the browser sees the same lines while the UAC prompt is open.
 # ---------------------------------------------------------------------------
 
 _ADMIN_DIR = config.REPO / "admin-terminal"
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
+# A build is mostly the collector echoing one line per DLL plus the packaging
+# phases. The console keeps the newest lines and reports how many were dropped.
+_ROOTFS_OUTPUT_LINES = 400
+
+
+def _job_output(job_id: str, text: str) -> None:
+    """Append one log line to a job, trimming the oldest lines."""
+    for raw in str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if job is None:
+                return
+            lines = job.setdefault("output", [])
+            lines.append(line)
+            overflow = len(lines) - _ROOTFS_OUTPUT_LINES
+            if overflow > 0:
+                del lines[:overflow]
+                job["dropped"] = int(job.get("dropped", 0)) + overflow
+
+
+def _tail_log(job_id: str, path: Path, stop: threading.Event) -> None:
+    """Follow the elevated collector's log file until the build finishes."""
+    position = 0
+    while not stop.is_set():
+        chunk = ""
+        try:
+            size = path.stat().st_size
+            if size < position:
+                # The collector truncates the file when its cmd.exe starts.
+                position = 0
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(position)
+                chunk = handle.read()
+                position = handle.tell()
+        except OSError:
+            pass
+        if chunk:
+            _job_output(job_id, chunk)
+        stop.wait(0.75)
 
 
 def _run_rootfs_job(job_id: str) -> None:
@@ -474,22 +521,38 @@ def _run_rootfs_job(job_id: str) -> None:
         with _jobs_lock:
             _jobs[job_id].update(kw)
 
+    stop = threading.Event()
     _set(state="running", started_at=round(time.time(), 1))
+    _job_output(job_id, "rootfs build started")
     try:
         if str(_ADMIN_DIR) not in sys.path:
             sys.path.insert(0, str(_ADMIN_DIR))
         import core  # admin-terminal shared plumbing
         import qiling_setup
         core.ensure_admin_logs()
-        qiling_setup.setup_rootfs()
+        log_path = getattr(qiling_setup, "COLLECTOR_LOG", None)
+        if log_path is not None:
+            # Start from an empty file so a previous run's lines cannot be
+            # mistaken for this build's progress.
+            try:
+                Path(log_path).write_text("", encoding="utf-8")
+            except OSError:
+                pass
+            threading.Thread(
+                target=_tail_log, args=(job_id, Path(log_path), stop),
+                name=f"rootfs-log-{job_id}", daemon=True).start()
+        qiling_setup.setup_rootfs(log=lambda line: _job_output(job_id, line))
         complete = qiling_setup.rootfs_exists()
         _set(state="done", complete=complete, finished_at=round(time.time(), 1),
              detail=("rootfs collected, validated and packaged"
                      if complete else
                      "collector finished but the tree is still incomplete"))
     except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
+        _job_output(job_id, f"{type(exc).__name__}: {exc}")
         _set(state="error", finished_at=round(time.time(), 1),
              detail=f"{type(exc).__name__}: {exc}")
+    finally:
+        stop.set()
 
 
 def generate_rootfs() -> dict:
@@ -498,18 +561,38 @@ def generate_rootfs() -> dict:
     with _jobs_lock:
         # One build at a time: two elevated collectors racing over the same
         # tree would corrupt it.
-        active = next((j for j in _jobs.values() if j.get("state") == "running"), None)
+        active = next((j for j in _jobs.values()
+                       if j.get("state") in ("queued", "running")), None)
         if active:
-            return {"job_id": active["id"], "state": "running",
+            return {"job_id": active["id"], "state": active["state"],
                     "already_running": True,
-                    "detail": "a rootfs build is already in progress"}
+                    "detail": "a rootfs build is already in progress",
+                    "output": list(active.get("output", [])),
+                    "dropped": int(active.get("dropped", 0))}
         _jobs[job_id] = {"id": job_id, "state": "queued",
-                         "created_at": round(time.time(), 1), "detail": ""}
+                         "created_at": round(time.time(), 1), "detail": "",
+                         "output": [], "dropped": 0}
     threading.Thread(target=_run_rootfs_job, args=(job_id,),
                      name=f"rootfs-{job_id}", daemon=True).start()
     with _jobs_lock:
         return {"job_id": job_id, "state": _jobs[job_id]["state"],
-                "already_running": False, "detail": ""}
+                "already_running": False, "detail": "",
+                "output": list(_jobs[job_id].get("output", [])),
+                "dropped": 0}
+
+
+def _job_view(job: dict) -> dict:
+    """Serialise one job. Callers hold _jobs_lock; no disk walk happens here."""
+    return {
+        "id": job["id"], "job_id": job["id"], "state": job["state"],
+        "detail": job.get("detail", ""),
+        "complete": job.get("complete"),
+        "created_at": job.get("created_at"),
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+        "output": list(job.get("output", [])),
+        "dropped": int(job.get("dropped", 0)),
+    }
 
 
 def rootfs_job(job_id: str) -> dict | None:
@@ -517,14 +600,23 @@ def rootfs_job(job_id: str) -> dict | None:
         job = _jobs.get(job_id)
         if job is None:
             return None
-        return {
-            "id": job["id"], "state": job["state"], "detail": job.get("detail", ""),
-            "complete": job.get("complete"),
-            "created_at": job.get("created_at"),
-            "started_at": job.get("started_at"),
-            "finished_at": job.get("finished_at"),
-            "rootfs": _rootfs(),
-        }
+        view = _job_view(job)
+    # The archive/tree walk is only useful once the build has stopped; doing it
+    # on every 1.2 s poll would rescan thousands of collected DLLs.
+    view["rootfs"] = _rootfs() if view["state"] in ("done", "error") else None
+    return view
+
+
+def active_rootfs_job() -> dict | None:
+    """The newest queued/running build, so a refreshed page can reattach."""
+    with _jobs_lock:
+        active = [j for j in _jobs.values()
+                  if j.get("state") in ("queued", "running")]
+        if not active:
+            return None
+        view = _job_view(max(active, key=lambda j: j.get("created_at") or 0))
+    view["rootfs"] = None
+    return view
 
 
 # ---------------------------------------------------------------------------

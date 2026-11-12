@@ -15,6 +15,7 @@ import type {
   QilingConnectionCheck,
   QilingGuestMetrics,
   QilingPing,
+  QilingRootfsJob,
   QilingRun,
   QilingSubmitInfo,
   QilingSubmitJob,
@@ -40,11 +41,11 @@ import type {
 //
 //  * That batch file ends `EXIT /B 0` (line 160) and never checks the result
 //    of REG SAVE, XCOPY or COPY, so its exit code proves nothing.
-//    qiling_setup.py:116-118 re-validates the tree afterwards for that
-//    reason. The UI models the action as collect -> validate, not "done".
+//    qiling_setup.py re-validates the tree afterwards for that reason. The UI
+//    models the action as collect -> validate, not "done".
 //
 //  * The rootfs is ~111 MB and gets uploaded to the VM, so this is a long job,
-//    not a click. Hence the job state, not a spinner.
+//    not a click. Hence the job state and the polled console, not a spinner.
 //
 // Everything on this page is read from what the harness already produced: run
 // bundles in qiling_dlls/results/ and the service log. Submission is the one
@@ -464,8 +465,9 @@ export default function QilingVM({
     usePoll(api.qilingVmMetrics, 15000)
   const [selected, setSelected] = useState<string | null>(null)
   // Rootfs generation is on-demand, not auto-polled: each build pops a UAC
-  // prompt, so it fires only when clicked.
-  const [rootfsJob, setRootfsJob] = useState<{ id: string; state: string; detail: string } | null>(null)
+  // prompt, so it fires only when clicked. Once it is running the job is
+  // polled so the phase lines and collector output arrive in the console.
+  const [rootfsJob, setRootfsJob] = useState<QilingRootfsJob | null>(null)
   const [rootfsBusy, setRootfsBusy] = useState(false)
   // Keep the overview, submission form and saved runs in separate screens so
   // the primary VM state stays visible without a second service-log view.
@@ -561,8 +563,15 @@ export default function QilingVM({
   const generateRootfs = async () => {
     setRootfsBusy(true)
     try {
-      const job = await api.qilingGenerateRootfs()
-      setRootfsJob({ id: job.job_id, state: job.state, detail: job.detail })
+      setRootfsJob(await api.qilingGenerateRootfs())
+    } catch (e) {
+      setRootfsJob({
+        job_id: '',
+        state: 'error',
+        already_running: false,
+        detail: e instanceof Error ? e.message : String(e),
+        output: [],
+      })
     } finally {
       setRootfsBusy(false)
     }
@@ -592,6 +601,17 @@ export default function QilingVM({
   // is populated on first paint. The buttons re-run them.
   useEffect(() => {
     void loadSubmit()
+    // A build outlives a page reload because it runs on the panel's worker
+    // thread; reattach instead of showing an idle Build button over a live
+    // collector and its UAC prompt.
+    void (async () => {
+      try {
+        const active = await api.qilingActiveRootfs()
+        if (active.job) setRootfsJob(active.job)
+      } catch {
+        // No active build, or the panel restarted: nothing to reattach.
+      }
+    })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -613,6 +633,25 @@ export default function QilingVM({
     return () => window.clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, job?.id, refresh])
+
+  // The rootfs build runs on a worker thread; its phases and the elevated
+  // collector's log only advance while this poll is live. Stop the moment the
+  // job leaves queued/running.
+  const rootfsLive = rootfsJob?.state === 'queued' || rootfsJob?.state === 'running'
+  useEffect(() => {
+    if (!rootfsLive || !rootfsJob?.job_id) return
+    const id = window.setInterval(async () => {
+      try {
+        const next = await api.qilingRootfsJob(rootfsJob.job_id)
+        setRootfsJob(next)
+        if (next.state !== 'queued' && next.state !== 'running') refresh()
+      } catch {
+        // Keep the last phase on screen; the next tick retries.
+      }
+    }, 1200)
+    return () => window.clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootfsLive, rootfsJob?.job_id, refresh])
 
   if (loading && !data) {
     return (
@@ -655,23 +694,70 @@ export default function QilingVM({
           >
             Submit sample
           </Button>
-          <Button size="sm" variant="primary" onPress={generateRootfs} isDisabled={rootfsBusy}>
-            {rootfsBusy ? 'Starting…' : 'Build rootfs'}
+          <Button
+            size="sm"
+            variant="primary"
+            onPress={generateRootfs}
+            isDisabled={rootfsBusy || rootfsLive}
+          >
+            {rootfsBusy ? 'Starting…' : rootfsLive ? 'Building…' : 'Build rootfs'}
           </Button>
           </>
         )}
       />
 
       {rootfsJob && (
-        <Alert status={rootfsJob.state === 'error' ? 'danger' : 'accent'} className="mb-4">
-          <Alert.Title>
-            Rootfs build {rootfsJob.state}
-            {rootfsJob.id && <span className="ml-2 font-mono text-xs font-normal">job {rootfsJob.id}</span>}
-          </Alert.Title>
-          <Alert.Description>
-            {rootfsJob.detail || 'A Windows UAC prompt may appear on the machine running the panel; the browser cannot see it. Refresh in a moment to see the new rootfs size.'}
-          </Alert.Description>
-        </Alert>
+        <>
+          <Alert
+            status={
+              rootfsJob.state === 'error'
+                ? 'danger'
+                : rootfsJob.state === 'done'
+                  ? 'success'
+                  : 'accent'
+            }
+            className="mb-3"
+          >
+            <Alert.Title>
+              Rootfs build {rootfsJob.state === 'done' ? 'complete' : rootfsJob.state}
+              {rootfsJob.job_id && (
+                <span className="ml-2 font-mono text-xs font-normal">job {rootfsJob.job_id}</span>
+              )}
+            </Alert.Title>
+            <Alert.Description>
+              {rootfsJob.detail ||
+                (rootfsLive
+                  ? 'Building the x86 + x64 rootfs. A Windows UAC prompt appears on the machine running the panel - accept it there; the browser cannot show that prompt. The collector log is below.'
+                  : 'The build job has no detail to report.')}
+            </Alert.Description>
+          </Alert>
+          <Console
+            title="Rootfs build output"
+            subtitle={rootfsJob.job_id ? `job ${rootfsJob.job_id}` : undefined}
+            status={{
+              label: rootfsJob.state,
+              tone:
+                rootfsJob.state === 'error'
+                  ? 'danger'
+                  : rootfsJob.state === 'done'
+                    ? 'success'
+                    : rootfsLive
+                      ? 'accent'
+                      : 'default',
+            }}
+            lines={rootfsJob.output ?? []}
+            live={rootfsLive}
+            truncated={rootfsJob.dropped ?? 0}
+            size="tall"
+            empty={
+              rootfsLive
+                ? 'Waiting for the build worker…'
+                : 'No output was recorded for this job.'
+            }
+            ariaLabel="Rootfs build output"
+            className="mb-4"
+          />
+        </>
       )}
 
       {error && (

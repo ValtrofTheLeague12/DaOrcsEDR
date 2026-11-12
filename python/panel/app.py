@@ -4076,6 +4076,22 @@ def create_app() -> Flask:
             return jsonify({"available": False, "reachable": False,
                             "error": f"{type(exc).__name__}: {exc}"})
 
+    @app.get("/api/qiling/rootfs")
+    def qiling_active_rootfs():
+        """Current Rootfs Build, so a Refresh Can Reattach
+        ---
+        tags: [qiling]
+        responses:
+          200:
+            description: The running job, or null when no build is active
+        description: >
+          Jobs live on the panel's worker thread, not in the browser, so a
+          page reload loses the handle it was polling. This returns the newest
+          queued/running job (with its captured output) so the panel can resume
+          watching the build instead of showing an idle button.
+        """
+        return jsonify({"job": qiling.active_rootfs_job()})
+
     @app.post("/api/qiling/rootfs")
     def qiling_generate_rootfs():
         """Start a Rootfs Build and Get a Job Handle to Poll
@@ -4090,7 +4106,9 @@ def create_app() -> Flask:
           The build runs dll_collector.bat elevated: a Windows UAC prompt
           appears on the machine running the panel (the operator sees it, the
           browser never does). It runs on a worker thread; poll
-          GET /api/qiling/rootfs/job_id.
+          GET /api/qiling/rootfs/job_id. The job's `output` carries the phase
+          lines and the elevated collector's own log, so the panel can show
+          progress while the prompt is open.
         """
         try:
             return jsonify(qiling.generate_rootfs()), 202

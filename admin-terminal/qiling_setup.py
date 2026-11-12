@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 import core
@@ -22,6 +23,9 @@ import core
 QILING_DIR = Path(core.REPO) / "qiling_dlls"
 QILING_SCRIPTS = Path(core.REPO) / "python" / "qiling"
 COLLECTOR = QILING_DIR / "dll_collector.bat"
+# The elevated collector runs in its own console, so its output is redirected
+# here; the panel tails the file while the job runs.
+COLLECTOR_LOG = QILING_DIR / "dll_collector.log"
 SCRIPT = QILING_SCRIPTS / "_qiling_script.py"
 ARCHIVE = QILING_DIR / "rootfs.tar.gz"
 ROOTFS = QILING_DIR / "examples" / "rootfs"
@@ -73,11 +77,11 @@ def _archive_is_current() -> bool:
     return ARCHIVE.stat().st_mtime >= newest
 
 
-def _package_rootfs() -> None:
+def _package_rootfs(log: Callable[[str], None] = print) -> None:
     if not rootfs_exists():
         raise QilingSetupError("both x86 and x64 rootfs directories are required")
     if _archive_is_current():
-        print("  rootfs archive is current")
+        log("  rootfs archive is current")
         return
 
     fd, temp_name = tempfile.mkstemp(
@@ -91,13 +95,19 @@ def _package_rootfs() -> None:
     finally:
         if temp_path.exists():
             temp_path.unlink()
-    print(f"  packaged rootfs: {ARCHIVE.name}")
+    log(f"  packaged rootfs: {ARCHIVE.name}")
 
 
-def _run_elevated_collector() -> None:
+def _run_elevated_collector(log: Callable[[str], None] = print) -> None:
     if not COLLECTOR.is_file():
         raise QilingSetupError(f"collector not found: {COLLECTOR}")
-    batch_command = f'""{COLLECTOR}""'
+    log(f"collector: {COLLECTOR}")
+    log("requesting administrator rights - accept the Windows UAC prompt "
+        "on this machine")
+    # cmd.exe writes the collector's ECHO/COPY lines to COLLECTOR_LOG, which
+    # the panel tails. Without the redirect they would only exist in the
+    # elevated window's console, which the browser cannot read.
+    batch_command = f'""{COLLECTOR}" > "{COLLECTOR_LOG}" 2>&1"'
     script = (
         "$p = Start-Process -FilePath $env:ComSpec "
         f"-ArgumentList @('/d','/s','/c',{_ps_quote(batch_command)}) "
@@ -108,7 +118,14 @@ def _run_elevated_collector() -> None:
         [shutil.which("powershell") or "powershell.exe",
          "-NoProfile", "-NonInteractive", "-Command", script],
         cwd=str(QILING_DIR), check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
+    # PowerShell reports a refused UAC prompt on stderr; keep it in the job
+    # output instead of discarding it with the wrapper process.
+    for line in (result.stdout or "").splitlines() + (result.stderr or "").splitlines():
+        if line.strip():
+            log(f"  {line.rstrip()}")
+    log(f"elevated collector exit code {result.returncode}")
     if result.returncode:
         raise QilingSetupError(
             "elevated DLL collector failed or its UAC prompt was declined "
@@ -118,11 +135,25 @@ def _run_elevated_collector() -> None:
             "collector completed but did not create both rootfs System32 trees")
 
 
-def setup_rootfs() -> None:
-    """Collect Windows DLLs with a UAC prompt when rootfs is absent, then tar it."""
+def setup_rootfs(log: Callable[[str], None] = print) -> None:
+    """Collect Windows DLLs with a UAC prompt when rootfs is absent, then tar it.
+
+    `log` receives each phase line; the panel passes a job writer and the CLI
+    keeps the default `print`.
+    """
+    log("checking Qiling rootfs trees (x86 + x64)")
     if not rootfs_exists():
-        _run_elevated_collector()
-    _package_rootfs()
+        log("rootfs incomplete: collecting the Windows DLL/registry tree")
+        _run_elevated_collector(log)
+        log("validating the collected rootfs")
+        if not rootfs_exists():
+            raise QilingSetupError(
+                "collector completed but the rootfs tree is still incomplete")
+    else:
+        log("rootfs already present: skipping the elevated collector")
+    log("packaging the rootfs archive")
+    _package_rootfs(log)
+    log("rootfs build complete")
 
 
 def network_blocked(error: BaseException) -> bool:
