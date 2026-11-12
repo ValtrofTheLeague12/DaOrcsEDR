@@ -904,7 +904,27 @@ export default function Utils() {
         : undefined
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="utils-page flex flex-col gap-4">
+      <header className="utils-header">
+        <div>
+          <p className="eyebrow">MAINTENANCE</p>
+          <h2 className="page-title mt-1">Utils</h2>
+          <p className="utils-lede">
+            Keep the analyzer's inputs fresh: detection rules, the software
+            inventory, the virtualiser build and the generator's value pools.
+          </p>
+        </div>
+        {job && (
+          <Chip
+            size="sm"
+            variant="soft"
+            color={job.state === 'running' ? 'accent' : job.state === 'passed' ? 'success' : 'danger'}
+          >
+            {job.state === 'running' ? 'Job running' : job.state === 'passed' ? 'Last job passed' : 'Last job failed'}
+          </Chip>
+        )}
+      </header>
+
       {/* Sections as tabs, like Pipelines Configuration: one concern at a
           time, with a dot for the ones that need attention. */}
       <SubNav
@@ -912,7 +932,7 @@ export default function Utils() {
           {
             id: 'detection', label: 'Detection content', icon: 'clamd',
             tone: !data ? undefined
-              : [data.yara, data.yargen, data.malapi].every((s) => s.available)
+              : [data.yara, data.yargen, data.malapi, data.unprotect].every((s) => s.available)
                 ? 'ok'
                 : data.malapi.blocked || data.malapi.generated_stale ? 'bad' : 'warn',
           },
@@ -960,7 +980,7 @@ export default function Utils() {
           <Section
             n={1}
             title="Detection content"
-            hint="What the analyzer reads at scan time."
+            hint="YARA rules, MalAPI classification, yarGen-Go's databases, Unprotect.it - what the analyzer reads at scan time. Stale here means blind, not slow."
             tone={detectionTone}
           >
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -976,7 +996,7 @@ export default function Utils() {
           <Section
             n={2}
             title="Software inventory"
-            hint="What this binary is made of."
+            hint="The CycloneDX SBOM - what this binary is made of. Stale here is an audit problem, not a detection one."
             tone={inventoryTone}
           >
             <SbomCard s={data.sbom} entry={entryOf('sbom')} busy={starting || running} onRun={run} />
@@ -987,7 +1007,7 @@ export default function Utils() {
           <Section
             n={3}
             title="Instruction virtualisation"
-            hint="The virtualiser the sample factory calls."
+            hint="EagleVM — the in-tree virtualiser the sample factory calls. Build it here (CMake, Release, tests off); its artefacts are what the factory's virtualisation option requires."
             tone={eagleTone}
           >
             <EagleCard e={data.eagle} entry={entryOf('eagle-build')} busy={starting || running} onRun={run} />

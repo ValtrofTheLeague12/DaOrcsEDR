@@ -608,7 +608,21 @@ function MachineCard({
           <ServiceChips vm={vm} />
         </div>
 
-        <VmMetricsPanel metrics={vm.metrics} />
+        {vm.metrics ? (
+          <details className="fleet-vm-more">
+            <summary>
+              <span className="fleet-vm-more-label">Live metrics</span>
+              <span className="fleet-vm-more-vals">
+                <b>CPU {vm.metrics.cpu_percent != null ? `${Math.round(vm.metrics.cpu_percent)}%` : '—'}</b>
+                <b>MEM {vm.metrics.memory.percent != null ? `${Math.round(vm.metrics.memory.percent)}%` : '—'}</b>
+                <b>DISK {vm.metrics.disk.percent != null ? `${Math.round(vm.metrics.disk.percent)}%` : '—'}</b>
+              </span>
+            </summary>
+            <VmMetricsPanel metrics={vm.metrics} />
+          </details>
+        ) : (
+          <VmMetricsPanel metrics={vm.metrics} />
+        )}
 
         {vm.run_log && <RunLog text={vm.run_log} />}
       </Card.Content>

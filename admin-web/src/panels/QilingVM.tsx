@@ -4,6 +4,7 @@ import { Button } from '@heroui/react/button'
 import { Card } from '@heroui/react/card'
 import { Chip } from '@heroui/react/chip'
 import Loading from '../components/Loading'
+import ToolHero from '../components/ToolHero'
 import Console from '../components/Console'
 import CopyButton from '../components/CopyButton'
 import Icon, { type IconName } from '../components/Icon'
@@ -624,19 +625,21 @@ export default function QilingVM({
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-4 border-b border-default-200 pb-4">
-        <div className="min-w-0">
-          <div className="mb-2">
-            <span className="eyebrow">DYNAMIC ANALYSIS</span>
-          </div>
-          <h2 className="page-title">Qiling analysis</h2>
-          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-default-500">
-            Inspect the emulation VM, submission transport, and saved run
-            bundles — including hashes, behaviour, IOCs, YARA hits and a
-            colour-coded run trace. Samples execute in the configured analysis VM.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <ToolHero
+        eyebrow="DYNAMIC ANALYSIS · GUEST ON THE QILING VM"
+        title="Qiling"
+        lead="Emulate Windows samples inside the analysis VM and read back hashes, behaviour, IOCs, YARA hits and a colour-coded trace."
+        tone={!submitInfo ? 'idle' : communication?.error ? 'bad' : submitReady ? 'ok' : 'warn'}
+        state={!submitInfo ? 'Checking…' : communication?.error ? 'Config unreadable' : submitReady ? 'Ready' : 'Not ready'}
+        facts={[
+          { label: 'Endpoint', value: submitInfo?.endpoint || 'probing…', mono: true },
+          { label: 'Harness', value: data?.harness.present ? `v${data.harness.version}` : '—', mono: true },
+          { label: 'Transport', value: chosen === 'sftp' ? 'SFTP' : 'TCP' },
+          { label: 'Checks', value: checks.length ? `${passed}/${checks.length} passed` : '—' },
+          { label: 'Rootfs', value: data ? (data.rootfs.complete ? 'complete' : 'incomplete') : '—' },
+        ]}
+        actions={(
+          <>
           <Button
             size="sm"
             variant="outline"
@@ -655,8 +658,9 @@ export default function QilingVM({
           <Button size="sm" variant="primary" onPress={generateRootfs} isDisabled={rootfsBusy}>
             {rootfsBusy ? 'Starting…' : 'Build rootfs'}
           </Button>
-        </div>
-      </div>
+          </>
+        )}
+      />
 
       {rootfsJob && (
         <Alert status={rootfsJob.state === 'error' ? 'danger' : 'accent'} className="mb-4">
@@ -704,7 +708,8 @@ export default function QilingVM({
       {/* --- overview: connection test, VM health, resources and rootfs ----- */}
       {tab === 'overview' && (
         <>
-          <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,23rem)_minmax(0,1fr)]">
+          <div className="tool-grid">
+            <div className="tool-col">
             <Card className="w-full">
               <Card.Header className="flex flex-row items-center justify-between gap-2">
                 <Card.Title className="text-sm font-semibold">Connection</Card.Title>
@@ -737,23 +742,11 @@ export default function QilingVM({
                 <Fact label="Configured in" title={communication?.path}>
                   {communication?.path ?? 'config/dynamic_analysis.json'}
                 </Fact>
-                <Fact label="Endpoint" title={submitInfo?.endpoint}>
-                  {submitInfo?.endpoint ?? 'probing…'}
-                </Fact>
                 <Fact label="Qiling mode">{submitInfo?.mode ?? '—'}</Fact>
                 <Fact label="VM">
                   {submitInfo?.vm?.host
                     ? `${submitInfo.vm.host}@${submitInfo.vm.ip}:${submitInfo.vm.port}`
                     : 'not configured'}
-                </Fact>
-                <Fact label="Checked">
-                  {submitInfo?.checked_at
-                    ? (
-                        <span title={new Date(submitInfo.checked_at * 1000).toLocaleString()}>
-                          {ago(submitInfo.checked_at)}
-                        </span>
-                      )
-                    : '—'}
                 </Fact>
                 <div className="mt-2 border-t border-default-100 pt-2">
                   <div className="flex items-center justify-between gap-2">
@@ -808,6 +801,65 @@ export default function QilingVM({
               </Card.Content>
             </Card>
 
+            {submitInfo?.transports && (
+              <Card className="w-full">
+                <Card.Header className="flex flex-row items-center justify-between gap-2">
+                  <Card.Title className="text-sm font-semibold">
+                    Submission transports
+                    <span className="ml-2 text-[10px] font-normal text-default-400">
+                      only the selected one is used
+                    </span>
+                  </Card.Title>
+                </Card.Header>
+                <Card.Content>
+                  <TransportRow
+                    transport={submitInfo.transports.sftp}
+                    selected={chosen === 'sftp'}
+                  />
+                  <TransportRow
+                    transport={submitInfo.transports.tcp}
+                    selected={chosen === 'tcp'}
+                  />
+                </Card.Content>
+              </Card>
+            )}
+            </div>
+            <div className="tool-col">
+            <Card className="w-full">
+              <Card.Header className="flex flex-row items-center justify-between gap-2">
+                <Card.Title className="text-sm font-semibold">
+                  {chosen === 'sftp' ? 'SFTP checks' : 'TCP checks'}
+                  <span className="ml-2 text-[10px] font-normal text-default-400">
+                    {chosen === 'sftp' ? 'admin-terminal/ driver files' : 'socket client + connect'}
+                  </span>
+                </Card.Title>
+                <span className="flex items-center gap-2">
+                  <StepStrip checks={checks} />
+                  <span className="font-mono text-[10px] text-default-400">
+                    {passed}/{checks.length} ok
+                  </span>
+                </span>
+              </Card.Header>
+              <Card.Content className="flex flex-col">
+                {checks.length === 0 ? (
+                  <p className="py-4 text-center text-[11px] text-default-400">
+                    No checks recorded - press Run check.
+                  </p>
+                ) : checks.map((c, i) => (
+                  <CheckStep
+                    key={`${c.name}-${i}`}
+                    index={i + 1}
+                    total={checks.length}
+                    name={c.name}
+                    ok={c.ok}
+                    detail={c.detail}
+                    advisory={c.advisory}
+                    icon={c.icon}
+                  />
+                ))}
+              </Card.Content>
+            </Card>
+
             <Console
               title="Connection test"
               subtitle={chosen === 'sftp'
@@ -847,66 +899,7 @@ export default function QilingVM({
               ariaLabel="Qiling connection test output"
               empty="No output recorded - press Run check."
             />
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <Card className="w-full">
-              <Card.Header className="flex flex-row items-center justify-between gap-2">
-                <Card.Title className="text-sm font-semibold">
-                  {chosen === 'sftp' ? 'SFTP checks' : 'TCP checks'}
-                  <span className="ml-2 text-[10px] font-normal text-default-400">
-                    {chosen === 'sftp' ? 'admin-terminal/ driver files' : 'socket client + connect'}
-                  </span>
-                </Card.Title>
-                <span className="flex items-center gap-2">
-                  <StepStrip checks={checks} />
-                  <span className="font-mono text-[10px] text-default-400">
-                    {passed}/{checks.length} ok
-                  </span>
-                </span>
-              </Card.Header>
-              <Card.Content className="flex flex-col">
-                {checks.length === 0 ? (
-                  <p className="py-4 text-center text-[11px] text-default-400">
-                    No checks recorded - press Run check.
-                  </p>
-                ) : checks.map((c, i) => (
-                  <CheckStep
-                    key={`${c.name}-${i}`}
-                    index={i + 1}
-                    total={checks.length}
-                    name={c.name}
-                    ok={c.ok}
-                    detail={c.detail}
-                    advisory={c.advisory}
-                    icon={c.icon}
-                  />
-                ))}
-              </Card.Content>
-            </Card>
-
-            {submitInfo?.transports && (
-              <Card className="w-full">
-                <Card.Header className="flex flex-row items-center justify-between gap-2">
-                  <Card.Title className="text-sm font-semibold">
-                    Submission transports
-                    <span className="ml-2 text-[10px] font-normal text-default-400">
-                      only the selected one is used
-                    </span>
-                  </Card.Title>
-                </Card.Header>
-                <Card.Content>
-                  <TransportRow
-                    transport={submitInfo.transports.sftp}
-                    selected={chosen === 'sftp'}
-                  />
-                  <TransportRow
-                    transport={submitInfo.transports.tcp}
-                    selected={chosen === 'tcp'}
-                  />
-                </Card.Content>
-              </Card>
-            )}
+            </div>
           </div>
 
           <GuestResources
