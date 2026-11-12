@@ -250,7 +250,12 @@ def create_app() -> Flask:
         responses:
           200:
             description: Per-service up/down, latency and resolved endpoints"""
-        return jsonify(services.overview())
+        response = jsonify(services.overview())
+        # These are live probes. A cached copy would keep reporting the old
+        # host/port after .env changes and the old up/down state after a
+        # service starts, which is exactly what the page exists to show.
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.post("/api/services/<key>/<action>")
     def control_service(key, action):

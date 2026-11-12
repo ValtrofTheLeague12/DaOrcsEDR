@@ -68,6 +68,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -160,6 +161,69 @@ def client() -> Path | None:
     if posix and Path(posix).name.lower() not in INTERACTIVE:
         return Path(posix)
     return None
+
+
+def server() -> Path | None:
+    """The daemon that holds the session (Windows ships it separately).
+
+    Starting a command through the client usually auto-starts this, but only
+    after a wait the caller cannot see or bound. The dashboard and the build
+    script start it explicitly so the first artifact operation does not pay
+    that cost, or time out while it happens.
+    """
+    return _find(["MEGAcmdServer.exe", "megacmdserver"])
+
+
+def _server_answering() -> bool:
+    """True when the client can answer without having to start a daemon."""
+    try:
+        res = run("whoami", timeout=5, check=False)
+    except MegaError:
+        return False
+    return res.code == 0
+
+
+def ensure_server(wait: float = 20.0) -> tuple[bool, str]:
+    """Start MEGAcmdServer if it is installed but not already answering.
+
+    Idempotent on purpose: the dashboard launcher and the build script both
+    call it, and whichever runs second must be a no-op rather than a second
+    daemon or a login prompt. Returns (ok, human-readable detail); never
+    raises, because a missing daemon must not stop the panel from opening.
+    """
+    if not available():
+        return False, missing_message().splitlines()[0]
+
+    if os.name != "nt":
+        # POSIX megacmd starts and owns its daemon; there is no separate exe.
+        return True, "managed by megacmd"
+
+    exe = server()
+    if exe is None:
+        return False, "MEGAcmdServer.exe not found"
+
+    if _server_answering():
+        return True, "already running"
+
+    try:
+        subprocess.Popen(
+            [str(exe)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=_CREATE_NO_WINDOW |
+                          getattr(subprocess, "DETACHED_PROCESS", 0),
+            close_fds=True,
+        )
+    except OSError as exc:
+        return False, f"could not start {exe.name}: {exc}"
+
+    deadline = time.monotonic() + max(wait, 0)
+    while time.monotonic() < deadline:
+        if _server_answering():
+            return True, f"started {exe.name}"
+        time.sleep(0.5)
+    return False, f"{exe.name} did not answer within {wait:.0f}s"
 
 
 def wrapper(command: str) -> Path | None:
@@ -449,3 +513,20 @@ def public_link(remote_path: str, timeout: int = QUICK_TIMEOUT,
             f"megacmd export returned no link for {remote_path}: "
             f"{res.text[:200] or '(no output)'}")
     return link
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    ap = argparse.ArgumentParser(description="MEGAcmd helper for the launcher scripts")
+    ap.add_argument("--ensure-server", action="store_true",
+                    help="start MEGAcmdServer if it is not already running")
+    ap.add_argument("--wait", type=float, default=20.0,
+                    help="seconds to wait for the daemon (default: 20)")
+    ns = ap.parse_args()
+    if ns.ensure_server:
+        ok, detail = ensure_server(ns.wait)
+        print(detail)
+        sys.exit(0 if ok else 1)
+    ap.print_help()

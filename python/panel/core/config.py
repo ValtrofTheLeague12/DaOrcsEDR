@@ -19,7 +19,6 @@ not have.
 
 from __future__ import annotations
 
-import ipaddress
 import os
 from pathlib import Path
 
@@ -163,23 +162,21 @@ def setting_int(name: str, default: int) -> int:
         return default
 
 
-def _loopback(host: str) -> bool:
-    if host in ("localhost", "127.0.0.1", "::1"):
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+def probe_host(host: str) -> str:
+    """The address to dial for a configured bind host.
+
+    Mirrors ``admin-terminal/core.py``: a wildcard bind (``0.0.0.0`` / ``::``)
+    is not routable, so it is dialled on loopback; every other value is used
+    as written. That keeps the panel and the TUI pointing at the same address
+    when ``SA_API_HOST`` names a specific interface such as ``192.168.56.1``.
+    """
+    return {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
 
 
 def analyzer_base() -> str:
-    """The analyzer REST API.
-
-    probe_host() mirrors core.py: a service reached over the LAN still has to be
-    dialled on loopback, because the analyzer binds every interface.
-    """
-    host = setting("SA_API_HOST", "127.0.0.1")
-    return f"{'127.0.0.1' if not _loopback(host) else host}:{analyzer_port()}"
+    """The analyzer REST API, at the host and port configured in .env."""
+    host = probe_host(setting("SA_API_HOST", "127.0.0.1"))
+    return f"{host}:{analyzer_port()}"
 
 
 def analyzer_port() -> int:
@@ -187,8 +184,8 @@ def analyzer_port() -> int:
 
 
 def malapi_base() -> str:
-    host = setting("MALAPI_HOST", "127.0.0.1")
-    return f"{'127.0.0.1' if not _loopback(host) else host}:{malapi_port()}"
+    host = probe_host(setting("MALAPI_HOST", "127.0.0.1"))
+    return f"{host}:{malapi_port()}"
 
 
 def malapi_port() -> int:
@@ -196,8 +193,8 @@ def malapi_port() -> int:
 
 
 def ml_base() -> str:
-    host = setting("ML_HOST", "127.0.0.1")
-    return f"{'127.0.0.1' if not _loopback(host) else host}:{ml_port()}"
+    host = probe_host(setting("ML_HOST", "127.0.0.1"))
+    return f"{host}:{ml_port()}"
 
 
 def ml_port() -> int:

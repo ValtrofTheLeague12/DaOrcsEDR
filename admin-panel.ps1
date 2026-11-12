@@ -249,6 +249,68 @@ function Wait-ForHealth {
     return $false
 }
 
+function Start-MegaCmd {
+    # The artifact pages shell out to MEGAcmd, whose daemon (MEGAcmdServer.exe)
+    # is a separate process. It used to have to be started by hand before the
+    # first list/upload. Start it here, idempotently: a dashboard launch is the
+    # moment an operator expects the artifact page to work.
+    $Python = Join-Path $PSScriptRoot 'python\.venv\Scripts\python.exe'
+    $Helper = Join-Path $PSScriptRoot 'mega\megacmd.py'
+    if (-not (Test-Path -LiteralPath $Python) -or -not (Test-Path -LiteralPath $Helper)) {
+        Write-Host 'MEGAcmd : skipped (venv or mega\megacmd.py missing)' -ForegroundColor DarkGray
+        return
+    }
+    try {
+        $detail = (& $Python $Helper '--ensure-server' 2>&1) -join ' '
+        Write-Host "MEGAcmd : $detail" -ForegroundColor DarkGray
+    }
+    catch {
+        # A missing daemon must not keep the panel from opening; the artifact
+        # call itself reports the real reason when it is tried.
+        Write-Host "MEGAcmd : not started ($($_.Exception.Message))" -ForegroundColor Yellow
+    }
+}
+
+function Get-UiSourceHash {
+    # A content hash rather than timestamps: a design drop copied out of a zip
+    # keeps the archive's (older) mtimes, so "newer than dist" quietly decided
+    # the new CSS was already built. The hash cannot be fooled that way.
+    $Inputs = @()
+    foreach ($Name in 'index.html', 'package.json', 'vite.config.ts',
+                      'tsconfig.json', 'components.json') {
+        $Path = Join-Path $WebDir $Name
+        if (Test-Path -LiteralPath $Path) { $Inputs += Get-Item -LiteralPath $Path }
+    }
+    foreach ($Dir in @((Join-Path $WebDir 'src'), (Join-Path $WebDir 'public'))) {
+        if (Test-Path -LiteralPath $Dir) {
+            $Inputs += Get-ChildItem -LiteralPath $Dir -Recurse -File
+        }
+    }
+    $Root = (Resolve-Path -LiteralPath $WebDir).Path.TrimEnd('\', '/')
+    $Manifest = foreach ($File in ($Inputs | Sort-Object FullName -Unique)) {
+        $Relative = $File.FullName.Substring($Root.Length).TrimStart('\', '/')
+        "$Relative=$((Get-FileHash -LiteralPath $File.FullName -Algorithm SHA256).Hash)"
+    }
+    $Bytes = [System.Text.Encoding]::UTF8.GetBytes(($Manifest -join "`n"))
+    $Sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($Sha.ComputeHash($Bytes)).Replace('-', '').ToLowerInvariant()
+    }
+    finally { $Sha.Dispose() }
+}
+
+function Test-UiStale {
+    # `npm run build` only ran with -Build or when dist was absent, so editing
+    # a panel and launching the dashboard served the previous build - which
+    # reads exactly like "the new CSS is not applied". Rebuild when the source
+    # manifest differs from the one recorded by the last successful build.
+    $StampFile = Join-Path $WebDir 'dist\.ui-source-hash'
+    if (-not (Test-Path -LiteralPath $DistIndex) -or
+        -not (Test-Path -LiteralPath $StampFile)) { return $true }
+    $Built = (Get-Content -LiteralPath $StampFile -Raw).Trim()
+    return (Get-UiSourceHash) -ne $Built
+}
+
 function Build-Ui {
     if (-not (Get-Command 'npm' -ErrorAction SilentlyContinue)) {
         throw "npm not on PATH. Install Node, or run the panel with -NoUi."
@@ -264,6 +326,15 @@ function Build-Ui {
     }
     finally {
         Pop-Location
+    }
+    # Record exactly what was built. A later launch compares this with the
+    # current sources; a mismatch rebuilds instead of serving the old bundle.
+    try {
+        Set-Content -LiteralPath (Join-Path $WebDir 'dist\.ui-source-hash') `
+            -Value (Get-UiSourceHash) -NoNewline
+    }
+    catch {
+        Write-Host "Could not write build stamp: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
@@ -303,11 +374,13 @@ Write-Host 'Admin orchestration panel' -ForegroundColor Cyan
 Write-Host "  python : $VenvPy"
 Write-Host "  repo   : $PSScriptRoot"
 
+Start-MegaCmd
+
 # --- UI ---------------------------------------------------------------------
 
 $NeedBuild = $false
 if (-not $NoUi -and -not $Dev) {
-    if ($Build -or -not (Test-Path -LiteralPath $DistIndex)) {
+    if ($Build -or (Test-UiStale)) {
         $NeedBuild = $true
     }
 }

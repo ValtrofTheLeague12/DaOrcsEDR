@@ -131,6 +131,25 @@ if ($Clean -and (Test-Path -LiteralPath 'build-ucrt')) {
     Remove-Item -LiteralPath 'build-ucrt' -Recurse -Force
 }
 
+function Start-MegaCmd {
+    # Building the analyzer is the other moment an operator expects the
+    # artifact upload path to work: the freshly built exe feeds the MEGAcmd
+    # upload step. Start the daemon now rather than making them do it by hand;
+    # ensure_server is idempotent, so a running daemon is left alone.
+    $Python = Join-Path $PSScriptRoot 'python\.venv\Scripts\python.exe'
+    $Helper = Join-Path $PSScriptRoot 'mega\megacmd.py'
+    if (-not (Test-Path -LiteralPath $Python) -or -not (Test-Path -LiteralPath $Helper)) {
+        return
+    }
+    try {
+        $detail = (& $Python $Helper '--ensure-server' 2>&1) -join ' '
+        Write-Host "MEGAcmd: $detail" -ForegroundColor DarkGray
+    }
+    catch {
+        Write-Host "MEGAcmd: not started ($($_.Exception.Message))" -ForegroundColor Yellow
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Hardening settings.
 #
@@ -225,6 +244,8 @@ foreach ($Name in $Hardening.Keys) {
     $Value = if ($Hardening[$Name]) { 'ON' } else { 'OFF' }
     $HardeningCmakeArgs += "-D$($HardeningOptions[$Name])=$Value"
 }
+
+Start-MegaCmd
 
 Invoke-Checked 'cmake' '--preset' 'ucrt64' @HardeningCmakeArgs
 Invoke-Checked 'cmake' '--build' '--preset' 'ucrt64-release'

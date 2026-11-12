@@ -84,7 +84,14 @@ import type {
 // dropped and every poll would bounce on 401.
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { credentials: 'same-origin', ...init })
+  // Every endpoint here is a live probe or a mutation. Letting the browser
+  // reuse a GET from its cache is how the dashboard kept showing the old
+  // .env addresses and the old service state after they had changed.
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    ...init,
+  })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
     const detail = body as { error?: string; detail?: string }
