@@ -126,6 +126,8 @@ export default function ThreatIntelligence() {
   const [listenerBusy, setListenerBusy] = useState<'start' | 'stop' | null>(null)
   const [listenerError, setListenerError] = useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [tab, setTab] = useState<'evidence' | 'catalog' | 'server'>('evidence')
+  const [banLogOpen, setBanLogOpen] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [generateError, setGenerateError] = useState<string | null>(null)
   const [generatedPaths, setGeneratedPaths] = useState<{
@@ -696,11 +698,16 @@ export default function ThreatIntelligence() {
           <button
             type="button"
             className="artifact-refresh"
-            onClick={() =>
-              document
-                .getElementById('threat-ban-output')
-                ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-            }
+            onClick={() => {
+              setTab('catalog')
+              setBanLogOpen(true)
+              window.setTimeout(
+                () => document
+                  .getElementById('threat-ban-output')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+                80,
+              )
+            }}
           >
             <Icon name="terminal" size={13} />
             Ban output
@@ -713,25 +720,51 @@ export default function ThreatIntelligence() {
         </div>
       </header>
 
-      <nav className="threat-section-nav" aria-label="Threat Intelligence Server sections">
-        <span className="threat-section-nav-label">Sections</span>
-        <a href="#threat-server">
-          <Icon name="server" size={12} />
-          Server setup
-        </a>
-        <a href="#threat-evidence">
-          <Icon name="folder" size={12} />
-          Evidence workspace
-        </a>
-        <a href="#threat-catalog">
-          <Icon name="tag" size={12} />
-          Collected artifacts
-        </a>
-        <a href="#threat-ban-output">
-          <Icon name="terminal" size={12} />
-          Ban / unban output
-        </a>
-      </nav>
+      <section className="threat-metrics" aria-label="Evidence workspace summary">
+        <div className="threat-metric">
+          <span className="eyebrow">Remote bundles</span>
+          <strong>{data?.remote?.bundles.length ?? 0}</strong>
+          <span>under <code>{remoteRoot}</code></span>
+        </div>
+        <div className="threat-metric">
+          <span className="eyebrow">Collection queue</span>
+          <strong>{selected.length}</strong>
+          <span>chosen for local inspection</span>
+        </div>
+        <div className="threat-metric">
+          <span className="eyebrow">Local bundles</span>
+          <strong>{data?.local?.bundles.length ?? 0}</strong>
+          <span>downloaded and available</span>
+        </div>
+        <div className="threat-metric">
+          <span className="eyebrow">Banned</span>
+          <strong>{banned.length}</strong>
+          <span>hidden from the catalog</span>
+        </div>
+        <div className="threat-metric">
+          <span className="eyebrow">Selected case</span>
+          <strong className="threat-selected-name">{activeName ?? '—'}</strong>
+          <span>{evidence?.name === activeName ? `${currentFiles.length} extracted files` : 'Not extracted yet'}</span>
+        </div>
+      </section>
+
+      <div className="threat-tabs" role="tablist" aria-label="Threat Intelligence Server sections">
+        <button type="button" role="tab" aria-selected={tab === 'evidence'} className={tab === 'evidence' ? 'is-on' : ''} onClick={() => setTab('evidence')}>
+          <Icon name="folder" size={13} />
+          Evidence
+          <small>{data?.remote?.bundles.length ?? 0}</small>
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'catalog'} className={tab === 'catalog' ? 'is-on' : ''} onClick={() => setTab('catalog')}>
+          <Icon name="tag" size={13} />
+          Artifact catalog
+          <small>{artifactCatalog.length}</small>
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'server'} className={tab === 'server' ? 'is-on' : ''} onClick={() => setTab('server')}>
+          <Icon name="server" size={13} />
+          Server
+          <i className={`threat-dot ${listenerRunning ? 'is-ok' : listener?.state === 'unhealthy' || listener?.state === 'foreign' || listener?.state === 'error' ? 'is-bad' : ''}`} aria-hidden="true" />
+        </button>
+      </div>
 
       {error && (
         <Alert status="danger">
@@ -758,10 +791,11 @@ export default function ThreatIntelligence() {
       )}
       {progress && <p className="threat-progress" role="status">{progress}</p>}
 
+      {tab === 'server' && (
       <section id="threat-server" className="threat-server-section" aria-label="Artifact server setup">
         <div className="threat-server-heading">
           <div>
-            <p className="eyebrow">Section 01 · Server setup</p>
+            <p className="eyebrow">Artifact server</p>
             <h2>Generated artifact server</h2>
             <p>
               Configure the listener for the Jinja2 artifact catalog. Listener
@@ -978,45 +1012,14 @@ export default function ThreatIntelligence() {
           </div>
         )}
       </section>
+      )}
 
-      {!data && loading ? (
+      {tab !== 'server' && (!data && loading ? (
         <Loading label="Loading remote evidence" />
       ) : (
         <>
+          {tab === 'evidence' && (
           <section id="threat-evidence" className="threat-evidence-section" aria-label="Evidence workspace">
-            <div className="threat-section-heading">
-              <div>
-                <p className="eyebrow">Section 02 · Evidence workspace</p>
-                <h2>Remote evidence and extraction</h2>
-                <p>
-                  Browse remote bundles, collect only the cases you choose, then
-                  verify and inspect their extracted files and HTML reports.
-                </p>
-              </div>
-            </div>
-          <section className="threat-metrics" aria-label="Evidence workspace summary">
-            <div className="threat-metric">
-              <span className="eyebrow">Remote bundles</span>
-              <strong>{data?.remote?.bundles.length ?? 0}</strong>
-              <span>under <code>{remoteRoot}</code></span>
-            </div>
-            <div className="threat-metric">
-              <span className="eyebrow">Collection queue</span>
-              <strong>{selected.length}</strong>
-              <span>chosen for local inspection</span>
-            </div>
-            <div className="threat-metric">
-              <span className="eyebrow">Local bundles</span>
-              <strong>{data?.local?.bundles.length ?? 0}</strong>
-              <span>downloaded and available</span>
-            </div>
-            <div className="threat-metric">
-              <span className="eyebrow">Selected case</span>
-              <strong className="threat-selected-name">{activeName ?? '—'}</strong>
-              <span>{evidence?.name === activeName ? `${currentFiles.length} extracted files` : 'Not extracted yet'}</span>
-            </div>
-          </section>
-
           <div className="threat-workspace">
             <Card className="threat-browser">
               <Card.Header className="threat-card-header">
@@ -1241,11 +1244,12 @@ export default function ThreatIntelligence() {
             </div>
           )}
           </section>
+          )}
 
+          {tab === 'catalog' && (
           <section id="threat-catalog" className="threat-catalog-section" aria-label="Artifact catalog and bans">
             <div className="threat-catalog-heading">
               <div>
-                <p className="eyebrow">Section 03 · Artifact catalog</p>
                 <h2>Collected artifacts</h2>
                 <p>
                   Local bundles on disk and remote bundles on MEGA, tagged by
@@ -1443,38 +1447,6 @@ export default function ThreatIntelligence() {
               )}
             </div>
 
-            <div
-              id="threat-ban-output"
-              className="threat-subsection threat-ban-output-section"
-            >
-              <div className="threat-subsection-heading">
-                <div>
-                  <p className="eyebrow">Ban / unban log</p>
-                  <h3>Ban and unban activity</h3>
-                  <p>
-                    Every Ban, Unban and Unban all action is logged here with
-                    the config path that was written.
-                  </p>
-                </div>
-                <div className="threat-ban-output-actions">
-                  <Chip size="sm" variant="soft" color={banSaving ? 'accent' : 'default'}>
-                    {banSaving ? 'Saving…' : `${banned.length} banned`}
-                  </Chip>
-                  <button
-                    type="button"
-                    className="artifact-action"
-                    onClick={() => setBanOutput(['Output cleared.'])}
-                    disabled={banSaving}
-                  >
-                    Clear
-                  </button>
-                </div>
-              </div>
-              <div className="threat-ban-output" aria-label="Ban and unban output">
-                <OutputPre lines={banOutput} />
-              </div>
-            </div>
-
             {banned.length > 0 && (
               <div className="threat-ban-bar" aria-label="Banned artifact keys">
                 <span className="eyebrow">Banned bundles</span>
@@ -1629,9 +1601,55 @@ export default function ThreatIntelligence() {
                 </tbody>
               </table>
             </div>
+
+            <details
+              className="threat-log"
+              open={banLogOpen}
+              onToggle={(event) => setBanLogOpen(event.currentTarget.open)}
+            >
+              <summary>
+                <Icon name="terminal" size={13} />
+                Ban / unban activity
+                <Chip size="sm" variant="soft" color={banSaving ? 'accent' : 'default'}>
+                  {banSaving ? 'Saving…' : `${banned.length} banned`}
+                </Chip>
+              </summary>
+              <div
+                id="threat-ban-output"
+                className="threat-subsection threat-ban-output-section"
+              >
+                <div className="threat-subsection-heading">
+                  <div>
+                    <p className="eyebrow">Ban / unban log</p>
+                    <h3>Ban and unban activity</h3>
+                    <p>
+                      Every Ban, Unban and Unban all action is logged here with
+                      the config path that was written.
+                    </p>
+                  </div>
+                  <div className="threat-ban-output-actions">
+                    <Chip size="sm" variant="soft" color={banSaving ? 'accent' : 'default'}>
+                      {banSaving ? 'Saving…' : `${banned.length} banned`}
+                    </Chip>
+                    <button
+                      type="button"
+                      className="artifact-action"
+                      onClick={() => setBanOutput(['Output cleared.'])}
+                      disabled={banSaving}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div className="threat-ban-output" aria-label="Ban and unban output">
+                  <OutputPre lines={banOutput} />
+                </div>
+              </div>
+            </details>
           </section>
+          )}
         </>
-      )}
+      ))}
 
       {report && activeName && (
         <div className="threat-report-overlay" role="dialog" aria-modal="true" aria-label={report.path}>
