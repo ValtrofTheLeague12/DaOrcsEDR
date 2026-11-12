@@ -117,7 +117,7 @@ to know is to re-mirror and regenerate. The action is one script,
 `python/malapi_pipeline.py --with-scrape`, which runs three stages:
 
 ```
-python/malapi/malapi.io/     scraped site      (httrack, under WSL)
+python/malapi/malapi.io/     scraped site      (httrack: native Windows, WSL fallback)
         │  _extract_files.py + _map_to_yaml.py
         ▼
 python/yaml/malapi/          369 .yaml definitions
@@ -133,6 +133,13 @@ does not answer would otherwise be reported as a successful update, and
 `python/api/server.py` is only useful if it actually answers. Every stage runs
 with the working directory set to `python/`, because the generators resolve
 their inputs relative to the current directory rather than their own location.
+
+**HTTrack is the real binary, not a WSL assumption.** The mirror uses the native
+Windows `httrack` from `PATH` when one is installed; only a machine without it
+falls back to `wsl httrack`, and only that path attempts an `apt` install. The
+card's availability probe follows the same order, so a stopped or hung distro
+cannot turn a working native install into a twenty-second "could not probe WSL"
+failure.
 
 The card declares the same four effects it performs, so the cost is legible
 before the button is pressed: it reaches the network, rewrites `python/malapi/`,

@@ -233,6 +233,50 @@ class TestYaraInventory:
         assert "no recorded upstream" in state["update_reason"]
 
 
+class TestHttrackProbe:
+    """The tool probe must find the real httrack, not stall on WSL.
+
+    A stopped WSL distro used to turn an installed Windows httrack into a
+    twenty-second "could not probe WSL" failure, which read as "httrack is
+    missing" on the MalAPI card.
+    """
+
+    def test_a_native_httrack_wins_without_probing_wsl(self, monkeypatch):
+        monkeypatch.setattr(
+            utils.shutil, "which",
+            lambda name: r"C:\Program Files\WinHTTrack\httrack.exe"
+            if name == "httrack" else None)
+
+        def explode(*args, **kwargs):
+            raise AssertionError("WSL must not be probed when native httrack exists")
+
+        monkeypatch.setattr(utils.subprocess, "run", explode)
+        assert utils._httrack_available() == (True, None)
+
+    def test_without_native_or_wsl_the_reason_names_both(self, monkeypatch):
+        monkeypatch.setattr(utils.shutil, "which", lambda name: None)
+
+        def explode(*args, **kwargs):
+            raise AssertionError("there is no wsl to run")
+
+        monkeypatch.setattr(utils.subprocess, "run", explode)
+        ok, reason = utils._httrack_available()
+        assert ok is False
+        assert "WSL is not available" in reason
+
+    def test_wsl_is_only_a_fallback(self, monkeypatch):
+        monkeypatch.setattr(
+            utils.shutil, "which",
+            lambda name: r"C:\Windows\System32\wsl.exe" if name == "wsl" else None)
+
+        class Result:
+            stdout = "/usr/bin/httrack\n"
+
+        monkeypatch.setattr(utils.subprocess, "run",
+                            lambda *args, **kwargs: Result())
+        assert utils._httrack_available() == (True, None)
+
+
 class TestMalapiState:
     """MalAPI rules are a scraped mirror, not a git checkout.
 

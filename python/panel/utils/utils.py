@@ -28,8 +28,9 @@ chain is:
                                                           actually queries)
 
 So "update MalAPI" means re-mirroring malapi.io and regenerating the API. The
-mirror runs under WSL, where `httrack` lives; `_extract_files.py` drives it and
-installs it if it is missing.
+mirror uses the real `httrack` binary: the native Windows build when it is on
+PATH, with WSL as the fallback. `_extract_files.py` drives it and, on the WSL
+path only, installs it if it is missing.
 
 What this used to do, and why it was wrong: the button ran `git pull --ff-only`
 on `malt/`, believing it to be the rules. `malt/` is memtt/malt, the MalAPI
@@ -57,6 +58,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -342,23 +344,34 @@ def _mirror_age_days(directory: Path) -> int | None:
 
 
 def _httrack_available() -> tuple[bool, str | None]:
-    """Is the mirroring tool reachable? The mirror runs under WSL.
+    """Is the mirroring tool reachable?
+
+    The native Windows `httrack` is preferred: it is what the mirror actually
+    runs, and finding it is a PATH lookup. WSL is only consulted when no Windows
+    binary exists, because a stopped or unresponsive distro makes
+    `wsl bash -lc` block until the timeout and the card then reports a probe
+    failure instead of the tool that is installed.
 
     Checked here rather than discovered as a failed job: _extract_files.py will
-    try to apt-get install httrack when it is missing, which is a slow thing to
-    discover from a spinner.
+    try to apt-get install httrack on the WSL fallback when it is missing, which
+    is a slow thing to discover from a spinner.
     """
+    if shutil.which("httrack"):
+        return True, None
+    if shutil.which("wsl") is None:
+        return False, "httrack is not installed and WSL is not available"
     try:
         out = subprocess.run(
             ["wsl", "bash", "-lc", "command -v httrack || echo MISSING"],
             capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=20, check=False,
+            errors="replace", timeout=8, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, f"could not probe WSL: {exc}"
+        return False, (f"httrack is not installed and WSL could not be probed: "
+                       f"{exc}")
     text = (out.stdout or "").strip()
     if not text or text == "MISSING" or "not installed" in text:
-        return False, "httrack is not installed in WSL"
+        return False, "httrack is not installed (native or in WSL)"
     return True, None
 
 
@@ -459,7 +472,9 @@ def malapi() -> dict:
                 f"live mirror, so the refresh refuses to touch a lock under a day "
                 f"old - if no mirror is running, delete it and retry." if live_lock else None)
         ),
-        "source": "https://malapi.io/ (mirrored with httrack under WSL)",
+        "source": ("https://malapi.io/ (mirrored with "
+                   + ("httrack)" if shutil.which("httrack")
+                      else "httrack under WSL)")),
         "mirror_path": _rel(MALAPI_SITE),
         "mirror_age_days": mirror_age,
         "yaml_path": _rel(MALAPI_YAML),
@@ -713,7 +728,7 @@ def catalogue() -> dict:
             # what this rewrites, and `can_update` was never a key malapi()
             # returned, so reading it left this button permanently disabled with
             # no reason to show. What actually decides is `blocked`: no httrack
-            # in WSL, or a lock young enough to be a live mirror.
+            # (native or WSL), or a lock young enough to be a live mirror.
             #
             # A missing mirror is deliberately NOT a reason to refuse. The
             # scrape stage creates it from nothing, which is exactly what it is
