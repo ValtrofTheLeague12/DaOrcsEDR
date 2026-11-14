@@ -1861,8 +1861,23 @@ def create_app() -> Flask:
         try:
             if client.get_user_by_username(username) is not None:
                 return jsonify(error=f"username already exists: {username}"), 409
+            existing = client.get_all_users()
         except Exception as exc:
-            return jsonify(error=f"Could not check username: {exc}"), 500
+            return jsonify(error=f"Could not check existing users: {exc}"), 500
+
+        # Usernames are compared case-insensitively because a login that
+        # differs only in case would still be the same operator in practice.
+        clash = next(
+            (u for u in existing
+             if u.username.casefold() == username.casefold()), None)
+        if clash is not None:
+            return jsonify(error=f"username already exists: {clash.username}"), 409
+        ip_clash = next(
+            (u for u in existing if u.ip_address == address), None)
+        if ip_clash is not None:
+            return jsonify(error=(
+                f"ip {address} is already granted to user "
+                f"{ip_clash.username} (#{ip_clash.id_user})")), 409
 
         record = cti_auth.hash_password(password)
         try:

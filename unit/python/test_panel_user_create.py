@@ -46,9 +46,13 @@ class FakeEntry:
 class FakeClient:
     created = None
     existing = None
+    users: list = []
 
     def get_user_by_username(self, username):
         return FakeUser() if FakeClient.existing else None
+
+    def get_all_users(self):
+        return list(FakeClient.users)
 
     def add_user_and_ip(self, username, password, unique_peper, ip_address, decision):
         FakeClient.created = {
@@ -66,6 +70,7 @@ def fake_sdk(monkeypatch):
     """The route imports stix-server modules by name; give it fakes."""
     FakeClient.created = None
     FakeClient.existing = None
+    FakeClient.users = []
     fake = types.ModuleType("User")
     fake.SupabaseClient = FakeClient
     monkeypatch.setitem(sys.modules, "User", fake)
@@ -163,4 +168,25 @@ class TestCreation:
         response = _post(client)
 
         assert response.status_code == 409
+        assert FakeClient.created is None
+
+    def test_a_username_that_differs_only_in_case_is_a_conflict(
+            self, client, fake_sdk):
+        # Logins look the username up exactly, but two operators whose names
+        # differ only in case are the same person in practice.
+        FakeClient.users = [types.SimpleNamespace(
+            id_user=9, username="Operator1", ip_address=None)]
+        response = _post(client, username="operator1")
+
+        assert response.status_code == 409
+        assert FakeClient.created is None
+
+    def test_an_ip_already_granted_to_another_user_is_a_conflict(
+            self, client, fake_sdk):
+        FakeClient.users = [types.SimpleNamespace(
+            id_user=9, username="other", ip_address="10.0.0.5")]
+        response = _post(client, ip="10.0.0.5")
+
+        assert response.status_code == 409
+        assert "other" in response.get_json()["error"]
         assert FakeClient.created is None
