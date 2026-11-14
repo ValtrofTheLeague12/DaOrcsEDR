@@ -149,7 +149,7 @@ def normalise_ip(value: object) -> str | None:
 
     Accepts ``1.2.3.4:5678``, ``[2001:db8::1]:443`` and IPv4-mapped IPv6
     (``::ffff:127.0.0.1``), which is what Windows can report for a loopback
-    connection.
+    connection.&
     """
     if not isinstance(value, str):
         return None

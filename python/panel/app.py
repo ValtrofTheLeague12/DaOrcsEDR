@@ -1769,6 +1769,125 @@ def create_app() -> Flask:
         users = [u.to_dict() for u in user_with_ips]
         return jsonify({"users": users})
 
+    @app.post("/api/threat-intelligence/users")
+    def threat_intelligence_user_create():
+        """Create a CTI user with a username, password and IP grant.
+        ---
+        tags: [threat-intelligence]
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              required: [username, password, ip]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  description: Hashed with bcrypt before storage; never logged
+                ip:
+                  type: string
+                  description: Address or CIDR network the user may sign in from
+                decision:
+                  type: string
+                  enum: [allow, block, unset]
+                  default: allow
+        responses:
+          201:
+            description: User created (digest and pepper are never returned)
+          400:
+            description: Missing or invalid field
+          409:
+            description: Username already exists
+        description: >
+          Provisions a row in allowed_users plus its ip_list entry, using the
+          same cti_auth primitives as the login gate and manage_users.py. The
+          submitted password is used in memory only and never logged.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify(error="body must be a JSON object"), 400
+
+        username = body.get("username")
+        if not isinstance(username, str) or not username.strip():
+            return jsonify(error="username is required"), 400
+        username = username.strip()
+        if len(username) > 64 or not all(c.isprintable() for c in username):
+            return jsonify(error="username must be printable text up to 64 characters"), 400
+
+        password = body.get("password")
+        if not isinstance(password, str) or not password:
+            return jsonify(error="password is required"), 400
+        if len(password) > 128:
+            return jsonify(error="password must be at most 128 characters"), 400
+
+        decision_name = body.get("decision", "allow")
+        if decision_name not in ("allow", "block", "unset"):
+            return jsonify(error="decision must be allow, block or unset"), 400
+        decision = {"allow": True, "block": False, "unset": None}[decision_name]
+
+        raw_ip = body.get("ip")
+        if not isinstance(raw_ip, str) or not raw_ip.strip():
+            return jsonify(error="ip is required"), 400
+        raw_ip = raw_ip.strip()
+        if "/" in raw_ip:
+            try:
+                address = str(ipaddress.ip_network(raw_ip, strict=False))
+            except ValueError:
+                return jsonify(error=f"not a valid CIDR network: {raw_ip}"), 400
+        else:
+            address = None  # needs cti_auth, imported below with the SDK
+
+        try:
+            stix_path = config.REPO / "stix-server"
+            if str(stix_path) not in sys.path:
+                sys.path.insert(0, str(stix_path))
+            supabase_path = config.REPO / "supabase"
+            if str(supabase_path) not in sys.path:
+                sys.path.append(str(supabase_path))
+            import cti_auth
+            import User as _User
+            client = _User.SupabaseClient()
+        except Exception as exc:
+            return jsonify(error=f"Supabase SDK unavailable: {exc}"), 500
+
+        if address is None:
+            address = cti_auth.normalise_ip(raw_ip)
+            if address is None:
+                return jsonify(error=f"not a valid IP address: {raw_ip}"), 400
+
+        try:
+            if client.get_user_by_username(username) is not None:
+                return jsonify(error=f"username already exists: {username}"), 409
+        except Exception as exc:
+            return jsonify(error=f"Could not check username: {exc}"), 500
+
+        record = cti_auth.hash_password(password)
+        try:
+            user, entry = client.add_user_and_ip(
+                username=username,
+                password=record["password"],
+                unique_peper=record["unique_peper"],
+                ip_address=address,
+                decision=decision,
+            )
+        except Exception as exc:
+            text = str(exc).lower()
+            if "duplicate" in text or "unique" in text:
+                return jsonify(error=f"username already exists: {username}"), 409
+            return jsonify(error=f"Could not create user: {exc}"), 500
+
+        # The digest and pepper stay server-side; the form only needs to know
+        # who was created and what they can sign in from.
+        return jsonify({
+            "id_user": user.id_user,
+            "username": user.username,
+            "ip_address": entry.ip_address,
+            "decision": entry.decision,
+        }), 201
+
     @app.put("/api/threat-intelligence/users/<int:id_user>/toggle")
     def threat_intelligence_user_toggle(id_user: int):
         """Toggle a user's IP decision between allow and block.

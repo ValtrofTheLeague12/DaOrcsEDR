@@ -44,6 +44,17 @@ export default function AvailableUsers() {
   const [checks, setChecks] = useState<Record<number, UserCredentialCheck>>({})
   const [checkErrors, setCheckErrors] = useState<Record<number, string>>({})
 
+  // Creating a user: the submitted password lives only while it is being typed
+  // and is dropped the moment the request finishes, like the candidate above.
+  const [creating, setCreating] = useState(false)
+  const [newUsername, setNewUsername] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [newIp, setNewIp] = useState('')
+  const [newDecision, setNewDecision] = useState<'allow' | 'block' | 'unset'>(
+    'allow',
+  )
+  const [createError, setCreateError] = useState<string | null>(null)
+
   const appendOutput = (message: string) => {
     const stamp = new Date().toISOString().slice(11, 19)
     setOutput((current) => [...current, `[${stamp}] ${message}`].slice(-200))
@@ -110,8 +121,49 @@ export default function AvailableUsers() {
     }
   }
 
-  const toggleCredentials = (id: number) => {
-    setExpanded((current) => {
+  const createUser = async () => {
+    if (creating) return
+    const username = newUsername.trim()
+    const password = newPassword
+    const ip = newIp.trim()
+    if (!username || !password || !ip) {
+      setCreateError('Username, password and IP are all required.')
+      return
+    }
+    setCreating(true)
+    setCreateError(null)
+    setErr(null)
+    setMsg(null)
+    // The password is cleared before the request resolves so it does not sit
+    // in the form if the operator navigates away mid-flight.
+    setNewPassword('')
+    appendOutput(`Creating user ${username} from ${ip}…`)
+    try {
+      const result = await api.createUser({
+        username,
+        password,
+        ip,
+        decision: newDecision,
+      })
+      const message = `Created ${result.username} (#${result.id_user}), IP ${
+        result.ip_address ?? ip
+      }, decision ${decisionLabel(result.decision)}.`
+      setMsg(message)
+      appendOutput(message)
+      setNewUsername('')
+      setNewIp('')
+      setNewDecision('allow')
+      void refresh()
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : String(exc)
+      setCreateError(message)
+      appendOutput(`Create failed for ${username} — ${message}`)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const toggleCredentials = (id: number) => {    setExpanded((current) => {
       const next = new Set(current)
       if (next.has(id)) {
         next.delete(id)
@@ -271,9 +323,99 @@ export default function AvailableUsers() {
           </div>
         </div>
 
+        <div
+          className="threat-subsection"
+          aria-label="Add a user"
+        >
+          <div className="threat-subsection-heading">
+            <div>
+              <p className="eyebrow">Provisioning</p>
+              <h3>Add a user</h3>
+              <p>
+                Creates a row in the CTI server database with a bcrypt digest
+                and the address it may sign in from. The password is hashed
+                server-side and never logged.
+              </p>
+            </div>
+          </div>
+          <form
+            className="threat-cred-test"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void createUser()
+            }}
+          >
+            <label>
+              <span>Username</span>
+              <input
+                type="text"
+                value={newUsername}
+                onChange={(event) => setNewUsername(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                maxLength={64}
+                placeholder="e.g. operator1"
+                disabled={creating}
+              />
+            </label>
+            <label>
+              <span>Password</span>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                autoComplete="new-password"
+                spellCheck={false}
+                placeholder="Used once, hashed server-side"
+                disabled={creating}
+              />
+            </label>
+            <label>
+              <span>IP address or CIDR</span>
+              <input
+                type="text"
+                value={newIp}
+                onChange={(event) => setNewIp(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="e.g. 10.0.0.5 or 192.168.1.0/24"
+                disabled={creating}
+              />
+            </label>
+            <label>
+              <span>Decision</span>
+              <select
+                value={newDecision}
+                onChange={(event) =>
+                  setNewDecision(
+                    event.target.value as 'allow' | 'block' | 'unset',
+                  )
+                }
+                disabled={creating}
+              >
+                <option value="allow">allow</option>
+                <option value="block">block</option>
+                <option value="unset">unset</option>
+              </select>
+            </label>
+            <button
+              type="submit"
+              className="artifact-action threat-ban-allow"
+              disabled={
+                creating || !newUsername.trim() || !newPassword || !newIp.trim()
+              }
+            >
+              <Icon name="user" size={12} />
+              {creating ? 'Creating…' : 'Create user'}
+            </button>
+          </form>
+          {createError && <p className="threat-cred-error">{createError}</p>}
+        </div>
+
         {users.length === 0 ? (
           <p className="threat-ban-empty">
-            No users found. Create a user in the CTI server to get started.
+            No users found. Use the Add a user form above to create the first
+            one.
           </p>
         ) : (
           <div className="threat-ban-table-wrap">

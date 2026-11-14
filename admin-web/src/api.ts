@@ -127,6 +127,14 @@ export interface UserCredentialCheck {
   reasons: string[]
 }
 
+/** Result of creating one CTI user. Digest and pepper are never returned. */
+export interface UserCreated {
+  id_user: number
+  username: string
+  ip_address: string | null
+  decision: boolean | null
+}
+
 export const auth = {
   state: () => json<AuthState>('/api/auth/state'),
   login: (token: string) =>
@@ -410,6 +418,17 @@ containerBuild: (project: string) =>
         allowed: boolean
       }[]
     }>('/api/threat-intelligence/users'),
+  createUser: (input: {
+    username: string
+    password: string
+    ip: string
+    decision?: 'allow' | 'block' | 'unset'
+  }) =>
+    json<UserCreated>('/api/threat-intelligence/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }),
   toggleUserDecision: (id_user: number) =>
     json<{
       id_user: number
