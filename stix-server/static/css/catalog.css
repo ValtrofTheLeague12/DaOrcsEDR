@@ -415,6 +415,39 @@ time { color: var(--text-dim); font-size: .74rem; }
   background: var(--cyan-glow);
   border-color: var(--cyan-dim);
 }
+/* The per-row download source chooser (Direct / MEGA). Sized and bordered
+   like .link-btn so it sits in the same action row without drawing attention. */
+.link-select {
+  display: inline-flex;
+  align-items: center;
+  padding: .3rem 1.6rem .3rem .65rem;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: .82rem;
+  line-height: 1.2;
+  cursor: pointer;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 11px) 55%, calc(100% - 7px) 55%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+.link-select:hover {
+  background-color: var(--cyan-glow);
+  border-color: var(--cyan-dim);
+}
+.link-select:focus-visible {
+  outline: 1px solid var(--cyan-dim);
+  outline-offset: 1px;
+}
+.link-select option {
+  background: var(--bg, #14161a);
+  color: inherit;
+}
 .link-btn-mega {
   color: var(--violet);
   border-color: var(--violet-dim);

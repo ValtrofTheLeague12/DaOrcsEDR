@@ -193,12 +193,19 @@
                   </td>
                   <td class="col-link">
                     <div class="row-actions">
+                      {% if a.mega_link %}
+                      <select class="link-select"
+                              aria-label="Download source for {{ a.sample_name }}">
+                        <option value="{{ download_href }}" selected>
+                          Direct download ↓
+                        </option>
+                        <option value="{{ a.mega_link }}" data-external="1">
+                          MEGA link ↗
+                        </option>
+                      </select>
+                      {% else %}
                       <a class="link-btn" href="{{ download_href }}" download>
                         Download <span aria-hidden="true">↓</span>
-                      </a>
-                      {% if a.mega_link %}
-                      <a class="link-btn link-btn-mega" href="{{ a.mega_link }}" target="_blank" rel="noopener noreferrer">
-                        MEGA <span aria-hidden="true">↗</span>
                       </a>
                       {% endif %}
                       <a class="link-btn link-btn-quiet" href="{{ detail_href }}">Details</a>
@@ -238,6 +245,21 @@
             button.textContent = 'Copied';
             window.setTimeout(function () { button.textContent = label; }, 1500);
           });
+        });
+      });
+      // The per-row download source chooser: Direct = navigate in place so
+      // the browser's save prompt handles the ZIP; MEGA = open in a new tab
+      // (leaving the catalog page open).
+      document.querySelectorAll('.link-select').forEach(function (select) {
+        select.addEventListener('change', function () {
+          var option = select.options[select.selectedIndex];
+          var href = (option.value || '').trim();
+          if (!href) return;
+          if (option.getAttribute('data-external') === '1') {
+            window.open(href, '_blank', 'noopener');
+          } else {
+            window.location.assign(href);
+          }
         });
       });
     </script>

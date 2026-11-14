@@ -464,6 +464,8 @@ class StixServer:
 
         self._mega: mega_client.MegaClient | None = None
         self._supabase = None
+        # Public links this process created (for the run summary).
+        self._links_created = 0
 
         try:
             log.info("Connecting to MEGA …")
@@ -642,6 +644,35 @@ class StixServer:
                 log.info("Bundle {} is Supabase-blocked; excluding", bundle_name)
                 continue
 
+            # --- MEGA public link (auto-export) ---
+            # A visible bundle must offer both download routes: the panel's
+            # direct download and the MEGA cloud link. Only bundles someone
+            # shared by hand used to have a link, so most rows showed the
+            # direct route alone. Export the rest here - links are reused,
+            # never recreated - so the choice is available for every artifact.
+            # Banned and hash-failed bundles never reach this line: their
+            # links stay unpublished.
+            if self._mega is not None and artifact_name not in mega_links:
+                try:
+                    created_link = self._mega.link(
+                        artifact_name, remote_root=BUNDLE_REMOTE_ROOT,
+                        create=True,
+                    ).get("link") or ""
+                    if created_link:
+                        mega_links[artifact_name] = created_link
+                        self._links_created += 1
+                        log.info(
+                            "MEGA public link created for {}: {}",
+                            artifact_name, created_link,
+                        )
+                except Exception as exc:
+                    # No link is not a catalog failure: the row still shows
+                    # the direct download, exactly as it did before.
+                    log.warning(
+                        "Could not create MEGA public link for {}: {}",
+                        artifact_name, exc,
+                    )
+
             # --- extract metadata from manifest ---
             manifest: dict = {}
             manifest_path = entry / "manifest.json"
@@ -690,6 +721,8 @@ class StixServer:
             log.info("Catalog entry added: {}", artifact_name)
 
         log.info("Built catalog with {} visible artifact(s)", len(rows))
+        if self._links_created:
+            log.info("Created {} new MEGA public link(s)", self._links_created)
         return rows
 
     # ------------------------------------------------------------------
