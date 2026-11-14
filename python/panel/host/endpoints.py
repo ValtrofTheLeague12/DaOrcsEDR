@@ -574,13 +574,23 @@ def agent_snapshot() -> dict:
             "The panel cannot push this file to installed agents. On Windows, "
             "the installer registers the DaOrcsEndpointAgent service; copy "
             "this file to %PROGRAMDATA%\\DaOrcs\\Agent\\agent.json and restart "
-            "that service on each endpoint."
+            "that service on each endpoint. The template binds the agent API "
+            "to 0.0.0.0 so the heartbeat is reachable; allow inbound port "
+            "8787 in that endpoint's firewall, restricted to this subnet."
         ),
     }
 
 
 def agent_template(brokers: str, topic: str) -> dict:
-    """agent.example.json with this section's two values applied."""
+    """agent.example.json with this section's values applied.
+
+    The API section is deliberately rewritten: the example binds 127.0.0.1,
+    which the panel can never reach, so a template deployed as-is would report
+    `unreachable` on the Endpoint Agents page while the agent was running
+    happily. 0.0.0.0 makes the heartbeat reachable from the panel's subnet; the
+    agent logs a warning about the widened bind, and the endpoint still needs a
+    firewall rule for port 8787.
+    """
     example = _agent_example()
     doc = json.loads(json.dumps(example["doc"])) if example["doc"] else {
         "watch_dirs": ["%PUBLIC%\\Downloads", "%PUBLIC%\\Desktop"],
@@ -595,6 +605,10 @@ def agent_template(brokers: str, topic: str) -> dict:
     kafka = doc.setdefault("kafka", {})
     kafka["bootstrap_servers"] = brokers
     kafka["topic"] = topic
+    api = doc.setdefault("api", {})
+    api["enabled"] = True
+    api["host"] = "0.0.0.0"
+    api["port"] = 8787
     return doc
 
 

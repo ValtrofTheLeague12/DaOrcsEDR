@@ -392,6 +392,7 @@ class TestAgent:
             "brokers": "192.168.56.1:9092",
             "topic": "analysis-artifacts",
             "doc": {"watch_dirs": ["%PUBLIC%\\Downloads"],
+                    "api": {"enabled": True, "host": "127.0.0.1", "port": 8787},
                     "kafka": {"producer_config": {"x": 1}}},
             "path": None,
         })
@@ -400,6 +401,22 @@ class TestAgent:
         assert doc["kafka"]["bootstrap_servers"] == "10.0.0.5:9092"
         assert doc["kafka"]["topic"] == "other"
         assert doc["kafka"]["producer_config"] == {"x": 1}
+
+    def test_the_template_binds_beyond_loopback(self, monkeypatch):
+        # The example file binds 127.0.0.1, which no panel can reach. A
+        # template deployed as-is used to report `unreachable` on the
+        # Endpoint Agents page while the agent was running fine.
+        monkeypatch.setattr(endpoints, "_agent_example", lambda: {
+            "brokers": "192.168.56.1:9092", "topic": "analysis-artifacts",
+            "doc": {"api": {"enabled": True, "host": "127.0.0.1",
+                            "port": 8787}},
+            "path": None,
+        })
+        doc = endpoints.agent_template("192.168.56.1:9092",
+                                       "analysis-artifacts")
+        assert doc["api"]["host"] == "0.0.0.0"
+        assert doc["api"]["port"] == 8787
+        assert doc["api"]["enabled"] is True
 
     def test_saving_an_invalid_agent_config_writes_nothing(self, env_file,
                                                            local_addresses):
