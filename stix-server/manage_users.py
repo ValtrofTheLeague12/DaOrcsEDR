@@ -23,6 +23,7 @@ Exit codes: 0 success, 1 failure, 2 usage/target error.
 
 from __future__ import annotations
 
+from colorama import Fore,Back,init
 import argparse
 import ipaddress
 import secrets
@@ -30,6 +31,8 @@ import string
 import sys
 from pathlib import Path
 
+
+init()
 BASE_DIR = Path(__file__).resolve().parent
 SUPABASE_DIR = BASE_DIR.parent / "supabase"
 for _path in (BASE_DIR, SUPABASE_DIR):
@@ -86,12 +89,13 @@ def _find_user(client, username: str):
 
 
 def _describe(user, entry) -> str:
+    print(Fore.YELLOW + "DEBUG => IPListEntry: {}".format(entry) + Fore.WHITE)
     address = getattr(entry, "ip_address", None) if entry is not None else None
     decision = getattr(entry, "decision", None) if entry is not None else None
     state = "allow" if decision is True else "block" if decision is False else "unset"
     return (
         f"id_user={user.id_user:<5} username={user.username!r:<42} "
-        f"ip={address or '-':<20} decision={state}"
+        f"ip={address or '-':<20}  decision={state}"
     )
 
 
@@ -127,9 +131,11 @@ def command_create(client, args) -> int:
 
 
 def command_set_password(client, args) -> int:
+    print("password command has been passed")
     user = _find_user(client, args.username)
-    password = args.password or _generate_password()
+    password = args.password or _generate_password() 
     record = cti_auth.hash_password(password, pepper=user.unique_peper or None)
+    print(Fore.YELLOW + "DEBUG : user_generated_password",record["password"] + Fore.WHITE)
     response = client.client.table("allowed_users").update({
         "password": record["password"],
         "unique_peper": record["unique_peper"],
