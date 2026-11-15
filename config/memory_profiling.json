@@ -1,6 +1,6 @@
 {
   "enabled": true,
   "target": "analyzer",
-  "sample": "samples/custom-562780.exe",
+  "sample": "",
   "keep_open": false
 }

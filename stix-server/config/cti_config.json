@@ -1,7 +1,7 @@
 {
   "server": {
     "ip": "192.168.56.1",
-    "port": 8772
+    "port": 10000
   },
   "catalog_file": "artifact_catalog.json",
   "banned_artifacts": [],
