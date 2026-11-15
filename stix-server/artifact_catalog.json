@@ -1,0 +1,348 @@
+[
+  {
+    "sample_name": "analysis",
+    "bundle_name": "analysis_artifact",
+    "sha256": "48f5585d69fdde225dbc3bad232563e39214cb721c3e9997bf9fdbe5c2f86c67",
+    "submitted_at": "2026-11-10T13:39:12+01:00",
+    "file_count": 3,
+    "encrypted": true,
+    "mega_link": "https://mega.nz/folder/j0gwjZKD#0SCnNa-te3Xh5xGIUWHoCA",
+    "hash_verified": true,
+    "archive_bytes": 1196,
+    "archive_size_human": "1.2 KiB",
+    "source_bytes": 2805,
+    "sample_size": 2563,
+    "sample_size_human": "2.5 KiB",
+    "sections": [],
+    "asm": "",
+    "asm_truncated": false,
+    "artifacts_url": "/artifact/analysis",
+    "download_url": "/download/analysis"
+  },
+  {
+    "sample_name": "custom-523822_protected",
+    "bundle_name": "custom-523822_protected_artifact",
+    "sha256": "d6bde25726f6f9fa9ba34d29896571376d0ed84c555d07eb4128cb6405e89082",
+    "submitted_at": "2026-11-09T13:34:23+01:00",
+    "file_count": 25,
+    "encrypted": true,
+    "mega_link": "https://mega.nz/folder/Otwi2aDQ#RuFfA5LB2WqfK96YXXZqHg",
+    "hash_verified": true,
+    "archive_bytes": 445301,
+    "archive_size_human": "434.9 KiB",
+    "source_bytes": 2492571,
+    "sample_size": 109056,
+    "sample_size_human": "106.5 KiB",
+    "sections": [
+      {
+        "name": ".text",
+        "size": 8528,
+        "entropy": 6.102242691204849,
+        "virtual_address": 4096
+      },
+      {
+        "name": ".data",
+        "size": 160,
+        "entropy": 1.4717554880265682,
+        "virtual_address": 16384
+      },
+      {
+        "name": ".rdata",
+        "size": 3112,
+        "entropy": 4.9421273213214905,
+        "virtual_address": 20480
+      },
+      {
+        "name": ".pdata",
+        "size": 588,
+        "entropy": 3.902611387750147,
+        "virtual_address": 24576
+      },
+      {
+        "name": ".xdata",
+        "size": 464,
+        "entropy": 3.8368523080810735,
+        "virtual_address": 28672
+      },
+      {
+        "name": ".bss",
+        "size": 0,
+        "entropy": 0.0,
+        "virtual_address": 32768
+      },
+      {
+        "name": ".idata",
+        "size": 2564,
+        "entropy": 3.9997600633419084,
+        "virtual_address": 36864
+      },
+      {
+        "name": ".tls",
+        "size": 16,
+        "entropy": 0.0,
+        "virtual_address": 40960
+      },
+      {
+        "name": ".rsrc",
+        "size": 1256,
+        "entropy": 5.216214561662503,
+        "virtual_address": 45056
+      },
+      {
+        "name": ".reloc",
+        "size": 96,
+        "entropy": 4.065780690469359,
+        "virtual_address": 49152
+      },
+      {
+        "name": "/4",
+        "size": 1296,
+        "entropy": 1.7083458942110825,
+        "virtual_address": 53248
+      },
+      {
+        "name": "/19",
+        "size": 48317,
+        "entropy": 5.882552406310823,
+        "virtual_address": 57344
+      },
+      {
+        "name": "/31",
+        "size": 8973,
+        "entropy": 4.8155592745789,
+        "virtual_address": 106496
+      },
+      {
+        "name": "/45",
+        "size": 8769,
+        "entropy": 4.983345828783644,
+        "virtual_address": 118784
+      },
+      {
+        "name": "/57",
+        "size": 2384,
+        "entropy": 4.134086975352656,
+        "virtual_address": 131072
+      },
+      {
+        "name": "/70",
+        "size": 758,
+        "entropy": 4.768290228875131,
+        "virtual_address": 135168
+      },
+      {
+        "name": "/81",
+        "size": 7177,
+        "entropy": 4.979569142480876,
+        "virtual_address": 139264
+      },
+      {
+        "name": "/97",
+        "size": 5394,
+        "entropy": 5.102626080518084,
+        "virtual_address": 147456
+      },
+      {
+        "name": "/113",
+        "size": 396,
+        "entropy": 4.66034472060037,
+        "virtual_address": 155648
+      },
+      {
+        "name": ".hihihi",
+        "size": 512,
+        "entropy": 0.2123006574398449,
+        "virtual_address": 159744
+      },
+      {
+        "name": ".pack",
+        "size": 1024,
+        "entropy": 3.0009599421573365,
+        "virtual_address": 163840
+      }
+    ],
+    "asm": ";;; ------------------------------------------------------------\n;;; function: entry0 @ 0x140001440 size=29 instr=8\n;;; ------------------------------------------------------------\n0x140001440  sub rsp, 0x28\n0x140001444  mov rax, qword [0x140005440]\n0x14000144b  mov dword [rax], 0\n0x140001451  call fcn.140001020  ; -> fcn.140001020\n0x140001456  nop\n0x140001457  nop\n0x140001458  add rsp, 0x28\n0x14000145c  ret\n\n;;; ------------------------------------------------------------\n;;; function: fcn.140001020 @ 0x140001020 size=1011 instr=233\n;;; ------------------------------------------------------------\n0x140001020  push r15\n0x140001022  push r14\n0x140001024  push r13\n0x140001026  push r12\n0x140001028  push rbp\n0x140001029  push rdi\n0x14000102a  push rsi\n0x14000102b  push rbx\n0x14000102c  sub rsp, 0x58\n0x140001030  mov rax, qword gs:[0x30]\n0x140001039  mov rsi, qword [rax + 8]\n0x14000103d  mov rbx, qword [0x140005490]\n0x140001044  mov rdi, qword [sym.imp.KERNEL32.dll_Sleep]\n0x14000104b  jmp 0x140001060\n0x140001050  cmp rsi, rax\n0x140001053  je 0x140001108\n0x140001059  mov ecx, 0x3e8\n0x14000105e  call rdi\n0x140001060  xor eax, eax\n0x140001062  lock cmpxchg qword [rbx], rsi\n0x140001067  jne 0x140001050\n0x140001069  xor r13d, r13d\n0x14000106c  mov rbp, qword [0x1400054a0]\n0x140001073  mov eax, dword [rbp]\n0x140001076  cmp eax, 1\n0x140001079  je 0x14000140e\n0x14000107f  mov eax, dword [rbp]\n0x140001082  test eax, eax\n0x140001084  je 0x140001140\n0x14000108a  mov dword [0x140008004], 1\n0x140001094  test r13d, r13d\n0x140001097  je 0x140001130\n0x14000109d  mov rax, qword [0x140005410]\n0x1400010a4  mov rax, qword [rax]\n0x1400010a7  test rax, rax\n0x1400010aa  je 0x1400010b8\n0x1400010ac  xor r8d, r8d\n0x1400010af  mov edx, 2\n0x1400010b4  xor ecx, ecx\n0x1400010b6  call rax\n0x1400010b8  call fcn.140002f40  ; -> fcn.140002f40\n0x1400010bd  mov r8, qword [0x140008010]\n0x1400010c4  mov ecx, dword [0x140008020]\n0x1400010ca  mov qword [rax], r8\n0x1400010cd  mov rdx, qword [0x140008018]\n0x1400010d4  call fcn.140001b0f  ; -> fcn.140001b0f\n0x1400010d9  mov ecx, dword [0x140008008]\n0x1400010df  test ecx, ecx\n0x1400010e1  je 0x140001407\n0x1400010e7  mov edx, dword [0x140008004]\n0x1400010ed  test edx, edx\n0x1400010ef  je 0x140001118\n0x1400010f1  add rsp, 0x58\n0x1400010f5  pop rbx\n0x1400010f6  pop rsi\n0x1400010f7  pop rdi\n0x1400010f8  pop rbp\n0x1400010f9  pop r12\n0x1400010fb  pop r13\n0x1400010fd  pop r14\n0x1400010ff  pop r15\n0x140001101  ret\n0x140001108  mov r13d, 1\n0x14000110e  jmp 0x14000106c\n0x140001118  mov dword [rsp + 0x3c], eax\n0x14000111c  call sub.api_ms_win_crt_runtime_l1_1_0.dll__cexit  ; -> sub.api_ms_win_crt_runtime_l1_1_0.dll__cexit\n0x140001121  mov eax, dword [rsp + 0x3c]\n0x140001125  jmp 0x1400010f1\n0x140001130  xor eax, eax\n0x140001132  xchg qword [rbx], rax\n0x140001135  jmp 0x14000109d\n0x140001140  mov ecx, 2\n0x140001145  mov dword [rbp], 1\n0x14000114c  call sub.api_ms_win_crt_stdio_l1_1_0.dll___acrt_iob_func  ; -> sub.api_ms_win_crt_stdio_l1_1_0.dll___acrt_iob_func\n0x140001151  xor r9d, r9d\n0x140001154  mov r8d, 4\n0x14000115a  xor edx, edx\n0x14000115c  mov rcx, rax\n0x14000115f  call sub.api_ms_win_crt_stdio_l1_1_0.dll_setvbuf  ; -> sub.api_ms_win_crt_stdio_l1_1_0.dll_setvbuf\n0x140001164  lea rcx, [0x140001010]\n0x14000116b  call fcn.140003040  ; -> fcn.140003040\n0x140001170  mov esi, eax\n0x140001172  test eax, eax\n0x140001174  jne 0x1400013f8\n0x14000117a  call fcn.140002010  ; -> fcn.140002010\n0x14000117f  lea rcx, [0x140002590]\n0x140001186  call qword [sym.imp.KERNEL32.dll_SetUnhandledExceptionFilter]\n0x14000118c  mov rdx, qword [0x140005480]\n0x140001193  lea rcx, section..text\n0x14000119a  mov qword [rdx], rax\n0x14000119d  call sub.api_ms_win_crt_runtime_l1_1_0.dll__set_invalid_parameter_handler  ; -> sub.api_ms_win_crt_runtime_l1_1_0.dll__set_invalid_parameter_handler\n0x1400011a2  call fcn.140002a00  ; -> fcn.140002a00\n0x1400011a7  mov rax, qword [0x140005450]\n0x1400011ae  mov dword [rax], 1\n0x1400011b4  mov rax, qword [0x140005460]\n0x1400011bb  mov dword [rax], 1\n0x1400011c1  mov rax, qword [0x140005470]\n0x1400011c8  mov dword [rax], 1\n0x1400011ce  mov rax, qword [0x1400053e0]\n0x1400011d5  cmp word [rax], 0x5a4d\n0x1400011da  jne 0x140001220\n0x1400011dc  movsxd rdx, dword [rax + 0x3c]\n0x1400011e0  add rax, rdx\n0x1400011e3  cmp dword [rax], 0x4550\n0x1400011e9  jne 0x140001220\n0x1400011eb  movzx edx, word [rax + 0x18]\n0x1400011ef  cmp dx, 0x10b\n0x1400011f4  je 0x1400013d9\n0x1400011fa  cmp dx, 0x20b\n0x1400011ff  jne 0x140001220\n0x140001201  cmp dword [rax + 0x84], 0xe\n0x140001208  jbe 0x140001220\n0x14000120a  mov r9d, dword [rax + 0xf8]\n0x140001211  xor esi, esi\n0x140001213  test r9d, r9d\n0x140001216  setne sil\n0x14000121a  nop word [rax + rax]\n0x140001220  mov rax, qword [0x140005440]\n0x140001227  mov dword [0x140008008], esi\n0x14000122d  mov r8d, dword [rax]\n0x140001230  test r8d, r8d\n0x140001233  jne 0x140001368\n0x140001239  mov ecx, 1\n0x14000123e  call sub.api_ms_win_crt_runtime_l1_1_0.dll__set_app_type  ; -> sub.api_ms_win_crt_runtime_l1_1_0.dll__set_app_type\n0x140001243  call sub.api_ms_win_crt_stdio_l1_1_0.dll___p__fmode  ; -> sub.api_ms_win_crt_stdio_l1_1_0.dll___p__fmode",
+    "asm_truncated": true,
+    "artifacts_url": "/artifact/custom-523822_protected",
+    "download_url": "/download/custom-523822_protected"
+  },
+  {
+    "sample_name": "ls",
+    "bundle_name": "ls_artifact",
+    "sha256": "ad628c8f9171e91c22c2cc1605dadcca3c5e0476617594d01df94f1204f5b572",
+    "submitted_at": "2026-11-10T13:00:40+01:00",
+    "file_count": 18,
+    "encrypted": true,
+    "mega_link": "https://mega.nz/folder/vxQ01SSI#IUZx7dobcofh-mHxyF4hPQ",
+    "hash_verified": true,
+    "archive_bytes": 284771,
+    "archive_size_human": "278.1 KiB",
+    "source_bytes": 1210816,
+    "sample_size": 136192,
+    "sample_size_human": "133.0 KiB",
+    "sections": [
+      {
+        "name": ".text",
+        "size": 94788,
+        "entropy": 6.639697126673567,
+        "virtual_address": 4096
+      },
+      {
+        "name": ".rdata",
+        "size": 31076,
+        "entropy": 5.1341220244940855,
+        "virtual_address": 102400
+      },
+      {
+        "name": ".data",
+        "size": 3072,
+        "entropy": 2.2330329244525142,
+        "virtual_address": 135168
+      },
+      {
+        "name": ".rsrc",
+        "size": 456,
+        "entropy": 4.8666576905696814,
+        "virtual_address": 143360
+      },
+      {
+        "name": ".reloc",
+        "size": 4912,
+        "entropy": 6.575239331360142,
+        "virtual_address": 147456
+      }
+    ],
+    "asm": "",
+    "asm_truncated": false,
+    "artifacts_url": "/artifact/ls",
+    "download_url": "/download/ls"
+  },
+  {
+    "sample_name": "notepad",
+    "bundle_name": "notepad_artifact",
+    "sha256": "ee2475d4a9f99e0f9012ac9e2586568bb3861ed4caf25288076214883f111157",
+    "submitted_at": "2026-11-10T12:29:06+01:00",
+    "file_count": 25,
+    "encrypted": true,
+    "mega_link": "https://mega.nz/folder/joBUxQJZ#fhyao6zqjXHKcVkOeos2UA",
+    "hash_verified": true,
+    "archive_bytes": 1670808,
+    "archive_size_human": "1.6 MiB",
+    "source_bytes": 13358415,
+    "sample_size": 360448,
+    "sample_size_human": "352.0 KiB",
+    "sections": [
+      {
+        "name": ".text",
+        "size": 157666,
+        "entropy": 6.282015348784342,
+        "virtual_address": 4096
+      },
+      {
+        "name": "fothk",
+        "size": 4096,
+        "entropy": 0.015920183265625623,
+        "virtual_address": 163840
+      },
+      {
+        "name": ".rdata",
+        "size": 42696,
+        "entropy": 5.8040142586825345,
+        "virtual_address": 167936
+      },
+      {
+        "name": ".data",
+        "size": 4096,
+        "entropy": 1.6242793307140186,
+        "virtual_address": 212992
+      },
+      {
+        "name": ".pdata",
+        "size": 4632,
+        "entropy": 5.137591085314267,
+        "virtual_address": 225280
+      },
+      {
+        "name": ".didat",
+        "size": 248,
+        "entropy": 2.400769842593365,
+        "virtual_address": 233472
+      },
+      {
+        "name": ".rsrc",
+        "size": 123344,
+        "entropy": 7.099783733060528,
+        "virtual_address": 237568
+      },
+      {
+        "name": ".reloc",
+        "size": 860,
+        "entropy": 4.958226825519913,
+        "virtual_address": 364544
+      }
+    ],
+    "asm": ";;; ------------------------------------------------------------\n;;; function: entry0 @ 0x1400019c0 size=362 instr=96\n;;; ------------------------------------------------------------\n0x140001840  mov qword [rsp + 8], rbx\n0x140001845  push rdi\n0x140001846  sub rsp, 0x30\n0x14000184a  mov ecx, 1\n0x14000184f  call fcn.140001a54  ; -> fcn.140001a54\n0x140001854  test al, al\n0x140001856  je 0x14000198b\n0x14000185c  xor dil, dil\n0x14000185f  mov byte [rsp + 0x20], dil\n0x140001864  call fcn.140001a14  ; -> fcn.140001a14\n0x140001869  mov bl, al\n0x14000186b  mov ecx, dword [0x140034cd0]\n0x140001871  cmp ecx, 1\n0x140001874  je 0x140001996\n0x14000187a  test ecx, ecx\n0x14000187c  jne 0x1400018c8\n0x14000187e  mov dword [0x140034cd0], 1\n0x140001888  lea rdx, [0x14002a530]\n0x14000188f  lea rcx, [0x14002a508]\n0x140001896  call sub.api_ms_win_crt_runtime_l1_1_0.dll__initterm_e  ; -> sub.api_ms_win_crt_runtime_l1_1_0.dll__initterm_e\n0x14000189b  test eax, eax\n0x14000189d  je 0x1400018a9\n0x14000189f  mov eax, 0xff\n0x1400018a4  jmp 0x140001980\n0x1400018a9  lea rdx, [0x14002a500]\n0x1400018b0  lea rcx, [0x14002a470]\n0x1400018b7  call sub.api_ms_win_crt_runtime_l1_1_0.dll__initterm  ; -> sub.api_ms_win_crt_runtime_l1_1_0.dll__initterm\n0x1400018bc  mov dword [0x140034cd0], 2\n0x1400018c6  jmp 0x1400018d0\n0x1400018c8  mov dil, 1\n0x1400018cb  mov byte [rsp + 0x20], dil\n0x1400018d0  mov cl, bl\n0x1400018d2  call fcn.140001bc8  ; -> fcn.140001bc8\n0x1400018d7  call fcn.1400020d0  ; -> fcn.1400020d0\n0x1400018dc  mov rbx, rax\n0x1400018df  cmp qword [rax], 0\n0x1400018e3  je 0x140001902\n0x1400018e5  mov rcx, rax\n0x1400018e8  call fcn.140001b28  ; -> fcn.140001b28\n0x1400018ed  test al, al\n0x1400018ef  je 0x140001902\n0x1400018f1  xor r8d, r8d\n0x1400018f4  lea edx, [r8 + 2]\n0x1400018f8  xor ecx, ecx\n0x1400018fa  mov rax, qword [rbx]\n0x1400018fd  call fcn.140028010  ; -> fcn.140028010\n0x140001902  call fcn.1400020e0  ; -> fcn.1400020e0\n0x140001907  mov rbx, rax\n0x14000190a  cmp qword [rax], 0\n0x14000190e  je 0x140001924\n0x140001910  mov rcx, rax\n0x140001913  call fcn.140001b28  ; -> fcn.140001b28\n0x140001918  test al, al\n0x14000191a  je 0x140001924\n0x14000191c  mov rcx, qword [rbx]\n0x14000191f  call sub.api_ms_win_crt_runtime_l1_1_0.dll__register_thread_local_exe_atexit_callback  ; -> sub.api_ms_win_crt_runtime_l1_1_0.dll__register_thread_local_exe_atexit_callback\n0x140001924  call fcn.140002268  ; -> fcn.140002268\n0x140001929  movzx ebx, ax\n0x14000192c  call sub.api_ms_win_crt_private_l1_1_0.dll__o__get_wide_winmain_command_line  ; -> sub.api_ms_win_crt_private_l1_1_0.dll__o__get_wide_winmain_command_line\n0x140001931  mov r9d, ebx\n0x140001934  mov r8, rax\n0x140001937  xor edx, edx\n0x140001939  lea rcx, [0x140000000]\n0x140001940  call fcn.1400101d8  ; -> fcn.1400101d8\n0x140001945  mov ebx, eax\n0x140001947  call fcn.1400022b4  ; -> fcn.1400022b4\n0x14000194c  test al, al\n0x14000194e  je 0x1400019a0\n0x140001950  test dil, dil\n0x140001953  jne 0x14000195a\n0x140001955  call sub.api_ms_win_crt_private_l1_1_0.dll__o__cexit  ; -> sub.api_ms_win_crt_private_l1_1_0.dll__o__cexit\n0x14000195a  xor edx, edx\n0x14000195c  mov cl, 1\n0x14000195e  call fcn.140001bf4  ; -> fcn.140001bf4\n0x140001963  mov eax, ebx\n0x140001965  jmp 0x140001980\n0x140001980  mov rbx, qword [rsp + 0x40]\n0x140001985  add rsp, 0x30\n0x140001989  pop rdi\n0x14000198a  ret\n0x14000198b  mov ecx, 7\n0x140001990  call fcn.140002100  ; -> fcn.140002100\n0x140001995  nop\n0x140001996  mov ecx, 7\n0x14000199b  call fcn.140002100  ; -> fcn.140002100\n0x1400019a0  mov ecx, ebx\n0x1400019a2  call sub.api_ms_win_crt_private_l1_1_0.dll__o_exit  ; -> sub.api_ms_win_crt_private_l1_1_0.dll__o_exit\n0x1400019a7  nop\n0x1400019a8  mov ecx, ebx\n0x1400019aa  call sub.api_ms_win_crt_private_l1_1_0.dll__o__exit  ; -> sub.api_ms_win_crt_private_l1_1_0.dll__o__exit\n0x1400019af  nop\n0x1400019b0  int3\n0x1400019c0  sub rsp, 0x28\n0x1400019c4  call fcn.140001f98  ; -> fcn.140001f98\n0x1400019c9  add rsp, 0x28\n0x1400019cd  jmp 0x140001840\n\n;;; ------------------------------------------------------------\n;;; function: fcn.1400012dc @ 0x1400012dc size=157 instr=37\n;;; ------------------------------------------------------------\n0x1400012dc  sub rsp, 0x48\n0x1400012e0  movzx eax, byte [rdx]\n0x1400012e3  mov r11, rcx\n0x1400012e6  shl eax, 0x18\n0x1400012e9  mov r10, r8\n0x1400012ec  mov r8, qword [rsp + 0x78]\n0x1400012f1  mov dword [rsp + 0x30], eax\n0x1400012f5  movzx eax, word [rdx + 1]\n0x1400012f9  mov dword [rsp + 0x34], eax\n0x1400012fd  mov rax, qword [rdx + 3]\n0x140001301  add rdx, 0xb\n0x140001305  mov qword [rsp + 0x38], rax\n0x14000130a  mov rax, qword [rcx + 8]\n0x14000130e  mov qword [r8], rax\n0x140001311  mov rax, qword [rcx + 8]\n0x140001315  mov qword [rsp + 0x28], r8\n0x14000131a  movzx ecx, word [rax]\n0x14000131d  mov dword [r8 + 8], ecx\n0x140001321  lea rcx, str.ETW0\n0x140001328  mov qword [r8 + 0x10], rdx\n0x14000132c  mov dword [r8 + 0xc], 2\n0x140001334  movzx eax, word [rdx]\n0x140001337  lea rdx, [rsp + 0x30]\n0x14000133c  mov dword [r8 + 0x18], eax\n0x140001340  lea rax, [0x14002ed7f]\n0x140001347  sub eax, ecx\n0x140001349  mov dword [r8 + 0x1c], 1\n0x140001351  mov dword [rsp + 0x78], eax\n0x140001355  mov r8, r10\n0x140001358  mov eax, dword [rsp + 0x78]\n0x14000135c  mov eax, dword [rsp + 0x70]\n0x140001360  mov rcx, qword [r11 + 0x20]\n0x140001364  mov dword [rsp + 0x20], eax\n0x140001368  call qword [sym.imp.api_ms_win_eventing_provider_l1_1_0.dll_EventWriteTransfer]\n0x14000136f  nop dword [rax + rax]\n0x140001374  add rsp, 0x48\n0x140001378  ret",
+    "asm_truncated": true,
+    "artifacts_url": "/artifact/notepad",
+    "download_url": "/download/notepad"
+  },
+  {
+    "sample_name": "quick_test",
+    "bundle_name": "quick_test_artifact",
+    "sha256": "3e17dd90df39e93a343596d33fe068e4a10a5988b30eb6aa9a678401a2b67606",
+    "submitted_at": "2026-11-09T16:41:54+01:00",
+    "file_count": 24,
+    "encrypted": true,
+    "mega_link": "https://mega.nz/folder/fgJnzR7B#_wgC7FIWEcg0g9kD_mNN7g",
+    "hash_verified": true,
+    "archive_bytes": 296739,
+    "archive_size_human": "289.8 KiB",
+    "source_bytes": 1208454,
+    "sample_size": 75895,
+    "sample_size_human": "74.1 KiB",
+    "sections": [
+      {
+        "name": "UPX0",
+        "size": 0,
+        "entropy": 0.0,
+        "virtual_address": 4096
+      },
+      {
+        "name": "UPX1",
+        "size": 33792,
+        "entropy": 7.799820734816324,
+        "virtual_address": 118784
+      },
+      {
+        "name": ".rsrc",
+        "size": 2560,
+        "entropy": 4.5591428577013655,
+        "virtual_address": 155648
+      }
+    ],
+    "asm": ";;; ------------------------------------------------------------\n;;; function: entry0 @ 0x140024f40 size=50 instr=19\n;;; ------------------------------------------------------------\n0x140024f40  push rbx\n0x140024f41  push rsi\n0x140024f42  push rdi\n0x140024f43  push rbp\n0x140024f44  lea rsi, [0x14001d025]\n0x140024f4b  lea rdi, [rsi - 0x1c025]\n0x140024f52  push rdi\n0x140024f53  xor ebx, ebx\n0x140024f55  xor ecx, ecx\n0x140024f57  or rbp, 0xffffffffffffffff\n0x140024f5b  call fcn.140024fb0  ; -> fcn.140024fb0\n0x140024f60  add ebx, ebx\n0x140024f62  je 0x140024f66\n0x140024f64  ret\n0x140024f66  mov ebx, dword [rsi]\n0x140024f68  sub rsi, 0xfffffffffffffffc\n0x140024f6c  adc ebx, ebx\n0x140024f6e  mov dl, byte [rsi]\n0x140024f70  ret\n\n;;; ------------------------------------------------------------\n;;; function: fcn.140024fb0 @ 0x140024fb0 size=496 instr=182\n;;; ------------------------------------------------------------\n0x140024fb0  cld\n0x140024fb1  pop r11\n0x140024fb3  jmp 0x140024fbd\n0x140024fb5  inc rsi\n0x140024fb8  mov byte [rdi], dl\n0x140024fba  inc rdi\n0x140024fbd  mov dl, byte [rsi]\n0x140024fbf  add ebx, ebx\n0x140024fc1  jne 0x140024fcd\n0x140024fc3  mov ebx, dword [rsi]\n0x140024fc5  sub rsi, 0xfffffffffffffffc\n0x140024fc9  adc ebx, ebx\n0x140024fcb  mov dl, byte [rsi]\n0x140024fcd  jb 0x140024fb5\n0x140024fcf  lea eax, [rcx + 1]\n0x140024fd2  call r11\n0x140024fd5  adc eax, eax\n0x140024fd7  add ebx, ebx\n0x140024fd9  jne 0x140024fe5\n0x140024fdb  mov ebx, dword [rsi]\n0x140024fdd  sub rsi, 0xfffffffffffffffc\n0x140024fe1  adc ebx, ebx\n0x140024fe3  mov dl, byte [rsi]\n0x140024fe5  jae 0x140024fd2\n0x140024fe7  sub eax, 3\n0x140024fea  jb 0x140024fff\n0x140024fec  shl eax, 8\n0x140024fef  movzx edx, dl\n0x140024ff2  or eax, edx\n0x140024ff4  inc rsi\n0x140024ff7  xor eax, 0xffffffff\n0x140024ffa  je 0x140025036\n0x140024ffc  movsxd rbp, eax\n0x140024fff  lea eax, [rcx + 1]\n0x140025002  call r11\n0x140025005  adc ecx, ecx\n0x140025007  call r11\n0x14002500a  adc ecx, ecx\n0x14002500c  jne 0x140025026\n0x14002500e  mov ecx, eax\n0x140025010  add eax, 2\n0x140025013  call r11\n0x140025016  adc ecx, ecx\n0x140025018  add ebx, ebx\n0x14002501a  jne 0x140025024\n0x14002501c  mov ebx, dword [rsi]\n0x14002501e  sub rsi, 0xfffffffffffffffc\n0x140025022  adc ebx, ebx\n0x140025024  jae 0x140025013\n0x140025026  cmp rbp, 0xfffffffffffff300\n0x14002502d  adc ecx, eax\n0x14002502f  call fcn.140024f72  ; -> fcn.140024f72\n0x140025034  jmp 0x140024fbd\n0x140025036  pop rsi\n0x140025037  mov rdi, rsi\n0x14002503a  push rsi\n0x14002503b  mov rdi, rsi\n0x14002503e  mov rsi, 0x1c00\n0x140025045  mov dl, 2\n0x140025047  push rbx\n0x140025048  push rdi\n0x140025049  lea rcx, [rdi + rsi - 3]\n0x14002504e  pop rsi\n0x14002504f  push rsi\n0x140025050  pop rbx\n0x140025051  jmp 0x140025082\n0x140025053  cmp rsi, rcx\n0x140025056  jae 0x14002508a\n0x140025058  push rsi\n0x140025059  pop rsi\n0x14002505a  lodsb al, byte [rsi]\n0x14002505b  cmp al, 0x80\n0x14002505d  jb 0x140025069\n0x14002505f  cmp al, 0x8f\n0x140025061  ja 0x140025069\n0x140025063  cmp byte [rsi - 2], 0xf\n0x140025067  je 0x14002506f\n0x140025069  sub al, 0xe8\n0x14002506b  cmp al, 1\n0x14002506d  ja 0x140025053\n0x14002506f  cmp rsi, rcx\n0x140025072  jae 0x14002508a\n0x140025074  push rsi\n0x140025075  lodsd eax, dword [rsi]\n0x140025076  sub al, dl\n0x140025078  jne 0x140025059\n0x14002507a  pop rdi\n0x14002507b  bswap eax\n0x14002507d  sub eax, edi\n0x14002507f  add eax, ebx\n0x140025081  stosd dword [rdi], eax\n0x140025082  cmp rsi, rcx\n0x140025085  jae 0x14002508a\n0x140025087  lodsb al, byte [rsi]\n0x140025088  jmp 0x140025069\n0x14002508a  pop rbx\n0x14002508b  pop rsi\n0x14002508c  sub rsp, 0x28\n0x140025090  lea rdi, [rsi + 0x22000]\n0x140025097  mov eax, dword [rdi]\n0x140025099  or eax, eax\n0x14002509b  je 0x1400250e7\n0x14002509d  mov ebx, dword [rdi + 4]\n0x1400250a0  lea rcx, [rax + rsi + 0x254ec]\n0x1400250a8  add rbx, rsi\n0x1400250ab  add rdi, 8\n0x1400250af  call qword [sym.imp.KERNEL32.DLL_LoadLibraryA]\n0x1400250b5  xchg rax, rbp\n0x1400250b7  mov al, byte [rdi]\n0x1400250b9  inc rdi\n0x1400250bc  or al, al\n0x1400250be  je 0x140025097\n0x1400250c0  mov rcx, rdi\n0x1400250c3  mov rdx, rdi",
+    "asm_truncated": true,
+    "artifacts_url": "/artifact/quick_test",
+    "download_url": "/download/quick_test"
+  },
+  {
+    "sample_name": "test_protected",
+    "bundle_name": "test_protected_artifact",
+    "sha256": "37d85118e6f04ef8e5244751d18335e7fa1e57f8ee59d9e1b82a144bbe550856",
+    "submitted_at": "2026-11-05T17:37:51+01:00",
+    "file_count": 12,
+    "encrypted": true,
+    "mega_link": "https://mega.nz/folder/TkRzwDzZ#j1DNDwJsoA0gv0-9283LMA",
+    "hash_verified": true,
+    "archive_bytes": 47383,
+    "archive_size_human": "46.3 KiB",
+    "source_bytes": 378948,
+    "sample_size": 104960,
+    "sample_size_human": "102.5 KiB",
+    "sections": [],
+    "asm": "",
+    "asm_truncated": false,
+    "artifacts_url": "/artifact/test_protected",
+    "download_url": "/download/test_protected"
+  }
+]

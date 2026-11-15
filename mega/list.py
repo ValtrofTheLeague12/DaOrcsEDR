@@ -121,6 +121,8 @@ def main() -> int:
                     help="list every folder, not just <name>_artifact bundles")
     ap.add_argument("--details", action="store_true",
                     help="also list the files inside each bundle")
+    ap.add_argument("--hashes", action="store_true",
+                    help="also show each file's SHA-256 hash (implies --details)")
     ap.add_argument("--json", dest="as_json", action="store_true",
                     help="machine-readable output")
     ap.add_argument("--timeout", type=int, default=megacmd.DEFAULT_TIMEOUT)
@@ -155,7 +157,7 @@ def main() -> int:
     for row in bundles:
         total = 0
         count = 0
-        if args.details:
+        if args.details or args.hashes:
             try:
                 inner = ls(f"{root}/{row['name']}".replace("//", "/"), megacmd.QUICK_TIMEOUT)
             except megacmd.MegaError:
@@ -163,14 +165,51 @@ def main() -> int:
             files = [r for r in inner if not r["is_dir"]]
             total = sum(r["size"] for r in files)
             count = len(files)
+
+            file_hashes = {}
+            if args.hashes:
+                file_hashes = _fetch_manifest_hashes(root, row["name"])
+
         print(f"  {row['name']}   {row['date']}")
-        if args.details:
+        if args.details or args.hashes:
             for r in inner:
                 if r["is_dir"]:
                     continue
-                print(f"      {human(r['size']):>11}  {r['name']}")
+                hash_str = file_hashes.get(r["name"], "")
+                hash_suffix = f"  [{hash_str}]" if hash_str else ""
+                print(f"      {human(r['size']):>11}  {r['name']}{hash_suffix}")
             print(f"      {human(total):>11}  ({count} file(s))")
     return 0
+
+
+def _fetch_manifest_hashes(remote_root: str, bundle_name: str) -> dict[str, str]:
+    """Download manifest.json from a remote bundle and return {filename: sha256}."""
+    import tempfile
+    from pathlib import Path
+
+    manifest_name = "manifest.json"
+    remote_manifest = f"{remote_root.rstrip('/')}/{bundle_name}/{manifest_name}".replace("//", "/")
+    tmpdir = Path(tempfile.mkdtemp(prefix="ia-list-hashes-"))
+    local_manifest = tmpdir / manifest_name
+    hashes: dict[str, str] = {}
+    try:
+        res = megacmd.run("get", remote_manifest, str(tmpdir), timeout=megacmd.QUICK_TIMEOUT)
+        if res.code != 0:
+            return hashes
+        # MEGAcmd may nest as tmpdir/manifest.json or tmpdir/bundle_name/manifest.json
+        candidates = list(tmpdir.rglob(manifest_name))
+        if not candidates:
+            return hashes
+        manifest = json.loads(candidates[0].read_text(encoding="utf-8"))
+        for entry in manifest.get("files", []):
+            if isinstance(entry, dict) and "path" in entry and "hash" in entry:
+                hashes[entry["path"]] = entry["hash"]
+    except Exception:
+        pass
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    return hashes
 
 
 if __name__ == "__main__":

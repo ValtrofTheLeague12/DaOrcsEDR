@@ -1,0 +1,181 @@
+DaOrcs Endpoint Agent - Terms of Service and Data Handling Notice
+Version 0.2.0
+
+PLEASE READ THIS NOTICE IN FULL BEFORE INSTALLING.
+
+This notice explains exactly what the DaOrcs Endpoint Agent does on this
+computer, what it sends over the network, and what you are agreeing to. By
+selecting "I accept the agreement" and continuing the installation, you confirm
+that:
+
+  * you are the owner of this computer, or you have explicit written
+    authorisation from the owner to install and run monitoring software on it;
+  * you consent to the collection and transmission of the files and metadata
+    described below; and
+  * you accept these terms on behalf of yourself and the organisation that owns
+    this computer.
+
+If you do not accept these terms, choose "I do not accept the agreement" and the
+installation stops without changing this computer.
+
+-------------------------------------------------------------------------------
+1. WHAT THIS SOFTWARE IS
+-------------------------------------------------------------------------------
+
+The DaOrcs Endpoint Agent is a file-collection service for malware analysis. It
+runs as the Windows service "DaOrcsEndpointAgent" and continuously monitors the
+folders listed in its configuration for Windows PE files, which it forwards to a
+Kafka broker operated by the organisation that deployed it.
+
+The default configuration monitors these folders recursively:
+
+  %PUBLIC%\Downloads
+  %PUBLIC%\Desktop
+
+The list is configurable in agent.json. Any folder the administrator adds is
+monitored in the same way, including all of its subfolders.
+
+-------------------------------------------------------------------------------
+2. WHAT IT COLLECTS AND TRANSMITS
+-------------------------------------------------------------------------------
+
+Every 5 seconds by default, the agent scans the configured folders. A file is
+collected only if BOTH of the following are true:
+
+  * the file begins with the DOS "MZ" signature and its header points to a valid
+    "PE\0\0" signature (a Windows executable, DLL, or driver); and
+  * the file has not changed size or modification time for 2 seconds by
+    default, so partially written files are skipped.
+
+File extensions are irrelevant. A real PE file is collected regardless of its
+name, and a non-PE file is never collected.
+
+For each collected file the agent sends the following JSON records to the
+configured Kafka topic (default: analysis-artifacts). All records are keyed by
+the file's SHA-256 hash so that the parts of one file stay ordered:
+
+  sample_start
+      sha256, file_name, file_size, chunk_total, host, username,
+      detected_at (UTC timestamp), agent_version
+
+  sample_chunk  (one or more, in order)
+      sha256, chunk_num, chunk_total, chunk_data
+
+      chunk_data is the complete, hex-encoded content of that part of the file.
+      The default chunk size is 262,144 bytes (256 KiB); the maximum is also
+      262,144 bytes. Consequently the FULL CONTENTS of every collected file
+      leave this computer.
+
+  sample_complete
+      sha256, chunk_total
+
+In other words: file names, file sizes, SHA-256 hashes, the endpoint host name,
+the Windows account name used by the service, timestamps, the agent version, and
+the complete bytes of each detected PE file are transmitted.
+
+No other files are read or sent. The agent does not upload documents, images,
+browsing data, keystrokes, screen contents, or arbitrary registry contents.
+
+-------------------------------------------------------------------------------
+3. WHAT IT DOES NOT DO
+-------------------------------------------------------------------------------
+
+The agent does NOT:
+
+  * delete, move, rename, quarantine, encrypt, or modify collected files;
+  * execute, load, or open collected files;
+  * collect files based only on their extension;
+  * install or configure Kafka (optional native Kafka scripts are shipped in the
+    kafka subfolder but are NOT run by the installer);
+  * install telemetry, advertising, or analytics components;
+  * contact any service other than the Kafka broker named in agent.json.
+
+The only network traffic the agent generates is the Kafka connection to
+kafka.bootstrap_servers on the configured topic.
+
+-------------------------------------------------------------------------------
+4. WHERE THE DATA GOES AND HOW IT IS PROTECTED
+-------------------------------------------------------------------------------
+
+Collected data is sent directly to the Kafka broker configured by the
+administrator (default 192.168.56.1:9092). The operator of that broker, not the
+agent, controls what happens to the data after it arrives.
+
+The default Kafka configuration is PLAINTEXT, which means the file contents and
+metadata are NOT encrypted in transit. If this computer and the broker are not
+on a trusted network, the administrator must configure Kafka TLS/SASL or a
+protected tunnel. No encryption is added by the agent itself.
+
+Because full file contents are transmitted, anything placed in a monitored
+folder that is a PE file should be treated as leaving this computer. Do not place
+confidential or regulated executables in monitored folders unless you are
+authorised to transfer them to the analysis platform.
+
+-------------------------------------------------------------------------------
+5. LOCAL DATA WRITTEN ON THIS COMPUTER
+-------------------------------------------------------------------------------
+
+The agent and its installer keep program files and state under
+%ProgramData%\DaOrcs\Agent, and write every log under
+%APPDATA%\DaOrcs\Agent\logs:
+
+  * DaOrcsAgent.exe and its supporting files - the program itself;
+  * agent.json - the folder, broker, and topic configuration;
+  * state.sqlite3 - a local database of SHA-256 hashes already delivered, so a
+    restart does not resend every file;
+  * windows-service.ps1, post-install.ps1, daorcs-agent-admin.cmd,
+    README-AGENT.md, and the optional kafka helper scripts.
+
+Logs are written to %APPDATA%\DaOrcs\Agent\logs (not ProgramData):
+
+  * agent.log - runtime activity, including file names, hashes, and errors;
+  * service.log - service startup failures;
+  * install.log - installer and service-install transcript;
+  * setup.log - a copy of the Inno Setup installer log;
+  * uninstall.log - a copy of the Inno Setup uninstaller log.
+
+The service runs as LocalSystem, but the installer gives it the absolute
+%APPDATA% log folder through the DAORCS_LOG_DIR environment variable, so the
+service writes to the same place as the interactive installer.
+
+Logs can contain local file paths, host names, account names, hashes, and error
+details. They stay on this computer and are not transmitted by the agent.
+
+The installer registers the DaOrcsEndpointAgent service to start automatically
+(delayed start), configures Windows to restart it up to three times if it fails,
+starts it, and creates Start Menu shortcuts. Uninstalling removes the service
+and the installed program files. Runtime data such as state.sqlite3 and the log
+files may remain after uninstall unless they are deleted manually.
+
+-------------------------------------------------------------------------------
+6. YOUR RESPONSIBILITIES
+-------------------------------------------------------------------------------
+
+You are responsible for:
+
+  * ensuring you have the legal right and any required consent to monitor this
+    computer and to transmit the files found in the configured folders;
+  * configuring watch folders narrowly, and not pointing them at locations that
+    contain data you are not allowed to export;
+  * protecting the Kafka broker and, where required, enabling TLS/SASL;
+  * complying with applicable privacy, data-protection, export-control, and
+    organisational security policies.
+
+-------------------------------------------------------------------------------
+7. NO WARRANTY
+-------------------------------------------------------------------------------
+
+The software is provided "as is", without warranty of any kind, express or
+implied, including but not limited to the warranties of merchantability, fitness
+for a particular purpose, and non-infringement. The authors and distributors are
+not liable for any claim, damage, data loss, or other liability arising from the
+installation or use of this software.
+
+-------------------------------------------------------------------------------
+8. AGREEMENT
+-------------------------------------------------------------------------------
+
+By selecting "I accept the agreement", you state that you have read and
+understood this notice and that you agree to the collection, local storage, and
+transmission of the data described above. If you do not agree, do not install
+the DaOrcs Endpoint Agent.

@@ -44,7 +44,19 @@ def _serve_spa(app, dist: Path) -> None:
             candidate = (dist / path).resolve()
             # is_relative_to keeps a crafted path from escaping dist/.
             if path and candidate.is_file() and candidate.is_relative_to(dist.resolve()):
-                return app.send_static_file(path)
+                response = app.send_static_file(path)
+                # Vite names every build output with a content hash, so a
+                # chunk can be cached forever. index.html cannot: it is the
+                # only file whose contents name the current hashes. Without
+                # this the browser keeps an old index across a rebuild and
+                # every request points at chunks that no longer exist - the
+                # "dashboard shows the old version" symptom.
+                if path.startswith("assets/"):
+                    response.headers["Cache-Control"] = (
+                        "public, max-age=31536000, immutable")
+                else:
+                    response.headers["Cache-Control"] = "no-store"
+                return response
 
             # A rebuild empties dist/ and replaces every hashed chunk. A tab
             # opened before that rebuild still holds the old entry module, so
@@ -65,7 +77,9 @@ def _serve_spa(app, dist: Path) -> None:
                     mimetype="text/javascript",
                     headers={"Cache-Control": "no-store"},
                 )
-            return app.send_static_file("index.html")
+            fallback = app.send_static_file("index.html")
+            fallback.headers["Cache-Control"] = "no-store"
+            return fallback
 
         print(f"[+] serving React UI from {dist}")
     else:

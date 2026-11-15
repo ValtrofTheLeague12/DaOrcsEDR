@@ -51,9 +51,40 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..core import config
+from . import share_settings
 
 BUNDLE_SUFFIX = "_artifact"
 EVIDENCE_SUFFIX = "_evidence.tar.gz"
+# What a remote bundle can carry. A protected upload ships the AES-256 zip and
+# keeps the plaintext tarball on the local host, so a listing that only knows
+# the tarball reports every protected bundle as missing from MEGA.
+REMOTE_ARCHIVE_SUFFIXES = ("_evidence.zip", "_evidence.tar.gz")
+
+
+def _remote_archive_priority(filename: str, expected_stem: str) -> int | None:
+    """Rank an archive file from a remote bundle, tolerating legacy names."""
+    if filename in {f"{expected_stem}{suffix}" for suffix in REMOTE_ARCHIVE_SUFFIXES}:
+        return 0 if filename.endswith(".zip") else 1
+    if filename.endswith("_evidence.zip"):
+        return 2
+    if filename.endswith("_evidence.tar.gz"):
+        return 3
+    if filename.endswith(".tar.gz") and not filename.endswith(".sha256.tar.gz"):
+        return 4
+    if filename.endswith(".zip") and not filename.endswith(".sha256.zip"):
+        return 5
+    return None
+
+
+def _is_missing_remote_path(error: Exception, remote_path: str) -> bool:
+    """Whether MEGAcmd's error says this exact configured directory is absent."""
+    message = str(error).casefold()
+    leaf = remote_path.rstrip("/").rsplit("/", 1)[-1].casefold()
+    return bool(leaf) and (
+        f"couldn't find {leaf}" in message
+        or f"could not find {leaf}" in message
+        or f"{leaf} does not exist" in message
+    )
 
 # ---------------------------------------------------------------------------
 # persistent observation history
@@ -110,27 +141,25 @@ _HASH_BUDGET = 64 * 1024 * 1024
 # How many remote bundles to open.
 #
 # Each one is another MEGAcmd process. Unbounded, a 500-case MEGA root would
-# turn one poll into 500 subprocess spawns and the panel would simply stop
-# answering. Past this the remainder is counted and reported as not examined.
-_REMOTE_DETAIL_LIMIT = 25
+# turn one poll into 500 subprocess spawns. Keep the synchronous dashboard probe
+# small; older upload history remains available to the transfer chart.
+_REMOTE_DETAIL_LIMIT = 10
 
-# Per-bundle `ls` timeout, deliberately far below megacmd.QUICK_TIMEOUT (60s).
-# The whole remote probe runs inside a Flask request that a browser is waiting
-# on, so one slow bundle must cost seconds, not a minute.
-_REMOTE_DETAIL_TIMEOUT = 8
+# Keep the MEGAcmd operations inside a short request budget. Public links are
+# fetched on explicit user action rather than spawning another process per
+# bundle on every dashboard refresh.
+_REMOTE_DETAIL_TIMEOUT = 2
 
-# Overall budget for the entire remote probe.
-#
-# Per-call timeouts are not enough on their own. MEGAcmd's own QUICK_TIMEOUT is
-# 60s, so a root with 25 bundles where the service is degrading could hold the
-# request for the better part of half an hour and take the worker with it. This
-# is a wall-clock deadline checked between bundles, so the endpoint has a hard
-# ceiling and returns what it managed to read plus a note about what it did not.
-_REMOTE_DEADLINE = 25.0
+# Wall-clock deadline checked between bundle detail requests.
+_REMOTE_DEADLINE = 8.0
 
-_REMOTE_TIMEOUT = 20
+_REMOTE_TIMEOUT = 8
+_REMOTE_SESSION_TIMEOUT = 5
 _remote_cache: dict = {"at": 0.0, "payload": None}
 _local_cache: dict = {"at": 0.0, "payload": None}
+_async_remote_cache: dict[str, dict] = {}
+_async_remote_lock = threading.Lock()
+_async_remote_refreshing: set[str] = set()
 
 # Local enumeration is a directory walk of exports/ plus a few small file reads.
 # Cached briefly so opening the page twice does not re-walk the tree.
@@ -396,6 +425,31 @@ def _load_mega():
         return None, f"{type(exc).__name__}: {exc}"
 
 
+def _load_share():
+    """Load mega/share.py by path, for reading and revoking public exports.
+
+    `share.py` already owns everything subtle about MEGA's export command: the
+    listing format, the exit codes that mean "not exported" rather than
+    "failed", and the re-read that turns a revocation into a checked fact. The
+    panel reuses it rather than parsing that output a second time.
+    """
+    mega_dir = config.REPO / "mega"
+    if not mega_dir.is_dir():
+        return None, "mega/ not found"
+    if str(mega_dir) not in sys.path:
+        sys.path.insert(0, str(mega_dir))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "mega_share", mega_dir / "share.py")
+        if spec is None or spec.loader is None:
+            return None, "mega/share.py could not be loaded"
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return (module, module.megacmd), None
+    except Exception as exc:  # noqa: BLE001 - a broken client is a state, not a crash
+        return None, f"{type(exc).__name__}: {exc}"
+
+
 def remote(remote_root: str = "/", force: bool = False) -> dict:
     """Bundles on MEGA, via mega/list.py's own listing.
 
@@ -433,7 +487,7 @@ def remote(remote_root: str = "/", force: bool = False) -> dict:
         _remote_cache.update(at=now, payload=payload)
         return payload
 
-    account = megacmd.whoami()
+    account = megacmd.whoami(timeout=_REMOTE_SESSION_TIMEOUT)
     if not account:
         payload = {"available": False,
                    "reason": "no MEGAcmd session - run: python mega/login.py --mega",
@@ -446,6 +500,19 @@ def remote(remote_root: str = "/", force: bool = False) -> dict:
     try:
         rows = listing.ls(root, _REMOTE_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 - MEGAcmd refused or timed out
+        if _is_missing_remote_path(exc, root):
+            payload = {
+                "available": True,
+                "reason": f"Configured MEGA folder {root!r} does not exist.",
+                "account": account,
+                "remote_root": key,
+                "root_exists": False,
+                "bundles": [],
+                "not_examined": 0,
+                "truncated": None,
+            }
+            _remote_cache.update(at=now, payload=payload)
+            return payload
         payload = {"available": False, "reason": f"{type(exc).__name__}: {exc}",
                    "account": account, "remote_root": key,
                    "bundles": [], "not_examined": 0, "truncated": None}
@@ -487,7 +554,7 @@ def remote(remote_root: str = "/", force: bool = False) -> dict:
         except Exception:  # noqa: BLE001 - one unreadable bundle, not the listing
             inner = []
 
-        archive = None
+        archives: list[tuple[int, dict]] = []
         total = 0
         for r in inner:
             if r.get("is_dir"):
@@ -496,8 +563,12 @@ def remote(remote_root: str = "/", force: bool = False) -> dict:
                      "date": r.get("date")}
             files.append(entry)
             total += entry["bytes"]
-            if entry["name"] == f"{stem}{EVIDENCE_SUFFIX}":
-                archive = entry
+            priority = _remote_archive_priority(str(entry["name"] or ""), stem)
+            if priority is not None:
+                archives.append((priority, entry))
+        # Prefer the expected artifact-specific archive, but older/manual
+        # uploads sometimes use a generic or different artifact prefix.
+        archive = min(archives, key=lambda item: item[0])[1] if archives else None
 
         # Prefer the tarball's own timestamp; fall back to the folder's, which
         # is what is left if the bundle has no archive in it.
@@ -514,14 +585,75 @@ def remote(remote_root: str = "/", force: bool = False) -> dict:
             "date_text": row.get("date"),
             "file_count": len(files),
             "files": files,
+            "link": None,
         })
 
     bundles.sort(key=lambda b: b["modified"] or 0, reverse=True)
     payload = {"available": True, "reason": None, "account": account,
                "remote_root": key, "bundles": bundles,
-               "not_examined": not_examined, "truncated": truncated}
+               "root_exists": True, "not_examined": not_examined,
+               "truncated": truncated}
     _remote_cache.update(at=now, payload=payload)
     return payload
+
+
+def _refresh_remote_in_background(remote_root: str) -> None:
+    try:
+        payload = remote(remote_root, force=True)
+    except Exception as exc:  # noqa: BLE001 - record worker failures for the page
+        payload = {
+            "available": False,
+            "reason": f"{type(exc).__name__}: {exc}",
+            "account": None,
+            "remote_root": remote_root,
+            "bundles": [],
+            "not_examined": 0,
+            "truncated": None,
+        }
+    finally:
+        with _async_remote_lock:
+            if "payload" in locals():
+                _async_remote_cache[remote_root] = {
+                    "at": time.time(),
+                    "payload": payload,
+                }
+            _async_remote_refreshing.discard(remote_root)
+
+
+def _remote_nonblocking(remote_root: str, force: bool = False) -> dict:
+    """Return cached MEGA state immediately and refresh it off the request path."""
+    key = remote_root or "/"
+    now = time.time()
+    with _async_remote_lock:
+        cached = _async_remote_cache.get(key)
+        fresh = cached is not None and now - cached["at"] < _REMOTE_TTL
+        if force or not fresh:
+            if key not in _async_remote_refreshing:
+                _async_remote_refreshing.add(key)
+                try:
+                    threading.Thread(
+                        target=_refresh_remote_in_background,
+                        args=(key,),
+                        name="mega-listing-refresh",
+                        daemon=True,
+                    ).start()
+                except RuntimeError:
+                    _async_remote_refreshing.discard(key)
+                    raise
+        refreshing = key in _async_remote_refreshing
+        if cached is not None:
+            return {**cached["payload"], "refreshing": refreshing}
+
+    return {
+        "available": False,
+        "reason": "MEGA listing is refreshing",
+        "account": None,
+        "remote_root": key,
+        "bundles": [],
+        "not_examined": 0,
+        "truncated": None,
+        "refreshing": True,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -665,6 +797,7 @@ def _merge_history(live: list[dict]) -> list[dict]:
             "files": [],
             "first_seen": o.get("first_seen"),
             "last_seen": o.get("last_seen"),
+            "link": None,
         }
     for name, b in live_by_name.items():
         seen[name] = {**b, "present": True}
@@ -727,7 +860,9 @@ def transfer(bundles: list[dict]) -> dict:
 # snapshot
 # ---------------------------------------------------------------------------
 
-def snapshot(remote_root: str = "/", force: bool = False) -> dict:
+def snapshot(
+    remote_root: str = "/", force: bool = False, *, background_remote: bool = False
+) -> dict:
     """Both ends, plus the intervals between them.
 
     The transfer series is computed from the merged history, not from the live
@@ -735,13 +870,16 @@ def snapshot(remote_root: str = "/", force: bool = False) -> dict:
     have since been deleted from MEGA.
     """
     local_bundles = local(force)
-    remote_state = remote(remote_root, force)
+    remote_state = (
+        _remote_nonblocking(remote_root, force)
+        if background_remote else remote(remote_root, force)
+    )
     remote_bundles = remote_state["bundles"]
 
     # Only a successful read is allowed to touch history. A failed probe must
     # not be recorded as "the account is now empty".
     history_info = None
-    if remote_state["available"]:
+    if remote_state["available"] and not remote_state.get("refreshing"):
         history_info = record(remote_bundles, remote_state.get("account"),
                               remote_state.get("remote_root", "/"))
 
@@ -752,44 +890,26 @@ def snapshot(remote_root: str = "/", force: bool = False) -> dict:
         else _merge_history([])
 
     live_names = {b["name"] for b in remote_bundles}
+    hist_names = {b["name"] for b in hist}
     series = [b for b in hist if b.get("modified")]
 
-    local_names = {b["name"] for b in local_bundles}
-    hist_names = {b["name"] for b in hist}
-
-    # One timeline across both ends.
-    #
-    # Splitting this into a Local tab and a Remote tab is right for the two
-    # questions, but it makes the Remote tab read as "no artifacts" whenever
-    # the MEGA account is empty - which is the normal state of a lab that
-    # bundles locally and has not uploaded yet. That is the single most
-    # misleading thing this page could show, because the artifacts are right
-    # there on disk. So the Remote tab lists both and marks where each one
-    # lives.
-    #
-    # The charts do NOT get the same treatment. A local-only bundle was never
-    # uploaded, so including it would invent an "upload" and an interval that
-    # never happened. The rate series stays remote-only; only the list is
-    # unified.
+    local_by_name = {b["name"]: b for b in local_bundles}
+    local_names = set(local_by_name)
+    # Show actionable current state in the bundle list: live MEGA contents and
+    # current local bundles. Historical uploads remain in `history` and the
+    # transfer chart, but must not look like missing remote files after an
+    # operator deletes them from MEGA.
     unified: list[dict] = []
-    for b in hist:
+    for b in remote_bundles:
         name = b["name"]
-        if b.get("present") and name in local_names:
-            where = "both"
-        elif b.get("present"):
-            where = "remote"
-        elif name in local_names:
-            # On disk now, and remembered from an earlier remote read. Reported
-            # as local rather than as "both": the entry in the cache is not
-            # evidence that MEGA is listing it this second, and a chip that
-            # claims MEGA presence it cannot back is worse than a narrower one.
-            where = "local"
-        else:
-            where = "remembered"
-        unified.append({**b, "where": where})
+        local_bundle = local_by_name.get(name)
+        unified.append({
+            **b,
+            "where": "both" if local_bundle and local_bundle["present"] else "remote",
+        })
 
     for l in local_bundles:
-        if l["name"] in hist_names:
+        if l["name"] in live_names:
             continue
         unified.append({
             "name": l["name"],
@@ -806,6 +926,7 @@ def snapshot(remote_root: str = "/", force: bool = False) -> dict:
             "file_count": l["file_count"],
             "files": [],
             "generated_at": l["generated_at"],
+            "link": None,
         })
 
     unified.sort(key=lambda b: b.get("modified") or 0, reverse=True)
@@ -848,9 +969,9 @@ def snapshot(remote_root: str = "/", force: bool = False) -> dict:
         },
         "transfer": transfer(series),
         "diff": {
-            "only_local": sorted(local_names - hist_names),
-            "only_remote": sorted(hist_names - local_names),
-            "both": sorted(local_names & hist_names),
+            "only_local": sorted(local_names - live_names),
+            "only_remote": sorted(live_names - local_names),
+            "both": sorted(local_names & live_names),
         },
     }
 
@@ -893,15 +1014,170 @@ _uploader_jobs: dict[str, dict] = {}
 
 
 def _valid_remote_root(root: str) -> str | None:
-    """The root if it is a plain absolute MEGA path, else None."""
+    """A plain absolute or relative MEGA path, else None.
+
+    The uploader accepts the configured MEGAcmd path verbatim, including a
+    relative destination. The dashboard must use that same path for listing,
+    export, recovery and links.
+    """
     if not isinstance(root, str):
         return None
     root = root.strip()
-    if not root.startswith("/") or "\\" in root or "\x00" in root:
+    if (not root or root.startswith("-") or "\\" in root or "\x00" in root):
         return None
     if any(part == ".." for part in root.split("/")):
         return None
     return root
+
+
+def _export_name(path: str, root: str, share) -> str | None:
+    """The artifact name for one export path, if it is a bundle under `root`.
+
+    Only direct children count: ``remote()`` lists the configured folder's
+    immediate ``*_artifact`` folders, so an export nested deeper is not one of
+    the bundles this page is describing. Both sides are normalised because the
+    configured root may be relative ("evidence") while MEGA reports absolute
+    paths.
+    """
+    normalised = share.normalise(path)
+    prefix = share.normalise(root)
+    if normalised is None or prefix is None:
+        return None
+    if prefix != "/" and not normalised.startswith(prefix + "/"):
+        return None
+    relative = (normalised[len(prefix):] if prefix != "/"
+                else normalised).lstrip("/")
+    if "/" in relative or not relative.endswith(BUNDLE_SUFFIX):
+        return None
+    stem = relative[: -len(BUNDLE_SUFFIX)]
+    return stem if valid_name(stem) else None
+
+
+def links_for(remote_root: str = "/") -> dict:
+    """Existing public links for the bundles under one MEGA root.
+
+    Read-only, and deliberately separate from ``remote()``: the page polls the
+    listing on a timer, and publishing evidence because a tab stayed open is a
+    different act from an operator asking for one of these links. Listing the
+    exports costs exactly one MEGAcmd call, so the Remote tab can refresh it on
+    open and after a create or revoke without spawning a process per bundle.
+    """
+    root = _valid_remote_root(remote_root)
+    if root is None:
+        return {"ok": False, "error": "invalid MEGA remote root"}
+
+    loaded, why = _load_share()
+    if loaded is None:
+        return {"ok": False, "error": why}
+    share, megacmd = loaded
+    if not megacmd.available():
+        return {"ok": False,
+                "error": f"MEGAcmd missing - {megacmd.missing_message()}"}
+    account = megacmd.whoami(timeout=_REMOTE_SESSION_TIMEOUT)
+    if not account:
+        return {"ok": False,
+                "error": "no MEGAcmd session - run: python mega/login.py --mega"}
+
+    try:
+        exports = share.list_exports(_REMOTE_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 - the page shows the reason verbatim
+        return {"ok": False, "error": str(exc)}
+
+    links: dict[str, str] = {}
+    for record in exports:
+        name = _export_name(str(record.get("path") or ""), root, share)
+        link = record.get("link")
+        # Duplicate same-named folders are real on MEGA. The export listing
+        # identifies nodes by path, which is also what MEGAcmd resolves, so the
+        # first link wins here - the page warns about the duplicate instead of
+        # pretending one name has two different public URLs.
+        if name and isinstance(link, str) and link:
+            links.setdefault(name, link)
+    return {"ok": True, "links": links, "account": account,
+            "remote_root": root}
+
+
+def revoke_link(name: str, remote_root: str = "/") -> dict:
+    """Revoke a bundle's public MEGA link without touching the bundle itself.
+
+    Deleting the export unpublishes the folder for everyone; the evidence
+    remains on the account. ``deleted: false`` means there was no export to
+    remove - already revoked, or never created - which is an answer, not a
+    failure: the end state the operator asked for is true either way.
+    """
+    if not valid_name(name):
+        return {"ok": False, "error": "invalid artifact name"}
+    root = _valid_remote_root(remote_root)
+    if root is None:
+        return {"ok": False, "error": "invalid MEGA remote root"}
+
+    loaded, why = _load_share()
+    if loaded is None:
+        return {"ok": False, "error": why}
+    share, megacmd = loaded
+    if not megacmd.available():
+        return {"ok": False,
+                "error": f"MEGAcmd missing - {megacmd.missing_message()}"}
+    account = megacmd.whoami(timeout=_REMOTE_SESSION_TIMEOUT)
+    if not account:
+        return {"ok": False,
+                "error": "no MEGAcmd session - run: python mega/login.py --mega"}
+
+    target = f"{root.rstrip('/')}/{name}{BUNDLE_SUFFIX}".replace("//", "/")
+    try:
+        deleted = share.revoke(target, _REMOTE_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 - the page shows the reason verbatim
+        return {"ok": False, "error": str(exc), "remote_path": target,
+                "account": account}
+
+    invalidate_remote_cache()
+    return {"ok": True, "deleted": bool(deleted), "not_exported": not deleted,
+            "name": name, "remote_path": target, "account": account}
+
+
+def link_for(name: str, remote_root: str = "/") -> dict:
+    """The bundle's public MEGA link, creating one when it has none.
+
+    Explicitly NOT part of ``remote()``: the page polls that function, and a
+    poll that publishes evidence because someone left a tab open is a different
+    act from an operator asking for a share link. This is the asking.
+    """
+    if not valid_name(name):
+        return {"ok": False, "error": "invalid artifact name"}
+    root = _valid_remote_root(remote_root)
+    if root is None:
+        return {"ok": False, "error": "invalid MEGA remote root"}
+
+    loaded, why = _load_mega()
+    if loaded is None:
+        return {"ok": False, "error": why}
+    listing, megacmd = loaded
+    if not megacmd.available():
+        return {"ok": False, "error": f"MEGAcmd missing - {megacmd.missing_message()}"}
+    account = megacmd.whoami()
+    if not account:
+        return {"ok": False,
+                "error": "no MEGAcmd session - run: python mega/login.py --mega"}
+
+    target = f"{root.rstrip('/')}/{name}{BUNDLE_SUFFIX}".replace("//", "/")
+    try:
+        listing.ls(target, _REMOTE_DETAIL_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 - not on MEGA is an answer, not a crash
+        return {"ok": False,
+                "error": f"{name} is not on MEGA at {target}: {exc}"}
+    # A configured expiry that cannot be read must stop the link, not be
+    # downgraded to permanent. See share_settings.expire().
+    expire, why = share_settings.expire(config.REPO)
+    if why:
+        return {"ok": False, "error": f"share link expiry: {why}"}
+    try:
+        link = megacmd.public_link(target, _REMOTE_DETAIL_TIMEOUT, expire=expire)
+    except Exception as exc:  # noqa: BLE001 - the UI shows the reason verbatim
+        return {"ok": False, "error": str(exc)}
+
+    invalidate_remote_cache()
+    return {"ok": True, "link": link, "remote_path": target,
+            "account": account, "expire": expire}
 
 
 def start_export(name: str, remote_root: str = "/", timeout: int | None = None) -> tuple[bool, dict]:
@@ -943,8 +1219,11 @@ def start_export(name: str, remote_root: str = "/", timeout: int | None = None) 
     # two minutes into a streaming upload job, after the bundle has been built,
     # is not the same experience. upload.py still refuses to fall back to
     # plaintext, so this is about telling people early rather than about safety.
+    # A per-bundle export needs no operator password: the uploader generates
+    # its own, so there is nothing to pre-flight.
     encrypt = analysis.artifact_encrypt_enabled()
-    if encrypt:
+    per_bundle = analysis.artifact_per_bundle_password_enabled()
+    if encrypt and not per_bundle:
         try:
             _preflight_bundle_password()
         except Exception as exc:                       # noqa: BLE001
@@ -963,7 +1242,7 @@ def start_export(name: str, remote_root: str = "/", timeout: int | None = None) 
         _uploader_jobs[job_id] = {
             "job_id": job_id, "name": name, "remote_root": root,
             "state": "running", "lines": [], "dropped": 0,
-            "encrypt": encrypt,
+            "encrypt": encrypt, "per_bundle_password": per_bundle,
             "started_at": now, "finished_at": None, "exit_code": None,
         }
 
@@ -973,7 +1252,8 @@ def start_export(name: str, remote_root: str = "/", timeout: int | None = None) 
     # password itself: the value lives in the operator password file and no
     # payload here carries it.
     return True, {"job_id": job_id, "reused": False, "encrypted": encrypt,
-                  "password_protected": encrypt}
+                  "password_protected": encrypt,
+                  "per_bundle_password": per_bundle}
 
 
 def _preflight_bundle_password() -> None:
@@ -1015,7 +1295,12 @@ def _run_export(job: dict, remote_root: str, timeout: int) -> None:
                # The password file is the uploader's default (the operator one
                # the Analysis page manages): the C++/panel side passes paths,
                # never the password itself.
-               "--encrypt" if job.get("encrypt") else "--no-encrypt"]
+               "--encrypt" if job.get("encrypt") else "--no-encrypt",
+               # Same explicit-both-ways rule for the per-bundle switch: the
+               # uploader generates and stores each bundle's own password,
+               # and this command never carries a password value either way.
+               "--per-bundle-password" if job.get("per_bundle_password")
+               else "--no-per-bundle-password"]
     try:
         proc = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1053,6 +1338,27 @@ def _run_export(job: dict, remote_root: str, timeout: int) -> None:
         # and the page would insist nothing arrived.
         invalidate_remote_cache()
         invalidate_local_cache()
+        # A link is the point of the upload for a remote recipient. Best-effort:
+        # the bytes are already safe on MEGA, so a failure to export a link must
+        # not turn a successful upload into a failed job.
+        try:
+            loaded, why = _load_mega()
+            if loaded is None:
+                raise RuntimeError(why or "MEGAcmd is not available")
+            _listing, megacmd = loaded
+            target = (f"{remote_root.rstrip('/')}/{job['name']}"
+                      f"{BUNDLE_SUFFIX}").replace("//", "/")
+            expire, why = share_settings.expire(config.REPO)
+            if why:
+                raise RuntimeError(f"share link expiry: {why}")
+            job["link"] = megacmd.public_link(
+                target, _REMOTE_DETAIL_TIMEOUT, expire=expire)
+            job["link_expire"] = expire
+            suffix = f" (expires in {expire})" if expire else ""
+            job["lines"].append(f"Public MEGA link{suffix}: {job['link']}")
+        except Exception as exc:  # noqa: BLE001 - the upload itself succeeded
+            job["lines"].append(
+                f"Uploaded, but no public link was created: {exc}")
     job.update(state="done" if code == 0 else "error",
                exit_code=code, finished_at=time.time())
 
@@ -1072,4 +1378,6 @@ def export_job(job_id: str) -> dict | None:
             "dropped": job["dropped"],
             "exit_code": job["exit_code"],
             "elapsed": round((job["finished_at"] or time.time()) - job["started_at"], 1),
+            "link": job.get("link"),
+            "link_expire": job.get("link_expire"),
         }

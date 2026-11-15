@@ -91,6 +91,1331 @@
   --color-default-900: var(--foreground);
 }
 
+/* --- threat-intelligence evidence workspace ------------------------------ */
+
+.threat-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.threat-page section[id],
+.threat-page div[id] {
+  scroll-margin-top: 1rem;
+}
+
+/* Section jump nav keeps the long workspace and the ban log reachable. */
+.threat-section-nav {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .4rem;
+}
+
+.threat-section-nav-label {
+  margin-right: .15rem;
+  color: var(--muted);
+  font-size: .58rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.threat-section-nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  border: 1px solid var(--console-border);
+  border-radius: 999px;
+  padding: .28rem .62rem;
+  color: var(--muted);
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  font-size: .62rem;
+  text-decoration: none;
+  transition: border-color .16s ease, color .16s ease;
+}
+
+.threat-section-nav a:hover {
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--console-border));
+  color: var(--accent);
+}
+
+.threat-evidence-section {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.threat-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.threat-section-heading h2 {
+  margin-top: .2rem;
+  color: var(--foreground);
+  font-size: .95rem;
+  font-weight: 600;
+}
+
+.threat-section-heading p:last-child {
+  margin-top: .3rem;
+  max-width: 46rem;
+  color: var(--muted);
+  font-size: .67rem;
+}
+
+.threat-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  border-radius: .7rem;
+  padding: .8rem;
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+}
+
+.threat-subsection-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.threat-subsection-heading h3 {
+  color: var(--foreground);
+  font-size: .74rem;
+  font-weight: 600;
+}
+
+.threat-subsection-heading p {
+  margin-top: .25rem;
+  color: var(--muted);
+  font-size: .64rem;
+}
+
+.threat-subsection-heading .eyebrow {
+  margin-bottom: .2rem;
+}
+
+.threat-config-path {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .75rem;
+  border: 1px solid var(--console-border);
+  border-radius: .55rem;
+  padding: .5rem .65rem;
+  background: var(--surface);
+}
+
+.threat-config-path code {
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+  font: .64rem var(--font-mono);
+}
+
+.threat-header,
+.threat-header-actions,
+.threat-card-header,
+.threat-inspector-actions,
+.threat-queue-actions,
+.threat-report-strip,
+.threat-file-heading,
+.threat-link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.threat-header {
+  align-items: flex-start;
+}
+
+.threat-header-actions {
+  flex-shrink: 0;
+}
+
+.threat-api-section {
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
+  border: 1px solid var(--console-border);
+  border-radius: .9rem;
+  padding: 1rem;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  box-shadow: var(--console-shadow);
+}
+
+.threat-api-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.threat-api-heading h2 {
+  margin-top: .2rem;
+  color: var(--foreground);
+  font-size: .95rem;
+  font-weight: 600;
+}
+
+.threat-api-heading p:last-child {
+  margin-top: .3rem;
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.threat-api-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .7rem;
+}
+
+.threat-api-card {
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  background: color-mix(in oklab, var(--surface) 85%, transparent);
+}
+
+.threat-api-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: .5rem;
+}
+
+.threat-api-env,
+.threat-api-card-content > p,
+.threat-api-requirement {
+  color: var(--muted);
+  font-size: .63rem;
+}
+
+.threat-api-env {
+  margin-top: .2rem;
+  font-family: var(--font-mono);
+}
+
+.threat-api-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+
+.threat-api-requirement {
+  color: var(--accent);
+}
+
+.threat-api-input-label {
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.threat-api-card-content input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  border-radius: .45rem;
+  padding: .5rem .6rem;
+  color: var(--foreground);
+  background: var(--surface);
+  font: .68rem var(--font-mono);
+}
+
+.threat-api-card-content input:focus {
+  outline: 1px solid var(--accent);
+}
+
+.threat-api-actions {
+  display: flex;
+  gap: .45rem;
+}
+
+.threat-api-clear {
+  color: var(--muted);
+}
+
+.threat-server-section,
+.threat-catalog-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  border: 1px solid var(--console-border);
+  border-radius: .9rem;
+  padding: 1rem;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  box-shadow: var(--console-shadow);
+}
+
+.threat-catalog-section {
+  min-width: 0;
+}
+
+.threat-server-heading,
+.threat-catalog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.threat-catalog-counts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+
+.threat-server-heading h2,
+.threat-catalog-heading h2 {
+  margin-top: .2rem;
+  color: var(--foreground);
+  font-size: .9rem;
+  font-weight: 600;
+}
+
+.threat-server-heading p:last-child,
+.threat-catalog-heading p {
+  margin-top: .3rem;
+  color: var(--muted);
+  font-size: .67rem;
+}
+
+.threat-server-heading-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+
+.threat-generate-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: .45rem;
+}
+
+.threat-listener-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .35rem;
+  color: var(--muted);
+  font-size: .67rem;
+}
+
+.threat-listener-note code {
+  overflow-wrap: anywhere;
+  color: var(--accent);
+  font: .67rem var(--font-mono);
+}
+
+.threat-server-config {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, .55fr) auto;
+  align-items: end;
+  gap: .75rem;
+  border: 1px solid var(--console-border);
+  border-radius: .7rem;
+  padding: .8rem;
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+}
+
+.threat-server-config label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .35rem;
+}
+
+.threat-server-config label > span {
+  color: var(--foreground);
+  font-size: .67rem;
+  font-weight: 500;
+}
+
+.threat-server-config label > input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  border-radius: .45rem;
+  padding: .5rem .6rem;
+  color: var(--foreground);
+  background: var(--surface);
+  font: .7rem var(--font-mono);
+}
+
+.threat-server-config label > input:focus {
+  outline: 1px solid var(--accent);
+}
+
+.threat-server-config small {
+  color: var(--muted);
+  font-size: .58rem;
+}
+
+.threat-server-config > p,
+.threat-server-config > [role="alert"] {
+  grid-column: 1 / -1;
+}
+
+.threat-server-config-actions {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.threat-ban-section {
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+  border: 1px solid var(--console-border);
+  border-radius: .7rem;
+  padding: .8rem;
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+}
+
+.threat-ban-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: .6rem;
+  border: 1px solid var(--console-border);
+  border-radius: .7rem;
+  padding: .6rem .7rem;
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+}
+
+.threat-ban-bar > .eyebrow {
+  flex-shrink: 0;
+  padding-top: .2rem;
+}
+
+.threat-ban-chips {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: .35rem;
+}
+
+.threat-ban-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  max-width: 100%;
+  border: 1px solid var(--console-border);
+  border-radius: 999px;
+  padding: .2rem .55rem;
+  color: var(--foreground);
+  background: var(--surface);
+  font-size: .6rem;
+  cursor: pointer;
+}
+
+.threat-ban-chip:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--console-border));
+  color: var(--accent);
+}
+
+.threat-ban-chip:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.threat-ban-chip code {
+  overflow: hidden;
+  max-width: 22rem;
+  font: .6rem var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-ban-empty {
+  color: var(--muted);
+  font-size: .65rem;
+}
+
+.threat-ban-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.threat-ban-heading h3 {
+  margin-top: .2rem;
+  color: var(--foreground);
+  font-size: .9rem;
+  font-weight: 600;
+}
+
+.threat-ban-heading p {
+  margin-top: .3rem;
+  color: var(--muted);
+  font-size: .67rem;
+}
+
+.threat-ban-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.threat-ban-table-wrap {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--console-border);
+  border-radius: .65rem;
+  background: var(--surface);
+}
+
+.threat-ban-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  background: var(--surface);
+  font-size: .66rem;
+}
+
+.threat-ban-table th,
+.threat-ban-table td {
+  border-bottom: 1px solid var(--console-border);
+  padding: .6rem .75rem;
+  vertical-align: middle;
+}
+
+.threat-ban-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--muted);
+  background: color-mix(in oklab, var(--surface-secondary) 62%, var(--surface));
+  font-size: .6rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.threat-ban-table tbody tr {
+  background: var(--surface);
+  transition: background .15s;
+}
+
+.threat-ban-table tbody tr:nth-child(even) {
+  background: color-mix(in oklab, var(--foreground) 2.5%, var(--surface));
+}
+
+.threat-ban-table tbody tr:hover {
+  background: color-mix(in oklab, var(--accent) 7%, var(--surface));
+}
+
+.threat-ban-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.threat-ban-table th:last-child,
+.threat-ban-table td:last-child {
+  text-align: right;
+}
+
+/* Blocked rows keep a red rail and the status chip, but no longer flood the
+   whole row with red - with every account blocked the table read as one
+   washed-out danger block. */
+.threat-ban-table tr.blocked td:first-child {
+  box-shadow: inset 2px 0 var(--danger);
+}
+
+.threat-ban-table tr.blocked td {
+  border-bottom-color: color-mix(in srgb, var(--danger) 12%, var(--console-border));
+}
+
+.threat-ban-name {
+  display: block;
+  overflow: hidden;
+  max-width: min(30rem, 46vw);
+  color: var(--foreground);
+  font: 500 .7rem var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-ban-table td:nth-child(2) {
+  min-width: 12rem;
+}
+
+/* Compound selectors: `.artifact-action` is declared later in this file and
+   would otherwise repaint this green button with the accent colour. */
+.threat-ban-button.threat-ban-allow {
+  border-color: color-mix(in oklab, var(--success) 34%, transparent);
+  background: color-mix(in oklab, var(--success) 8%, var(--surface));
+  color: var(--success);
+}
+
+.threat-ban-button.threat-ban-allow:hover:not(:disabled) {
+  border-color: var(--success);
+  background: color-mix(in oklab, var(--success) 14%, var(--surface));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 9%, transparent);
+}
+
+.threat-ban-button.threat-ban-allow:focus-visible {
+  outline-color: var(--success);
+}
+
+.threat-ban-muted {
+  color: var(--muted);
+  font: .64rem var(--font-mono);
+}
+
+/* --- credential inspection ------------------------------------------------ */
+
+.threat-ban-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: .35rem;
+}
+
+.threat-ban-actions > .artifact-action {
+  white-space: nowrap;
+}
+
+/* The expanded panel is not a status row: keep it neutral even when the user
+   above it is blocked or the table zebra-stripes. */
+.threat-ban-table tbody tr.threat-ban-detail-row,
+.threat-ban-table tbody tr.threat-ban-detail-row:hover {
+  background: color-mix(in oklab, var(--surface-secondary) 55%, var(--surface));
+}
+
+.threat-ban-detail-row > td {
+  padding: 0 !important;
+  border-bottom: 1px solid var(--console-border);
+  text-align: left !important;
+}
+
+.threat-cred {
+  display: flex;
+  flex-direction: column;
+  gap: .85rem;
+  padding: .9rem 1rem 1rem;
+  border-left: 2px solid color-mix(in oklab, var(--accent) 55%, transparent);
+}
+
+.threat-cred-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: .65rem .9rem;
+}
+
+.threat-cred-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .2rem;
+}
+
+.threat-cred-wide {
+  grid-column: 1 / -1;
+}
+
+.threat-cred-label {
+  color: var(--muted);
+  font-size: .58rem;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.threat-cred-value {
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+  font: .68rem var(--font-mono);
+}
+
+.threat-cred-digest {
+  padding: .45rem .55rem;
+  border: 1px solid var(--console-border);
+  border-radius: .45rem;
+  background: var(--surface);
+  color: color-mix(in oklab, var(--foreground) 88%, var(--muted));
+  font-size: .64rem;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.threat-cred-health,
+.threat-cred-result-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+}
+
+.threat-cred-test {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, .8fr) auto;
+  align-items: end;
+  gap: .6rem;
+}
+
+.threat-cred-test label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .3rem;
+}
+
+.threat-cred-test label > span {
+  color: var(--muted);
+  font-size: .62rem;
+  font-weight: 500;
+}
+
+.threat-cred-test input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  border-radius: .45rem;
+  padding: .45rem .55rem;
+  color: var(--foreground);
+  background: var(--surface);
+  font: .7rem var(--font-mono);
+}
+
+.threat-cred-test input:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.threat-cred-error {
+  color: var(--danger);
+  font-size: .68rem;
+}
+
+.threat-cred-result {
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+  padding: .7rem .8rem;
+  border: 1px solid color-mix(in oklab, var(--success) 28%, var(--console-border));
+  border-radius: .55rem;
+  background: color-mix(in oklab, var(--success) 6%, var(--surface));
+}
+
+.threat-cred-result.bad {
+  border-color: color-mix(in oklab, var(--danger) 28%, var(--console-border));
+  background: color-mix(in oklab, var(--danger) 5%, var(--surface));
+}
+
+.threat-cred-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .5rem;
+}
+
+.threat-cred-result-head strong {
+  color: var(--foreground);
+  font-size: .76rem;
+}
+
+.threat-cred-result-head span,
+.threat-cred-result-ip {
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.threat-cred-result-ip code {
+  color: var(--foreground);
+  font: .66rem var(--font-mono);
+}
+
+.threat-cred-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  font-size: .68rem;
+  line-height: 1.45;
+}
+
+.threat-cred-reasons li::marker {
+  color: var(--warning);
+}
+
+@media (max-width: 900px) {
+  .threat-cred-test {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threat-ban-actions {
+    justify-content: flex-start;
+  }
+}
+
+.threat-generation-output,
+.threat-ban-output {
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-radius: .65rem;
+  background: color-mix(in oklab, var(--surface) 72%, #000);
+}
+
+.threat-generation-output-heading,
+.threat-ban-output-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  border-bottom: 1px solid var(--console-border);
+  padding: .55rem .75rem;
+  color: var(--muted);
+  font-size: .63rem;
+}
+
+.threat-generation-output-actions,
+.threat-ban-output-actions {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+}
+
+.threat-generation-output pre,
+.threat-ban-output pre {
+  max-height: 12rem;
+  overflow: auto;
+  padding: .75rem;
+  color: var(--foreground);
+  font: .64rem/1.65 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.threat-catalog-table-wrap {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--console-border);
+  border-radius: .65rem;
+}
+
+.threat-catalog-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: .65rem;
+}
+
+.threat-catalog-table th,
+.threat-catalog-table td {
+  max-width: 19rem;
+  border-bottom: 1px solid var(--console-border);
+  padding: .65rem .75rem;
+  vertical-align: middle;
+}
+
+.threat-catalog-table th {
+  position: sticky;
+  top: 0;
+  color: var(--muted);
+  background: var(--surface-secondary);
+  font-size: .6rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.threat-catalog-table td {
+  overflow: hidden;
+  color: var(--foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-catalog-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.threat-catalog-table code {
+  font: .6rem var(--font-mono);
+}
+
+.threat-catalog-table a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.threat-catalog-name {
+  display: block;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+.threat-catalog-sub {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font: .58rem var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-catalog-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+}
+
+.threat-catalog-stack {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  white-space: normal;
+}
+
+.threat-catalog-stack > span {
+  font-size: .62rem;
+}
+
+.threat-catalog-hash {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .35rem;
+  white-space: normal;
+}
+
+.threat-catalog-hash code {
+  overflow-wrap: anywhere;
+}
+
+.threat-catalog-ban-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .45rem;
+}
+
+.threat-catalog-muted,
+.threat-catalog-empty {
+  color: var(--muted) !important;
+}
+
+.threat-catalog-empty {
+  padding: 1.25rem !important;
+  text-align: center;
+}
+
+.threat-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .75rem;
+}
+
+.threat-metric {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+  border: 1px solid var(--console-border);
+  border-radius: .85rem;
+  padding: .9rem 1rem;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  box-shadow: var(--console-shadow);
+}
+
+.threat-metric strong {
+  overflow: hidden;
+  color: var(--foreground);
+  font: 600 1.35rem var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-metric > span:last-child {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: .68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-selected-name {
+  font-size: .9rem !important;
+}
+
+.threat-workspace {
+  display: grid;
+  grid-template-columns: minmax(300px, .85fr) minmax(0, 1.4fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.threat-browser,
+.threat-inspector {
+  min-width: 0;
+}
+
+.threat-inspector-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.threat-search {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  border: 1px solid var(--console-border);
+  border-radius: .65rem;
+  padding: .55rem .7rem;
+  color: var(--muted);
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+}
+
+.threat-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--foreground);
+  background: transparent;
+  font-size: .75rem;
+}
+
+.threat-queue-actions {
+  min-height: 2rem;
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.threat-publish-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem;
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.threat-publish-actions > span {
+  margin-right: auto;
+}
+
+.threat-bundle-list,
+.threat-file-list {
+  display: flex;
+  max-height: 36rem;
+  flex-direction: column;
+  gap: .45rem;
+  overflow: auto;
+  padding-right: .15rem;
+}
+
+.threat-bundle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .55rem;
+  border: 1px solid var(--console-border);
+  border-radius: .7rem;
+  padding: .65rem;
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+  transition: border-color .16s ease, background .16s ease;
+}
+
+.threat-bundle.active {
+  border-color: color-mix(in oklab, var(--accent) 56%, var(--console-border));
+  background: color-mix(in oklab, var(--surface) 82%, var(--accent) 18%);
+}
+
+.threat-bundle-check {
+  display: grid;
+  width: 1.5rem;
+  height: 1.8rem;
+  place-items: center;
+  cursor: pointer;
+}
+
+.threat-bundle-check input {
+  accent-color: var(--accent);
+}
+
+.threat-bundle-select {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .2rem;
+  text-align: left;
+}
+
+.threat-bundle-name,
+.threat-bundle-meta,
+.threat-bundle-files {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-bundle-name {
+  color: var(--foreground);
+  font: 500 .75rem var(--font-mono);
+}
+
+.threat-bundle-meta,
+.threat-bundle-files {
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.threat-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem;
+}
+
+.threat-detail-grid > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: .25rem;
+  border-radius: .6rem;
+  padding: .65rem .75rem;
+  background: color-mix(in oklab, var(--surface-secondary) 72%, transparent);
+}
+
+.threat-detail-grid span,
+.threat-file-heading span {
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.threat-detail-grid strong {
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+  font: 500 .68rem var(--font-mono);
+}
+
+.threat-report-strip {
+  border-top: 1px solid var(--console-border);
+  padding-top: .8rem;
+}
+
+.threat-report-list {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+}
+
+.threat-report-item,
+.threat-file-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .55rem;
+  border: 1px solid var(--console-border);
+  border-radius: .55rem;
+  padding: .5rem .65rem;
+  color: var(--foreground);
+  text-align: left;
+  font-size: .68rem;
+}
+
+.threat-report-item {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.threat-report-item:hover,
+.threat-file-row button:hover,
+.threat-file-open:hover {
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--console-border));
+}
+
+.threat-report-item span:nth-child(2),
+.threat-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-report-item span:last-child,
+.threat-file-size {
+  color: var(--muted);
+  font: .62rem var(--font-mono);
+}
+
+.threat-file-heading {
+  padding: .3rem 0;
+}
+
+.threat-file-heading span:last-child {
+  overflow: hidden;
+  max-width: 60%;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-file-row {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.threat-file-row button,
+.threat-file-open {
+  border: 1px solid var(--console-border);
+  border-radius: .35rem;
+  padding: .15rem .4rem;
+  color: var(--accent);
+  font-size: .62rem;
+}
+
+.threat-file-open {
+  text-decoration: none;
+}
+
+.threat-empty-inspector {
+  display: flex;
+  min-height: 15rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .8rem;
+  color: var(--muted);
+  text-align: center;
+  font-size: .75rem;
+}
+
+.threat-progress {
+  border-left: 2px solid var(--accent);
+  padding: .3rem .65rem;
+  color: var(--accent);
+  font: .7rem var(--font-mono);
+}
+
+.threat-link-row {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  border: 1px solid var(--console-border);
+  border-radius: .7rem;
+  padding: .65rem .8rem;
+}
+
+.threat-link-row a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--accent);
+  font: .68rem var(--font-mono);
+  text-decoration: underline;
+}
+
+.threat-report-overlay {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  padding: clamp(.5rem, 3vw, 2rem);
+  place-items: center;
+  background: color-mix(in oklab, #000 76%, transparent);
+  backdrop-filter: blur(7px);
+}
+
+.threat-report-window {
+  display: flex;
+  width: min(100%, 90rem);
+  height: min(100%, 58rem);
+  min-height: 20rem;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-radius: .9rem;
+  background: var(--surface);
+  box-shadow: 0 24px 80px #0008;
+}
+
+.threat-report-window-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--console-border);
+  padding: .75rem 1rem;
+}
+
+.threat-report-frame {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  background: white;
+}
+
+@media (max-width: 900px) {
+  .threat-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threat-api-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .threat-server-config {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .threat-server-config-actions {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+  }
+
+  .threat-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .threat-header {
+    flex-direction: column;
+  }
+
+  .threat-api-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threat-server-heading,
+  .threat-catalog-heading,
+  .threat-ban-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .threat-server-heading-actions {
+    justify-content: flex-start;
+  }
+
+  .threat-server-config {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threat-server-config-actions {
+    grid-column: auto;
+  }
+
+  .threat-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threat-file-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 /* --- accent spectrum ------------------------------------------------------
  *
  * The console was built on a single blue accent, which is why large parts of
@@ -363,6 +1688,11 @@ button.stat-tile:focus-visible {
   overscroll-behavior: contain;
 }
 
+.nav-group:not([data-group=""]) {
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--console-border);
+}
+
 /* --- nav ----------------------------------------------------------------- */
 
 /* The active marker is a bar, not a background swap - it survives the eye
@@ -527,6 +1857,10 @@ html {
 
 .app-main {
   min-width: 0;
+}
+
+.app-main {
+  min-width: 0;
   background:
     radial-gradient(46rem 22rem at 50% -14rem,
       color-mix(in oklab, var(--accent) 5%, transparent), transparent 72%),
@@ -606,6 +1940,55 @@ html {
   border-color: color-mix(in oklab, var(--tile-tone, var(--accent)) 32%, var(--console-border));
   box-shadow: 0 16px 36px -28px color-mix(in oklab, var(--tile-tone, var(--accent)) 80%, transparent);
 }
+
+/* Start / Stop sits inside the card but is not part of "click the card to
+   expand": the row stops propagation, and it is drawn as its own strip so the
+   two click targets never look like one. Only the three Python services get
+   this row; the backend's allowlist decides which. */
+.service-control {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.55rem;
+  background: linear-gradient(
+    120deg,
+    color-mix(in oklab, var(--tile-tone, var(--accent)) 8%, transparent),
+    transparent 62%
+  );
+}
+
+.service-control-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* The outcome of the last action. Pre-wrapped because a failed start carries
+   three different kinds of line - the sentence, the log path, and that log's
+   last line - and collapsing them into one run-on sentence helps nobody. */
+.service-notice {
+  max-height: 6.5rem;
+  overflow: auto;
+  padding: 0.4rem 0.55rem;
+  border-radius: 0.45rem;
+  border-left: 2px solid var(--tone);
+  background: color-mix(in oklab, var(--tone) 8%, transparent);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: color-mix(in oklab, var(--tone) 70%, var(--foreground));
+}
+
+.service-notice.is-success { --tone: var(--success); }
+.service-notice.is-warning { --tone: var(--warning); }
 
 /* Numbers. Tabular figures are not cosmetic here - the tiles, the tables and the
    meters are all read by comparing columns, and proportional digits make a
@@ -1208,9 +2591,432 @@ select.field {
   white-space: nowrap;
 }
 
+/* --- artifact bundles (local + remote) ----------------------------------- */
+
+/* Both tabs are read at two levels: an overview strip that summarises the set,
+   and one bundle at a time. The cards share this surface, with the remote tab
+   adding a public-link panel and the local tab an integrity panel, so the two
+   sides stay visually identical without repeating the destination and account
+   on every remote card. */
+.artifact-remote-icon {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 0.7rem;
+}
+
+.artifact-remote-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 0.55rem;
+  border: 1px solid var(--console-border);
+  border-radius: 0.8rem;
+  background: color-mix(in oklab, var(--surface) 90%, transparent);
+}
+
+.artifact-remote-stat {
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.6rem;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+}
+
+.artifact-remote-stat[data-tone="accent"] {
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+}
+
+.artifact-remote-stat[data-tone="success"] {
+  background: color-mix(in oklab, var(--success) 8%, transparent);
+}
+
+.artifact-remote-stat[data-tone="danger"] {
+  background: color-mix(in oklab, var(--danger) 9%, transparent);
+}
+
+.artifact-remote-stat-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.artifact-remote-stat-value {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.2rem;
+  color: var(--foreground);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-remote-stat-note {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.artifact-remote-card {
+  padding: 0.8rem 0.9rem;
+}
+
+.artifact-remote-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.artifact-remote-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+}
+
+.artifact-remote-name {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-remote-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.artifact-remote-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.45rem 0.9rem;
+  margin-top: 0.6rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+
+.artifact-remote-meta > div {
+  min-width: 0;
+}
+
+.artifact-remote-meta span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.artifact-remote-meta strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.15rem;
+  color: var(--foreground);
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-remote-meta-note {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.artifact-remote-files {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+
+.artifact-remote-files-label {
+  margin-right: 0.15rem;
+  color: var(--muted);
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.artifact-remote-file {
+  display: inline-flex;
+  overflow: hidden;
+  max-width: 18rem;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.18rem 0.42rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-radius: 0.4rem;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+  color: var(--foreground);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
+/* A file name is the only part allowed to shrink. text-overflow on the flex
+   container itself does nothing, so the ellipsis lives on this child; without
+   it long source paths were cut mid-character with no visual cue. */
+.artifact-remote-file-name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-remote-file[data-empty="true"] {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.artifact-remote-file-size {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* File paging stays inside the card, tighter than the bundle pager at the
+   bottom of the list: the same control, but it belongs to this bundle's files
+   rather than to the whole page. */
+.artifact-remote-file-pager {
+  margin-top: 0.4rem;
+}
+
+.artifact-remote-file-pager > div {
+  padding-top: 0.35rem;
+}
+
+/* The local mirror of the public-link panel: same place, same weight, but the
+   question is "does this archive still match its manifest?" rather than "who
+   can reach it?". Tone carries the verdict so a bad bundle is visible before
+   the detail text is read. */
+.artifact-integrity-panel {
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 9%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
+}
+
+.artifact-integrity-panel[data-state="ok"] {
+  border-color: color-mix(in oklab, var(--success) 26%, transparent);
+  background: color-mix(in oklab, var(--success) 6%, transparent);
+}
+
+.artifact-integrity-panel[data-state="bad"] {
+  border-color: color-mix(in oklab, var(--danger) 30%, transparent);
+  background: color-mix(in oklab, var(--danger) 7%, transparent);
+}
+
+.artifact-integrity-panel[data-state="unknown"] {
+  border-color: color-mix(in oklab, var(--warning) 26%, transparent);
+  background: color-mix(in oklab, var(--warning) 6%, transparent);
+}
+
+.artifact-integrity-panel[data-state="empty"] {
+  border-style: dashed;
+}
+
+.artifact-integrity-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.artifact-integrity-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.artifact-integrity-panel[data-state="ok"] .artifact-integrity-label {
+  color: var(--success);
+}
+
+.artifact-integrity-panel[data-state="bad"] .artifact-integrity-label {
+  color: var(--danger);
+}
+
+.artifact-integrity-panel[data-state="unknown"] .artifact-integrity-label {
+  color: var(--warning);
+}
+
+.artifact-integrity-detail {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: right;
+}
+
+.artifact-integrity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.artifact-integrity-grid > div {
+  min-width: 0;
+}
+
+.artifact-integrity-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.artifact-integrity-grid strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.15rem;
+  color: var(--foreground);
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-integrity-hash {
+  grid-column: 1 / -1;
+}
+
+.artifact-integrity-hash strong {
+  overflow-wrap: anywhere;
+  font-size: 0.66rem;
+  white-space: normal;
+}
+
+.artifact-link-panel {
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid color-mix(in oklab, var(--foreground) 9%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
+}
+
+.artifact-link-panel[data-live="true"] {
+  border-color: color-mix(in oklab, var(--accent) 24%, transparent);
+  background: color-mix(in oklab, var(--accent) 6%, transparent);
+}
+
+.artifact-link-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.artifact-link-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.artifact-link-panel[data-live="true"] .artifact-link-label {
+  color: var(--accent);
+}
+
+.artifact-link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.artifact-link-url {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 0.45rem;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.artifact-link-hint {
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.artifact-link-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid color-mix(in oklab, var(--danger) 30%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--danger) 7%, transparent);
+  color: var(--foreground);
+  font-size: 0.7rem;
+}
+
+.artifact-link-confirm > span {
+  flex: 1 1 14rem;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.artifact-link-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.artifact-action-danger {
+  border-color: color-mix(in oklab, var(--danger) 34%, transparent);
+  background: color-mix(in oklab, var(--danger) 8%, var(--surface));
+  color: var(--danger);
+}
+
+.artifact-action-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: color-mix(in oklab, var(--danger) 14%, var(--surface));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--danger) 9%, transparent);
+}
+
+.artifact-action-danger:focus-visible {
+  outline-color: var(--danger);
+}
+
 @media (max-width: 1100px) {
   .artifact-summary-grid,
   .artifact-highlight-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .artifact-remote-overview,
+  .artifact-remote-meta {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1234,6 +3040,34 @@ select.field {
   .artifact-ranking-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .artifact-remote-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .artifact-remote-chips {
+    justify-content: flex-start;
+  }
+
+  .artifact-remote-overview,
+  .artifact-remote-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .artifact-link-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .artifact-integrity-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .artifact-integrity-detail {
+    text-align: left;
+  }
 }
 
 @media (max-width: 420px) {
@@ -1251,6 +3085,14 @@ select.field {
 
   .artifact-highlight-grid,
   .artifact-ranking-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .artifact-remote-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .artifact-integrity-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -3934,41 +5776,6 @@ select.field {
   gap: 0.35rem 0.5rem;
 }
 
-/* The argv the Run button spawns. Before a run it is a preview built from the
-   two selectors; after start it is the server's exact job.command, with the
-   absolute executable and the resolved sample path. One line, scrollable
-   rather than wrapped: a command that wraps is harder to compare with a
-   terminal, and it should never force the card wider. */
-.build-command {
-  display: flex;
-  align-items: baseline;
-  gap: 0.55rem;
-  min-width: 0;
-  margin-bottom: 0.55rem;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
-  border-radius: 0.55rem;
-  background: color-mix(in oklab, var(--foreground) 3%, transparent);
-}
-
-.build-command-label {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 0.6rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.build-command code {
-  min-width: 0;
-  overflow-x: auto;
-  color: var(--foreground);
-  font-family: var(--mono);
-  font-size: 0.66rem;
-  white-space: pre;
-}
-
 /* --- the duration limit --------------------------------------------------- */
 
 /* A compact label + number + unit. The input is deliberately narrow: it holds a
@@ -4051,22 +5858,17 @@ select.field {
   .run-cursor { animation: none; }
 }
 
-/* The cursor-off mode. Same monospace identity as the log so switching
-   between the two modes does not re-typeset the text under you. */
-.run-textarea {
-  width: 100%;
-  min-height: min(58vh, 46rem);
-  resize: vertical;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
-  border-radius: 0.5rem;
-  background: color-mix(in oklab, #000 25%, var(--surface));
-  color: var(--foreground);
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre;
-  overflow: auto;
+/* The cursor-off (static) view. Same renderer as the live one - the ANSI
+   colours stay - but no line-number gutter, so selecting a block copies clean
+   text. Focusable so the keyboard can scroll it without following the tail. */
+.build-log-static {
+  cursor: text;
+  user-select: text;
+}
+
+.build-log-static:focus-visible {
+  outline: 1px solid color-mix(in oklab, var(--accent) 55%, transparent);
+  outline-offset: 2px;
 }
 
 .build-log-line {
@@ -4687,6 +6489,13 @@ textarea:focus-visible {
   .nav-scroll > div {
     flex: 0 0 11rem;
     scroll-snap-align: start;
+  }
+
+  .nav-group:not([data-group=""]) {
+    padding-top: 0;
+    padding-right: 0.75rem;
+    border-top: 0;
+    border-right: 1px solid var(--console-border);
   }
 
   .app-main {
@@ -6283,4 +8092,176 @@ textarea:focus-visible {
 
 .factory-feature.is-disabled:hover {
   border-color: color-mix(in oklab, var(--muted) 22%, transparent);
+}
+
+/* --------------------------------------------------------------------------
+   Workspace refresh — clearer hierarchy, calmer surfaces, and a more useful
+   application frame. Existing panel markup and behaviour remain untouched.
+   -------------------------------------------------------------------------- */
+:root {
+  --console-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+  --console-shadow: 0 18px 44px -34px color-mix(in oklab, #000 65%, transparent);
+}
+
+.app-shell {
+  grid-template-columns: 258px minmax(0, 1fr);
+  background: var(--background);
+}
+
+.sidebar-glass {
+  position: relative;
+  background: color-mix(in oklab, var(--surface) 96%, var(--background));
+  border-right: 1px solid var(--console-border);
+  backdrop-filter: blur(22px);
+}
+
+.sidebar-glass > :first-child {
+  min-height: 76px;
+  padding-inline: 1.2rem;
+  border-bottom-color: var(--console-border);
+}
+
+.brand-mark {
+  width: 2.15rem;
+  height: 2.15rem;
+  border-radius: .72rem;
+  box-shadow: 0 8px 24px -12px color-mix(in oklab, var(--accent) 85%, transparent);
+}
+
+.brand-title {
+  font-size: .94rem;
+  letter-spacing: -.035em;
+}
+
+.nav-scroll {
+  padding: 1.15rem .8rem;
+  scrollbar-width: thin;
+}
+
+.nav-group:not([data-group=""]) {
+  margin-top: .35rem;
+  padding-top: .9rem;
+  border-top-color: color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+
+.section-label {
+  padding-inline: .7rem;
+  margin-bottom: .45rem;
+  color: var(--muted);
+  font-size: .58rem;
+  font-weight: 750;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.nav-item {
+  min-height: 2.55rem;
+  padding: .58rem .78rem;
+  border-radius: .68rem;
+  gap: .72rem;
+  font-size: .755rem;
+  font-weight: 550;
+  transition: background .18s ease, color .18s ease, transform .18s ease;
+}
+
+.nav-item:hover { transform: translateX(2px); }
+.nav-item.active {
+  background: color-mix(in oklab, var(--accent) 13%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 20%, transparent);
+  color: var(--foreground);
+}
+.nav-item.active::before {
+  left: -.8rem;
+  width: 3px;
+  height: 1.35rem;
+}
+
+.app-main {
+  padding: 1.65rem clamp(1.2rem, 2.5vw, 2.6rem) 3rem;
+  background:
+    radial-gradient(58rem 28rem at 58% -18rem,
+      color-mix(in oklab, var(--accent) 7%, transparent), transparent 75%),
+    var(--background);
+}
+
+.workspace-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin: 0 0 1.7rem;
+  padding: 0 0 1.25rem;
+  border-bottom: 1px solid var(--console-border);
+}
+.workspace-kicker {
+  margin-bottom: .45rem;
+  color: var(--muted);
+  font: 700 .57rem var(--font-mono);
+  letter-spacing: .13em;
+}
+.workspace-kicker span { padding-inline: .35rem; color: var(--accent); }
+.workspace-heading-row { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; }
+.workspace-title {
+  color: var(--foreground);
+  font-family: var(--font-display);
+  font-size: clamp(1.35rem, 2vw, 1.75rem);
+  font-weight: 680;
+  letter-spacing: -.045em;
+  line-height: 1.15;
+}
+.workspace-live,
+.workspace-status,
+.workspace-host {
+  display: inline-flex;
+  align-items: center;
+  gap: .42rem;
+  white-space: nowrap;
+  border: 1px solid var(--console-border);
+  border-radius: 999px;
+  padding: .34rem .58rem;
+  color: var(--muted);
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  font: 650 .56rem var(--font-mono);
+  letter-spacing: .045em;
+}
+.workspace-live i,
+.workspace-status i {
+  display: inline-block;
+  width: .38rem;
+  height: .38rem;
+  border-radius: 50%;
+  background: #35c98a;
+  box-shadow: 0 0 0 3px color-mix(in oklab, #35c98a 14%, transparent);
+}
+.workspace-live { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 22%, var(--console-border)); }
+.workspace-live i { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 14%, transparent); }
+.workspace-meta { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; }
+.workspace-host { color: var(--muted); letter-spacing: 0; text-transform: none; }
+.workspace-status { color: color-mix(in oklab, #35c98a 80%, var(--foreground)); letter-spacing: .015em; }
+
+/* Give existing cards and controls a unified, tactile treatment. */
+[data-slot="card"] {
+  border-color: var(--console-border) !important;
+  border-radius: .9rem !important;
+  box-shadow: var(--console-shadow);
+}
+[data-slot="card-header"] { padding: 1rem 1.1rem .8rem; }
+[data-slot="card-content"] { padding: .9rem 1.1rem 1.1rem; }
+.stat-tile { border-radius: .9rem; padding: 1.1rem 1.15rem; }
+button:not(.nav-item):not(.stat-tile) { transition: filter .16s ease, transform .16s ease, border-color .16s ease; }
+button:not(:disabled):active { transform: translateY(1px); }
+input, select, textarea { border-radius: .62rem !important; }
+
+@media (max-width: 1050px) {
+  .app-shell { grid-template-columns: 224px minmax(0, 1fr); }
+  .workspace-meta { gap: .35rem; }
+}
+@media (max-width: 760px) {
+  .app-shell { grid-template-columns: minmax(0, 1fr); }
+  .sidebar-glass { max-height: 44vh; }
+  .workspace-header { align-items: flex-start; flex-direction: column; gap: .85rem; margin-bottom: 1.25rem; }
+  .workspace-meta { justify-content: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }

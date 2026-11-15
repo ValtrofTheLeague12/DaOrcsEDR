@@ -34,6 +34,7 @@ from pathlib import Path
 CONFIG_RELATIVE = Path("config") / "dynamic_analysis.json"
 
 DEFAULT_COMMUNICATION = "tcp"
+DEFAULT_SOCKET_TIMEOUT = 30.0
 
 # The options, in the order the radio group shows them. The id is the value
 # persisted; the label is what the operator reads. Every sentence here is
@@ -73,8 +74,8 @@ def config_path(repo: Path) -> Path:
     return repo / CONFIG_RELATIVE
 
 
-def defaults() -> dict[str, str]:
-    return {"communication": DEFAULT_COMMUNICATION}
+def defaults() -> dict:
+    return {"communication": DEFAULT_COMMUNICATION, "socket_timeout": DEFAULT_SOCKET_TIMEOUT}
 
 
 def _coerce(value: object) -> str:
@@ -82,6 +83,16 @@ def _coerce(value: object) -> str:
         raise ValueError(
             "'communication' must be one of: " + ", ".join(OPTION_IDS))
     return value
+
+
+def _coerce_socket_timeout(value: object) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("'socket_timeout' must be a number") from exc
+    if number <= 0:
+        raise ValueError("'socket_timeout' must be greater than zero")
+    return number
 
 
 def load(repo: Path) -> dict[str, str]:
@@ -112,11 +123,14 @@ def load(repo: Path) -> dict[str, str]:
 
     settings = defaults()
     for key, value in loaded.items():
-        if key != "communication":
+        if key == "communication":
+            settings[key] = _coerce(value)
+        elif key == "socket_timeout":
+            settings[key] = _coerce_socket_timeout(value)
+        else:
             raise ValueError(
                 f"not a dynamic-analysis setting: {key} "
-                f"(known: communication)")
-        settings[key] = _coerce(value)
+                f"(known: communication, socket_timeout)")
     return settings
 
 
@@ -124,7 +138,7 @@ def write(repo: Path, patch: dict) -> dict[str, str]:
     """Set the policy. The file is rewritten whole, like the other JSON config."""
     if not isinstance(patch, dict):
         raise ValueError("body must be a JSON object")
-    unknown = [key for key in patch if key != "communication"]
+    unknown = [key for key in patch if key not in ("communication", "socket_timeout")]
     if unknown:
         raise ValueError(
             "not a dynamic-analysis setting: " + ", ".join(sorted(unknown)))
@@ -133,6 +147,8 @@ def write(repo: Path, patch: dict) -> dict[str, str]:
         current = load(repo)
         if "communication" in patch:
             current["communication"] = _coerce(patch["communication"])
+        if "socket_timeout" in patch:
+            current["socket_timeout"] = _coerce_socket_timeout(patch["socket_timeout"])
 
         path = config_path(repo)
         path.parent.mkdir(parents=True, exist_ok=True)

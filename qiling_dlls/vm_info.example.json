@@ -1,0 +1,10 @@
+{
+    "_comment": "Copy to vm_info.json and fill in the values. vm_info.json is gitignored because it carries VM_PASSWORD.",
+    "VM_NAME": "TestingVM",
+    "VM_IP": "",
+    "VM_HOST": "",
+    "VM_PASSWORD": "",
+    "VM_PORT": 22,
+    "GENERATE_ROOTFS_IF_NOT_FOUND": "True",
+    "START_VM_IF_NOT_FOUND": "True"
+}

@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO / "python"))
 sys.path.insert(0, str(REPO))
 
 import yara_gen  # noqa: E402
-from panel.utils import utils  # noqa: E402
+from panel.utils import unprotect_it, utils  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +233,50 @@ class TestYaraInventory:
         assert "no recorded upstream" in state["update_reason"]
 
 
+class TestHttrackProbe:
+    """The tool probe must find the real httrack, not stall on WSL.
+
+    A stopped WSL distro used to turn an installed Windows httrack into a
+    twenty-second "could not probe WSL" failure, which read as "httrack is
+    missing" on the MalAPI card.
+    """
+
+    def test_a_native_httrack_wins_without_probing_wsl(self, monkeypatch):
+        monkeypatch.setattr(
+            utils.shutil, "which",
+            lambda name: r"C:\Program Files\WinHTTrack\httrack.exe"
+            if name == "httrack" else None)
+
+        def explode(*args, **kwargs):
+            raise AssertionError("WSL must not be probed when native httrack exists")
+
+        monkeypatch.setattr(utils.subprocess, "run", explode)
+        assert utils._httrack_available() == (True, None)
+
+    def test_without_native_or_wsl_the_reason_names_both(self, monkeypatch):
+        monkeypatch.setattr(utils.shutil, "which", lambda name: None)
+
+        def explode(*args, **kwargs):
+            raise AssertionError("there is no wsl to run")
+
+        monkeypatch.setattr(utils.subprocess, "run", explode)
+        ok, reason = utils._httrack_available()
+        assert ok is False
+        assert "WSL is not available" in reason
+
+    def test_wsl_is_only_a_fallback(self, monkeypatch):
+        monkeypatch.setattr(
+            utils.shutil, "which",
+            lambda name: r"C:\Windows\System32\wsl.exe" if name == "wsl" else None)
+
+        class Result:
+            stdout = "/usr/bin/httrack\n"
+
+        monkeypatch.setattr(utils.subprocess, "run",
+                            lambda *args, **kwargs: Result())
+        assert utils._httrack_available() == (True, None)
+
+
 class TestMalapiState:
     """MalAPI rules are a scraped mirror, not a git checkout.
 
@@ -420,7 +464,7 @@ class TestCatalogueSafety:
 
     def test_the_network_reaching_entries_say_so(self):
         by_id = {e["id"]: e for e in utils.catalogue()["entries"]}
-        for util in ("malapi-update", "yargen-update"):
+        for util in ("malapi-update", "yargen-update", "unprotect-update"):
             joined = " ".join(by_id[util]["effects"])
             assert "network" in joined.lower(), f"{util} hides that it uses the network"
 
@@ -457,3 +501,211 @@ class TestCatalogueSafety:
         source = _Path(utils.__file__).read_text(encoding="utf-8")
         assert "GIT_TERMINAL_PROMPT" in source
         assert '"pull"' not in source, "a git pull came back; that is not the rules"
+
+
+# ---------------------------------------------------------------------------
+# unprotect_it: the filtered YARA import
+# ---------------------------------------------------------------------------
+
+class TestUnprotectRuleParsing:
+    def test_private_and_global_rules_count(self):
+        # The site's files use plain rules, but a private/global prefix is valid
+        # YARA and the duplicate check must see those identifiers too - missing
+        # them would import a rule that is already vendored.
+        text = ('private rule a { condition: true }\n'
+                'global rule b { condition: true }\n'
+                'rule c : a b { condition: true }\n')
+        assert unprotect_it._rule_ids(text) == ["a", "b", "c"]
+
+    def test_a_comment_mentioning_rule_is_not_a_rule(self):
+        text = '// rule fake { }\nrule real { condition: true }\n'
+        assert unprotect_it._rule_ids(text) == ["real"]
+
+
+class TestPeImport:
+    def test_adds_the_import_when_pe_is_used(self):
+        # 21 of the 90 scraped files are fragments of a combined file: they use
+        # pe.entry_point but never import the module, so yarac rejects them.
+        text, added = unprotect_it._ensure_pe_import(
+            'rule a { condition: pe.entry_point == 0 }')
+        assert added is True
+        assert text.startswith('import "pe"\n\n')
+
+    def test_does_not_duplicate_an_existing_import(self):
+        text = 'import "pe"\n\nrule a { condition: pe.entry_point == 0 }'
+        assert unprotect_it._ensure_pe_import(text) == (text, False)
+
+    def test_leaves_a_rule_that_does_not_use_pe_alone(self):
+        text = 'rule a { condition: true }'
+        assert unprotect_it._ensure_pe_import(text) == (text, False)
+
+
+class TestUnprotectImport:
+    @pytest.fixture
+    def tree(self, monkeypatch, tmp_path):
+        staged = tmp_path / "staged"
+        staged.mkdir()
+        rules = tmp_path / "yara-rules"
+        (rules / "other").mkdir(parents=True)
+        target = rules / "unprotect_it"
+        monkeypatch.setattr(unprotect_it, "STAGED_YARA", staged)
+        monkeypatch.setattr(unprotect_it, "YARA_RULES", rules)
+        monkeypatch.setattr(unprotect_it, "TARGET", target)
+        monkeypatch.setattr(unprotect_it, "MANIFEST", target / "_manifest.json")
+        monkeypatch.setattr(unprotect_it, "STAGED_SIGMA", tmp_path / "sigma")
+        monkeypatch.setattr(unprotect_it, "STAGED_CAPA", tmp_path / "capa")
+        return staged, rules, target
+
+    def test_keeps_only_the_new_identifiers(self, tree):
+        staged, rules, target = tree
+        (rules / "other" / "pack.yar").write_text(
+            "rule known { condition: true }", encoding="utf-8")
+        (staged / "duplicate.yar").write_text(
+            "rule known { condition: true }", encoding="utf-8")
+        (staged / "fresh.yar").write_text(
+            "rule fresh { condition: pe.entry_point == 0 }", encoding="utf-8")
+
+        manifest = unprotect_it.import_yara(lambda _line: None)
+
+        assert (target / "fresh.yar").is_file()
+        assert not (target / "duplicate.yar").exists()
+        assert manifest["yara_files"] == 1
+        assert manifest["new_rule_ids"] == 1
+        assert manifest["skipped_duplicate_files"] == 1
+        assert manifest["pe_imports_added"] == 1
+        assert (target / "fresh.yar").read_text(encoding="utf-8").startswith('import "pe"')
+
+    def test_a_previous_import_does_not_make_its_own_rules_old(self, tree):
+        # The target is excluded from the duplicate check, or every regeneration
+        # would find nothing new and delete the collection it just compared.
+        staged, _rules, target = tree
+        target.mkdir()
+        (target / "previous.yar").write_text(
+            "rule fresh { condition: true }", encoding="utf-8")
+        (staged / "fresh.yar").write_text(
+            "rule fresh { condition: true }", encoding="utf-8")
+
+        manifest = unprotect_it.import_yara(lambda _line: None)
+
+        assert manifest["yara_files"] == 1
+        assert (target / "fresh.yar").is_file()
+
+    def test_all_duplicates_leave_the_previous_import_alone(self, tree):
+        # A scrape that returns nothing new must not empty the collection before
+        # discovering that; the error used to claim the old import survived
+        # after it had already been deleted.
+        staged, rules, target = tree
+        (rules / "other" / "pack.yar").write_text(
+            "rule known { condition: true }", encoding="utf-8")
+        target.mkdir()
+        (target / "previous.yar").write_text(
+            "rule known { condition: true }", encoding="utf-8")
+        (staged / "duplicate.yar").write_text(
+            "rule known { condition: true }", encoding="utf-8")
+
+        with pytest.raises(RuntimeError, match="previous import was left in place"):
+            unprotect_it.import_yara(lambda _line: None)
+
+        assert (target / "previous.yar").is_file()
+
+
+class TestUnprotectState:
+    def test_a_missing_scraper_is_named_not_raised(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(unprotect_it, "SCRAPER", tmp_path / "absent.py")
+        monkeypatch.setattr(unprotect_it, "TARGET", tmp_path / "unprotect_it")
+        state = unprotect_it.state()
+        assert state["available"] is False
+        assert "missing" in state["reason"]
+
+    def test_the_imported_file_count_is_reported(self, monkeypatch, tmp_path):
+        target = tmp_path / "unprotect_it"
+        target.mkdir()
+        (target / "a.yar").write_text("rule a { condition: true }", encoding="utf-8")
+        scraper = tmp_path / "scrape.py"
+        scraper.write_text("", encoding="utf-8")
+        monkeypatch.setattr(unprotect_it, "SCRAPER", scraper)
+        monkeypatch.setattr(unprotect_it, "TARGET", target)
+        monkeypatch.setattr(unprotect_it, "MANIFEST", target / "_manifest.json")
+        state = unprotect_it.state()
+        assert state["yara_files"] == 1
+        assert state["target_path"].endswith("unprotect_it")
+
+
+class TestMirrorRefresh:
+    def test_the_previous_mirror_is_restored_after_a_failed_scrape(self, monkeypatch, tmp_path):
+        # scrape.py only mirrors when html_src/ is absent, so a regeneration that
+        # kept the cache would never see a rule added upstream. Moving it aside
+        # is what makes "regenerate" mean that; the restore is what keeps a
+        # failed scrape from destroying the only mirror.
+        src = tmp_path / "html_src"
+        (src / "unprotect.it").mkdir(parents=True)
+        (src / "index.html").write_text("old", encoding="utf-8")
+        monkeypatch.setattr(unprotect_it, "HTML_SRC", src)
+
+        backup = unprotect_it._mirror_aside(lambda _line: None)
+        assert not src.exists()
+        assert backup is not None and (backup / "index.html").is_file()
+
+        (src / "unprotect.it").mkdir(parents=True)
+        (src / "index.html").write_text("partial", encoding="utf-8")
+        unprotect_it._restore_mirror(backup)
+
+        assert (src / "index.html").read_text(encoding="utf-8") == "old"
+        assert not backup.exists()
+
+
+class TestStagingRefresh:
+    def test_the_previous_scrape_is_restored_after_a_failed_one(self, monkeypatch, tmp_path):
+        # Clearing the files in place would lose the staged Sigma rules when the
+        # site is unreachable, even though the previous scrape was fine.
+        staging = tmp_path / "extracted_rules"
+        (staging / "sigma").mkdir(parents=True)
+        (staging / "sigma" / "a.yaml").write_text("title: a", encoding="utf-8")
+        monkeypatch.setattr(unprotect_it, "STAGING", staging)
+
+        backup = unprotect_it._staging_aside(lambda _line: None)
+        assert not staging.exists()
+
+        (staging / "sigma").mkdir(parents=True)
+        (staging / "sigma" / "partial.yaml").write_text("title: partial", encoding="utf-8")
+        unprotect_it._restore_staging(backup)
+
+        assert (staging / "sigma" / "a.yaml").is_file()
+        assert not (staging / "sigma" / "partial.yaml").exists()
+        assert not backup.exists()
+
+
+class TestMainRollback:
+    def test_a_scrape_with_no_rules_restores_the_mirror_and_staging(self, monkeypatch, tmp_path):
+        # scrape.py exits 0 even when read_html() returns False, so the wrapper
+        # cannot trust the exit code alone: an empty staging directory is the
+        # signal that the run produced nothing, and both backups go back.
+        mirror = tmp_path / "html_src"
+        (mirror / "unprotect.it").mkdir(parents=True)
+        (mirror / "index.html").write_text("old", encoding="utf-8")
+        staging = tmp_path / "extracted_rules"
+        (staging / "sigma").mkdir(parents=True)
+        (staging / "sigma" / "a.yaml").write_text("title: a", encoding="utf-8")
+        monkeypatch.setattr(unprotect_it, "HTML_SRC", mirror)
+        monkeypatch.setattr(unprotect_it, "STAGING", staging)
+        monkeypatch.setattr(unprotect_it, "STAGED_YARA", staging / "yara")
+        monkeypatch.setattr(unprotect_it, "_run_scraper", lambda _log: 0)
+
+        assert unprotect_it.main() == 1
+        assert (mirror / "index.html").read_text(encoding="utf-8") == "old"
+        assert (staging / "sigma" / "a.yaml").is_file()
+
+
+class TestUnprotectCommand:
+    def test_the_button_runs_the_wrapper_not_the_scraper(self):
+        # scrape.py runs read_html() at import time, so it can only be a
+        # subprocess; the wrapper is what filters and imports.
+        joined = " ".join(utils._argv("unprotect"))
+        assert "unprotect_it.py" in joined
+        assert "scrape.py" not in joined
+
+    def test_the_entry_declares_the_network_and_the_target(self):
+        entry = {e["id"]: e for e in utils.catalogue()["entries"]}["unprotect-update"]
+        joined = " ".join(entry["effects"]).lower()
+        assert "network" in joined
+        assert "yara-rules/unprotect_it" in joined

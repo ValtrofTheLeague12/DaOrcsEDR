@@ -6,9 +6,8 @@ usually lies:
   * the transport a form offers is the transport that can actually run (a
     missing script or Python module is a refusal, not a button that fails after
     the upload);
-  * a TCP scan really speaks clamd's INSTREAM framing and writes a result
-    document the Results tab can read - proved against a fake clamd on
-    localhost, not against the live VM;
+  * a TCP scan uploads chunks to the VM utility server, which scans the
+    assembled file, and writes a result the Results tab can read;
   * the guard against two concurrent scans is check-and-set inside one lock,
     so two submissions cannot both win.
 
@@ -23,10 +22,10 @@ import io
 import json
 import re
 import socket
-import struct
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -35,91 +34,72 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "python"))
 
 from panel.clamd import clamd  # noqa: E402
+from panel.utils.vm_server import VMUtilityServer  # noqa: E402
 
 
-# ---------------------------------------------------------------------------
-# A fake clamd: accept one connection, read INSTREAM frames, answer.
-# ---------------------------------------------------------------------------
+@contextmanager
+def _fake_vm_utility(tmp_path, monkeypatch, scan_result):
+    """Run the real chunk receiver with a deterministic local ClamAV verdict."""
+    server = VMUtilityServer("127.0.0.1", 0, tmp_path / "vm-samples")
+    scanned = []
 
-def _fake_clamd(reply: bytes = b"stream: Eicar-Test-Signature FOUND\0"):
-    """Start a one-shot clamd on an ephemeral port; return (port, holder)."""
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(("127.0.0.1", 0))
-    srv.listen(1)
-    port = srv.getsockname()[1]
-    holder: dict = {"payload": b"", "error": None}
+    def scan_sample(request):
+        sample_path = server.samples_dir / request["filename"]
+        scanned.append(sample_path.read_bytes())
+        return scan_result
 
-    def serve():
-        try:
-            conn, _ = srv.accept()
-            conn.settimeout(5)
-            with conn:
-                # The command word, then [len][chunk]... [0].
-                cmd = b""
-                while not cmd.endswith(b"\0"):
-                    part = conn.recv(1)
-                    if not part:
-                        return
-                    cmd += part
-                holder["command"] = cmd
-                body = b""
-                while True:
-                    raw = conn.recv(4)
-                    if len(raw) < 4:
-                        return
-                    size = struct.unpack(">I", raw)[0]
-                    if size == 0:
-                        break
-                    chunk = b""
-                    while len(chunk) < size:
-                        part = conn.recv(size - len(chunk))
-                        if not part:
-                            return
-                        chunk += part
-                    body += chunk
-                holder["payload"] = body
-                conn.sendall(reply)
-        except Exception as exc:  # noqa: BLE001 - surfaced in the assertion
-            holder["error"] = exc
-        finally:
-            srv.close()
-
-    threading.Thread(target=serve, daemon=True, name="fake-clamd").start()
-    return port, holder
+    monkeypatch.setattr(server, "_scan_sample", scan_sample)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server, scanned
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+        assert not thread.is_alive()
 
 
 def _fake_pingd(version: bytes = b"ClamAV 1.4.3/27400/Tue Oct 27 06:00:00 2026"):
-    """Start a one-shot clamd that answers PING and VERSION; return (port, holder)."""
+    """Start a clamd-like server that answers PING and VERSION.
+
+    Real clamd (1.4.x) accepts **one command per connection** and closes the
+    socket after replying - on the unix socket and the TCP listener alike. The
+    fake does the same, so a regression to "PING then VERSION on one socket"
+    fails here instead of only against the VM. `connections` records which
+    socket carried each command.
+    """
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", 0))
-    srv.listen(1)
+    srv.listen(5)
     port = srv.getsockname()[1]
-    holder: dict = {"commands": [], "error": None}
+    holder: dict = {"commands": [], "connections": [], "error": None}
 
     def serve():
+        conn_no = 0
         try:
-            conn, _ = srv.accept()
-            conn.settimeout(5)
-            with conn:
-                buf = b""
-                while len(holder["commands"]) < 2:
-                    part = conn.recv(1)
-                    if not part:
-                        return
-                    buf += part
-                    if not buf.endswith(b"\0"):
-                        continue
-                    command = buf[:-1].decode("utf-8", "replace")
+            while len(holder["commands"]) < 2:
+                conn, _ = srv.accept()
+                conn_no += 1
+                conn.settimeout(5)
+                with conn:
                     buf = b""
+                    while not buf.endswith(b"\0"):
+                        part = conn.recv(1)
+                        if not part:
+                            return
+                        buf += part
+                    command = buf[:-1].decode("utf-8", "replace")
                     holder["commands"].append(command)
+                    holder["connections"].append(conn_no)
                     if command == "zPING":
                         conn.sendall(b"PONG\0")
                     elif command == "zVERSION":
                         conn.sendall(version + b"\0")
                     else:
                         conn.sendall(b"UNKNOWN COMMAND\0")
+                # The `with` block closes the connection on purpose: this is
+                # what clamd does after one reply.
         except Exception as exc:  # noqa: BLE001 - surfaced in the assertion
             holder["error"] = exc
         finally:
@@ -273,21 +253,28 @@ class TestStatusByTransport:
         assert any(line.startswith("[FAIL] scan_remote.py") for line in output)
         assert output[-1] == "--- not ready"
 
-    def test_tcp_uses_the_socket_validator_and_asks_clamd(self, select, monkeypatch):
+    def test_tcp_checks_the_client_target_and_connect(self, select, monkeypatch):
         select("tcp")
         port, holder = _fake_pingd()
         monkeypatch.setattr(clamd, "_tcp_target", lambda: ("127.0.0.1", port))
 
         got = clamd.status()
         names = [c["name"] for c in got["checks"]]
-        assert names == ["socket_validator.py", "ifaddr installed",
-                         "colorama installed", "clamd target",
-                         "socket client loads", "connect", "PING -> PONG"]
+        assert names == ["socket_validator.py", "VM utility target", "connect"]
         assert got["ready"] is True
         assert got["reachable"] is True
-        assert got["version"].startswith("ClamAV")
-        assert holder["commands"] == ["zPING", "zVERSION"]
+        assert got["version"] == ""
+        # The status check opens the socket and closes it. It does not send
+        # clamd's zPING: on this lab the endpoint can be the VM utility server,
+        # whose protocol is newline JSON, and a clamd command would time out on
+        # a socket that is perfectly usable. Health is the explicit ping().
+        assert holder["commands"] == []
         assert got["endpoint"] == f"tcp://127.0.0.1:{port}"
+
+        connect = next(c for c in got["checks"] if c["name"] == "connect")
+        assert connect["ok"] is True
+        assert connect["detail"].startswith(f"127.0.0.1:{port}")
+        assert "TimeoutError" not in connect["detail"]
 
         # The connection test's output keeps the client's own narration, so the
         # page can show what the operator's script actually did.
@@ -295,9 +282,11 @@ class TestStatusByTransport:
         assert any("Checking if the ip is valid" in ln for ln in output)
         assert any("Connection to TCP Server has been established" in ln
                    for ln in output)
-        assert any(ln.startswith("[ok  ] PING -> PONG") for ln in output)
+        assert not any(c["name"] == "PING -> PONG" for c in got["checks"])
         assert output[-1] == "--- ready"
-        assert not any("\x1b[" in ln for ln in output)
+        # SGR colours are kept: Console renders ANSI through ansiPieces(), and
+        # the client colours its own narration.
+        assert any("\x1b[" in ln for ln in output)
         # The client enumerates every adapter to prove the IP is local; that is
         # folded into one line so the connect result is not buried.
         assert not any("IPs of network adapter" in ln for ln in output)
@@ -316,6 +305,49 @@ class TestStatusByTransport:
         assert got["reachable"] is False
         connect = next(c for c in got["checks"] if c["name"] == "connect")
         assert connect["ok"] is False
+
+    def test_a_silent_socket_still_counts_as_connected(self, select, monkeypatch):
+        """Opening the socket is the path check; silence is not a failure.
+
+        The regression this pins: zPING was sent to whatever listened on that
+        port. When that is the VM utility server its protocol is newline JSON,
+        so the read timed out and the page said "not ready" about a socket that
+        had opened perfectly. Health is now ping(), not a clamd command.
+        """
+        select("tcp")
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        held: list = []
+
+        def serve():
+            try:
+                conn, _ = srv.accept()
+                held.append(conn)  # accept and hold: never answer, never close
+            except OSError:
+                pass
+
+        threading.Thread(target=serve, daemon=True, name="silent-server").start()
+        real = clamd._probe_tcp
+        monkeypatch.setattr(clamd, "_probe_tcp",
+                            lambda v, h, p: real(v, h, p, timeout=0.3))
+        monkeypatch.setattr(clamd, "_tcp_target", lambda: ("127.0.0.1", port))
+        try:
+            got = clamd.status()
+        finally:
+            for conn in held:
+                conn.close()
+            srv.close()
+
+        connect = next(c for c in got["checks"] if c["name"] == "connect")
+        assert got["ready"] is True
+        assert got["reachable"] is True
+        assert connect["ok"] is True
+        assert f"127.0.0.1:{port}" in connect["detail"]
+        assert "TimeoutError" not in connect["detail"]
+        assert not any(c["name"] == "PING -> PONG" for c in got["checks"])
 
     def test_a_malformed_config_is_an_error_not_a_guess(self, monkeypatch):
         def boom(repo):
@@ -389,8 +421,8 @@ class TestStatusTranscript:
 
         pairs = self._steps(output)
         assert len(pairs) == len(got["checks"])
-        assert "asking clamd for PING and VERSION" in pairs[-1][0]
-        assert pairs[-1][1].startswith("[ok  ] PING -> PONG")
+        assert "opening the socket, exactly as a scan does" in pairs[-1][0]
+        assert pairs[-1][1].startswith("[ok  ] connect")
 
         # The client's own narration belongs after the steps it belongs to,
         # never between an announcement and its result.
@@ -480,33 +512,6 @@ class TestSocketClientContract:
         ]
 
 
-class TestInstreamReply:
-    @pytest.mark.parametrize("reply,status,signature", [
-        (b"stream: Win.Test.EICAR_HDB-1 FOUND\0", "FOUND", "Win.Test.EICAR_HDB-1"),
-        (b"stream: OK\0", "OK", ""),
-        (b"stream: OK\n", "OK", ""),
-    ])
-    def test_parses_a_verdict(self, reply, status, signature):
-        got_status, got_signature, _ = clamd._parse_instream(reply)
-        assert (got_status, got_signature) == (status, signature)
-
-    def test_size_limit_is_an_error_with_the_sentence_kept(self):
-        status, _, detail = clamd._parse_instream(
-            b"INSTREAM size limit exceeded. ERROR\0")
-        assert status == "ERROR"
-        assert "size limit exceeded" in detail
-
-    def test_an_empty_reply_is_an_error_not_a_clean_scan(self):
-        status, _, detail = clamd._parse_instream(b"")
-        assert status == "ERROR"
-        assert "without a reply" in detail
-
-    def test_an_unknown_reply_never_reads_as_clean(self):
-        status, _, detail = clamd._parse_instream(b"banana\0")
-        assert status == "ERROR"
-        assert detail == "banana"
-
-
 class TestStaging:
     def _file(self, name="sample.exe", body=b"MZ" + b"\0" * 100):
         class _Upload(io.BytesIO):
@@ -570,52 +575,56 @@ class TestStartSubmitRefusals:
 
 
 class TestTcpScan:
-    def test_instream_roundtrip_writes_a_result_document(self, results_dir, select,
-                                                        monkeypatch):
+    def test_chunk_upload_is_scanned_as_a_file_and_writes_result(
+            self, results_dir, select, monkeypatch, tmp_path):
         select("tcp")
-        port, holder = _fake_clamd()
-        monkeypatch.setattr(clamd, "_tcp_target", lambda: ("127.0.0.1", port))
-
         body = b"MZ" + b"\2" * 128
-        # No mode argument: the transport comes from the config, which the
-        # fixture pinned to tcp above.
-        got = clamd.start_submit("eicar.exe", io.BytesIO(body))
-        assert got["ok"] is True, got
-        assert got["mode"] == "tcp"
+        verdict = {"status": "FOUND", "signature": "Eicar-Test-Signature",
+                   "detail": ""}
+        with _fake_vm_utility(tmp_path, monkeypatch, verdict) as (server, scanned):
+            monkeypatch.setattr(clamd, "_tcp_target", lambda: server.address)
+            # No mode argument: the transport comes from the config, which the
+            # fixture pinned to tcp above.
+            got = clamd.start_submit("eicar.exe", io.BytesIO(body))
+            assert got["ok"] is True, got
+            assert got["mode"] == "tcp"
 
-        job = _wait(got["job_id"])
-        assert holder["error"] is None
-        assert holder["command"] == b"zINSTREAM\0"
-        assert holder["payload"] == body, "INSTREAM framing lost the sample"
+            job = _wait(got["job_id"])
+            assert scanned == [body]
+            stored = list(server.samples_dir.glob("*-eicar.exe"))
+            assert len(stored) == 1
+            assert stored[0].read_bytes() == body
 
-        assert job["state"] == "passed"
-        row = job["results"][0]
-        assert row["verdict"] == "infected"
-        assert row["signature"] == "Eicar-Test-Signature"
+            assert job["state"] == "passed"
+            row = job["results"][0]
+            assert row["verdict"] == "infected"
+            assert row["signature"] == "Eicar-Test-Signature"
 
-        saved = json.loads(Path(row["result_file"]).read_text(encoding="utf-8"))
-        assert saved["verdict"] == "infected"
-        assert saved["status"] == "FOUND"
-        assert saved["endpoint"] == f"tcp:127.0.0.1:{port}"
-        assert len(saved["sha256"]) == 64
+            saved = json.loads(Path(row["result_file"]).read_text(encoding="utf-8"))
+            assert saved["verdict"] == "infected"
+            assert saved["status"] == "FOUND"
+            assert saved["endpoint"] == f"tcp:127.0.0.1:{server.address[1]}"
+            assert len(saved["sha256"]) == 64
 
-        # The same document the Results tab reads must recognise it.
-        entry = clamd._result_entry(Path(row["result_file"]))
-        assert entry["verdict"] == "infected"
-        assert entry["signature"] == "Eicar-Test-Signature"
+            entry = clamd._result_entry(Path(row["result_file"]))
+            assert entry["verdict"] == "infected"
+            assert entry["signature"] == "Eicar-Test-Signature"
 
-        # The socket client's own narration is in the log, ANSI stripped.
-        assert any("SocketValidator" in ln or "socket" in ln for ln in job["log"])
-        assert not any("\x1b[" in ln for ln in job["log"])
+            assert any("SocketValidator" in ln or "socket" in ln for ln in job["log"])
+            # The CLI's SGR colours survive into the job log for the browser's
+            # ANSI renderer; they are not stripped by the panel.
+            assert any("\x1b[" in ln for ln in job["log"])
 
-    def test_a_clean_reply_is_clean(self, results_dir, select, monkeypatch):
+    def test_a_clean_reply_is_clean(self, results_dir, select, monkeypatch, tmp_path):
         select("tcp")
-        port, _ = _fake_clamd(reply=b"stream: OK\0")
-        monkeypatch.setattr(clamd, "_tcp_target", lambda: ("127.0.0.1", port))
-        got = clamd.start_submit("clean.exe", io.BytesIO(b"MZclean"), "tcp")
-        job = _wait(got["job_id"])
-        assert job["state"] == "passed"
-        assert job["results"][0]["verdict"] == "clean"
+        with _fake_vm_utility(
+                tmp_path, monkeypatch,
+                {"status": "OK", "signature": "", "detail": ""}) as (server, _):
+            monkeypatch.setattr(clamd, "_tcp_target", lambda: server.address)
+            got = clamd.start_submit("clean.exe", io.BytesIO(b"MZclean"), "tcp")
+            job = _wait(got["job_id"])
+            assert job["state"] == "passed"
+            assert job["results"][0]["verdict"] == "clean"
 
     def test_a_refused_connection_fails_without_a_result_file(self, results_dir,
                                                              select, monkeypatch):
@@ -634,17 +643,19 @@ class TestTcpScan:
 
 
 class TestCurrentAndGuard:
-    def test_current_submit_returns_the_last_clamd_job(self, results_dir, select,
-                                                       monkeypatch):
+    def test_current_submit_returns_the_last_clamd_job(
+            self, results_dir, select, monkeypatch, tmp_path):
         select("tcp")
-        port, _ = _fake_clamd(reply=b"stream: OK\0")
-        monkeypatch.setattr(clamd, "_tcp_target", lambda: ("127.0.0.1", port))
-        got = clamd.start_submit("x.exe", io.BytesIO(b"MZ"))
-        _wait(got["job_id"])
-        current = clamd.current_submit()
-        assert current is not None
-        assert current["id"] == got["job_id"]
-        assert current["kind"] == "clamd"
+        with _fake_vm_utility(
+                tmp_path, monkeypatch,
+                {"status": "OK", "signature": "", "detail": ""}) as (server, _):
+            monkeypatch.setattr(clamd, "_tcp_target", lambda: server.address)
+            got = clamd.start_submit("x.exe", io.BytesIO(b"MZ"))
+            _wait(got["job_id"])
+            current = clamd.current_submit()
+            assert current is not None
+            assert current["id"] == got["job_id"]
+            assert current["kind"] == "clamd"
 
     def test_a_second_scan_is_refused_while_one_holds_the_guard(self, select):
         select("tcp")
@@ -723,31 +734,33 @@ class TestSubmitEndpoint:
         from panel.app import create_app
         return create_app().test_client()
 
-    def test_an_upload_starts_a_job_the_build_endpoint_can_follow(self, client,
-                                                                 select, monkeypatch):
+    def test_an_upload_starts_a_job_the_build_endpoint_can_follow(
+            self, client, select, monkeypatch, tmp_path):
         select("tcp")
-        port, holder = _fake_clamd(reply=b"stream: OK\0")
-        monkeypatch.setattr(clamd, "_tcp_target", lambda: ("127.0.0.1", port))
-        # No `mode` field: the route reads the transport from the config.
-        res = client.post(
-            "/api/clamd/submit",
-            data={"file": (io.BytesIO(b"MZ from flask"), "route.exe")},
-            content_type="multipart/form-data")
-        assert res.status_code == 202, res.get_data(as_text=True)
-        body = res.get_json()
-        assert body["ok"] is True
-        assert body["mode"] == "tcp"
+        with _fake_vm_utility(
+                tmp_path, monkeypatch,
+                {"status": "OK", "signature": "", "detail": ""}) as (server, scanned):
+            monkeypatch.setattr(clamd, "_tcp_target", lambda: server.address)
+            # No `mode` field: the route reads the transport from the config.
+            res = client.post(
+                "/api/clamd/submit",
+                data={"file": (io.BytesIO(b"MZ from flask"), "route.exe")},
+                content_type="multipart/form-data")
+            assert res.status_code == 202, res.get_data(as_text=True)
+            body = res.get_json()
+            assert body["ok"] is True
+            assert body["mode"] == "tcp"
 
-        job = _wait(body["job_id"])
-        assert job["state"] == "passed"
-        assert holder["payload"] == b"MZ from flask"
+            job = _wait(body["job_id"])
+            assert job["state"] == "passed"
+            assert scanned == [b"MZ from flask"]
 
-        followed = client.get(f"/api/build/{body['job_id']}").get_json()
-        assert followed["kind"] == "clamd"
-        assert followed["results"][0]["verdict"] == "clean"
+            followed = client.get(f"/api/build/{body['job_id']}").get_json()
+            assert followed["kind"] == "clamd"
+            assert followed["results"][0]["verdict"] == "clean"
 
-        current = client.get("/api/clamd/submit").get_json()
-        assert current["id"] == body["job_id"]
+            current = client.get("/api/clamd/submit").get_json()
+            assert current["id"] == body["job_id"]
 
     def test_a_mode_that_disagrees_with_the_config_is_a_400(self, client):
         res = client.post(
@@ -786,3 +799,109 @@ class TestSubmitEndpoint:
         assert res.status_code == 413
         assert res.get_json()["code"] == "too-large"
 
+
+# ---------------------------------------------------------------------------
+# Service ping: the panel's half of the vm_utility protocol
+# ---------------------------------------------------------------------------
+
+class _PingClient:
+    """The two calls ping() makes on socket_validator.py, without ifaddr."""
+
+    def __init__(self, host: str):
+        self.host = host
+
+    def establish_tcp_connection(self, port: int):
+        return socket.create_connection((self.host, port), timeout=3)
+
+    def closeConnection(self, sock) -> None:
+        sock.close()
+
+
+def _fake_utility(reply: dict) -> tuple[int, dict, socket.socket]:
+    """A one-shot VM utility server; returns (port, seen, listener)."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    seen: dict = {}
+
+    def serve():
+        try:
+            conn, _ = srv.accept()
+            with conn:
+                buf = b""
+                while b"\n" not in buf:
+                    part = conn.recv(4096)
+                    if not part:
+                        return
+                    buf += part
+                seen["request"] = json.loads(buf.split(b"\n", 1)[0])
+                conn.sendall(json.dumps(reply).encode("utf-8") + b"\n")
+        except OSError as exc:  # noqa: BLE001 - surfaced in the test
+            seen["error"] = exc
+        finally:
+            srv.close()
+
+    threading.Thread(target=serve, daemon=True, name="fake-utility").start()
+    return port, seen, srv
+
+
+class TestServicePing:
+    """ping() calls VirtualUtility.ping_service, not clamd's zPING."""
+
+    def test_ping_uses_the_vm_utility_request_and_maps_the_answer(
+            self, monkeypatch):
+        reply = {"ok": True,
+                 "result": {"service": "clamav", "state": "active",
+                            "active": True, "detail": "clamav is running"}}
+        port, seen, srv = _fake_utility(reply)
+        monkeypatch.setattr(clamd, "_socket_validator", lambda: _PingClient)
+        monkeypatch.setattr(clamd, "_utility_target",
+                            lambda: ("127.0.0.1", port))
+        try:
+            got = clamd.ping()
+        finally:
+            srv.close()
+
+        assert got["ok"] is True
+        assert got["alive"] is True
+        assert got["state"] == "active"
+        assert got["detail"] == "clamav is running"
+        assert got["response"] == reply
+        assert got["seconds"] >= 0
+        # The exact request vm_utility.py sends; the panel did not invent one.
+        assert seen["request"] == {"command": "ping clamav",
+                                    "service": "clamav"}
+
+    def test_a_down_service_is_answered_but_not_alive(self, monkeypatch):
+        reply = {"ok": True,
+                 "result": {"service": "clamav", "state": "inactive",
+                            "active": False}}
+        port, _, srv = _fake_utility(reply)
+        monkeypatch.setattr(clamd, "_socket_validator", lambda: _PingClient)
+        monkeypatch.setattr(clamd, "_utility_target",
+                            lambda: ("127.0.0.1", port))
+        try:
+            got = clamd.ping()
+        finally:
+            srv.close()
+
+        assert got["ok"] is True
+        assert got["alive"] is False
+        assert got["state"] == "inactive"
+        assert "not active" in got["detail"]
+
+    def test_an_unreachable_utility_server_is_not_alive(self, monkeypatch):
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        monkeypatch.setattr(clamd, "_socket_validator", lambda: _PingClient)
+        monkeypatch.setattr(clamd, "_utility_target",
+                            lambda: ("127.0.0.1", port))
+
+        got = clamd.ping()
+        assert got["ok"] is False
+        assert got["alive"] is False
+        assert got["error"]

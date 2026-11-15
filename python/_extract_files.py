@@ -385,8 +385,18 @@ def extract_all_offline(urls: list[str]) -> tuple[int, int, int, int]:
 
 
 # ---------------------------------------------------------------------------
-# WSL / HTTrack plumbing
+# HTTrack plumbing
+#
+# Native Windows httrack is preferred: it is a real executable the operator can
+# run themselves, and it avoids starting a distro just to mirror a site. WSL is
+# the fallback for machines without a Windows build, where `_ensure_httrack_in_wsl`
+# can install it.
 # ---------------------------------------------------------------------------
+
+def _native_httrack() -> str | None:
+    """The Windows httrack.exe, when one is installed and on PATH."""
+    return shutil.which("httrack") or shutil.which("httrack.exe")
+
 
 def _wsl_available() -> bool:
     if shutil.which("wsl") is None:
@@ -470,20 +480,32 @@ def mirror(url: str, dest: Path) -> str:
             _log_exception(f"creating {dest}", exc)
             return "fail"
 
-        wsl_dest = _to_wsl_path(dest)
-        logger.info("[+] mirroring {} → {} (wsl: {})", url, dest, wsl_dest)
-
-        cmd = _wsl_prefix() + [
-            "httrack", url,
-            "-O", wsl_dest,
-            f"-r{DEPTH}",
-            f"--sockets={SOCKETS}",
-            "--robots=0",
-            "-%v",
-        ]
+        native = _native_httrack()
+        if native:
+            logger.info("[+] mirroring {} → {} (httrack: {})", url, dest, native)
+            cmd = [
+                native, url,
+                "-O", str(dest),
+                f"-r{DEPTH}",
+                f"--sockets={SOCKETS}",
+                "--robots=0",
+                "-%v",
+            ]
+        else:
+            wsl_dest = _to_wsl_path(dest)
+            logger.info("[+] mirroring {} → {} (wsl: {})", url, dest, wsl_dest)
+            cmd = _wsl_prefix() + [
+                "httrack", url,
+                "-O", wsl_dest,
+                f"-r{DEPTH}",
+                f"--sockets={SOCKETS}",
+                "--robots=0",
+                "-%v",
+            ]
 
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               errors="replace", timeout=1800)
         except subprocess.TimeoutExpired:
             logger.error("[-] httrack timed out after 30 min for {}", url)
             return "fail"
@@ -609,13 +631,17 @@ def main() -> int:
 
         logger.info("[+] network reachable — running in online mode")
 
-        if not _wsl_available():
-            logger.error("[-] WSL is not available or not responding")
-            return 1
+        native = _native_httrack()
+        if native:
+            logger.info("[+] httrack: {}", native)
+        else:
+            if not _wsl_available():
+                logger.error("[-] httrack is not on PATH and WSL is not available")
+                return 1
 
-        if not _ensure_httrack_in_wsl():
-            logger.error("[-] httrack is not available inside WSL")
-            return 1
+            if not _ensure_httrack_in_wsl():
+                logger.error("[-] httrack is not available inside WSL")
+                return 1
 
         for url, dest in pending:
             try:

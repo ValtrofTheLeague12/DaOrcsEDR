@@ -1,6 +1,4 @@
-import { Card } from '@heroui/react/card'
 import { Chip } from '@heroui/react/chip'
-import { Alert } from '@heroui/react/alert'
 import Icon from '../components/Icon'
 import VmListPanel from '../components/VmListPanel'
 import { VM_MACHINES, VM_TARGETS, guestsOf, type VmTarget } from '../lib/vms'
@@ -8,11 +6,11 @@ import { VM_MACHINES, VM_TARGETS, guestsOf, type VmTarget } from '../lib/vms'
 // ---------------------------------------------------------------------------
 // Virtual Machines - the fleet view.
 //
-// This section exists because the lab's tools and the lab's machines are not
-// separate concerns: ClamAV and the Qiling harness are GUESTS on the Qiling VM,
-// reached over SSH, not services and not machines. Showing them beside the
-// machines that host them is the honest arrangement; a flat list of "VM, CAPE,
-// ClamAV, Qiling" implies four peers and hides where anything actually runs.
+// Two questions, in the order an operator asks them: what is running right now
+// (the live VirtualBox inventory), and how is the lab wired (which tools live
+// on which machine). ClamAV and the Qiling harness are GUESTS on the Qiling VM,
+// reached over SSH, so the wiring is drawn as a tree - a machine with its
+// guests nested underneath - rather than as a flat list that implies four peers.
 //
 // Adding a machine is an entry in lib/vms.ts - nothing here changes.
 // ---------------------------------------------------------------------------
@@ -31,131 +29,83 @@ function endpoint(t: VmTarget): string {
   return t.username ? `${t.username}@${base.replace(`${t.kind}://`, '')}` : base
 }
 
-function MachineCard({ vm }: { vm: VmTarget }) {
-  const guests = guestsOf(vm.id)
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+
+function Node({ target, guest = false }: { target: VmTarget; guest?: boolean }) {
   return (
-    <Card className="w-full">
-      <Card.Header className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-default-100 text-default-600">
-            <Icon name={vm.icon} size={16} />
-          </span>
-          <div className="min-w-0">
-            <Card.Title className="truncate text-sm font-semibold">{vm.label}</Card.Title>
-            <p className="truncate text-[11px] text-default-400">{vm.purpose}</p>
-          </div>
-        </div>
-        <Chip size="sm" variant="soft" color={vm.slice ? 'warning' : 'default'}>
-          {vm.slice ?? KIND_LABEL[vm.kind]}
-        </Chip>
-      </Card.Header>
-
-      <Card.Content className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="rounded border border-default-200 px-1.5 py-0.5 font-mono text-[10px] text-default-500">
-            {KIND_LABEL[vm.kind]}
-          </span>
-          <span className="truncate font-mono text-[11px] text-default-500">
-            {endpoint(vm)}
-          </span>
-        </div>
-
-        {guests.length > 0 && (
-          <div className="border-t border-default-100 pt-2.5">
-            <p className="eyebrow mb-1.5">runs on this machine</p>
-            <div className="flex flex-col gap-1">
-              {guests.map((g) => (
-                <div key={g.id} className="flex items-center justify-between gap-2">
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <Icon name={g.icon} size={12} className="text-default-400" />
-                    <span className="truncate text-[11px] text-default-600">{g.label}</span>
-                  </span>
-                  <span className="shrink-0 font-mono text-[10px] text-default-400">
-                    {g.host.split('/').pop() || g.kind}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </Card.Content>
-    </Card>
+    <div className={`topo-node ${guest ? 'is-guest' : ''} ${target.host ? '' : 'is-unset'}`}>
+      <span className="topo-icon"><Icon name={target.icon} size={guest ? 13 : 16} /></span>
+      <div className="topo-main">
+        <p className="topo-name">{target.label}</p>
+        <p className="topo-purpose">{target.purpose}</p>
+      </div>
+      <div className="topo-meta">
+        <span className="topo-kind">{KIND_LABEL[target.kind]}</span>
+        <code title={endpoint(target)}>{endpoint(target)}</code>
+      </div>
+      <Chip size="sm" variant="soft" color={target.host ? 'default' : 'warning'}>
+        {target.host ? 'Endpoint set' : 'Setup required'}
+      </Chip>
+    </div>
   )
 }
 
 export default function VM() {
+  // The live VirtualBox inventory already lists the Qiling VM with real state;
+  // the wiring below is the static registry, so it keeps every machine.
   const machines = VM_MACHINES
   const guests = VM_TARGETS.filter((t) => t.hostedOn)
+  const unset = [...machines, ...guests].filter((t) => !t.host).length
 
   return (
-    <>
-      <div className="mb-6 flex items-baseline justify-between gap-4">
-        <h1 className="page-title">Virtual Machines</h1>
-        <Chip size="sm" variant="soft">
-          {machines.length} machines · {guests.length} guests
-        </Chip>
-      </div>
+    <div className="fleet-page">
+      <header className="fleet-header">
+        <div>
+          <p className="eyebrow">VIRTUAL MACHINES</p>
+          <h1 className="page-title mt-1">Fleet</h1>
+          <p className="fleet-lede">
+            What is running right now, and how the lab is wired together.
+          </p>
+        </div>
+        <div className="fleet-chips">
+          <Chip size="sm" variant="soft">{plural(machines.length, 'machine')}</Chip>
+          <Chip size="sm" variant="soft">{plural(guests.length, 'guest')}</Chip>
+          {unset > 0 && <Chip size="sm" variant="soft" color="warning">{unset} to set up</Chip>}
+        </div>
+      </header>
 
-      <Alert status="accent" className="mb-4">
-        <Alert.Title>Tools and machines are not peers</Alert.Title>
-        <Alert.Description>
-          ClamAV and the Qiling harness are guests on the Qiling VM, reached over
-          SSH — not services and not machines of their own. Neither listens on a
-          port: clamd answers on a unix socket inside the guest and Qiling is a
-          systemd <code>oneshot</code> started per sample.
-        </Alert.Description>
-      </Alert>
-
-      <section className="mb-6">
+      <section className="fleet-section">
         <VmListPanel />
       </section>
 
-      <p className="section-label mb-2">Configured endpoints</p>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {machines.map((vm) => (
-          <MachineCard key={vm.id} vm={vm} />
-        ))}
-      </div>
+      <section className="fleet-section">
+        <div className="fleet-section-head">
+          <h2>Topology</h2>
+          <p>
+            Guests run <em>inside</em> a machine and are reached over SSH.
+            ClamAV answers on a unix socket in the guest; Qiling is a systemd{' '}
+            <code>oneshot</code> started per sample. Neither listens on a port.
+          </p>
+        </div>
 
-      <p className="section-label mb-2 mt-6">Guests</p>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {guests.map((g) => (
-          <Card key={g.id} className="w-full">
-            <Card.Header className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2.5">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-default-100 text-default-600">
-                  <Icon name={g.icon} size={16} />
-                </span>
-                <div className="min-w-0">
-                  <Card.Title className="truncate text-sm font-semibold">{g.label}</Card.Title>
-                  <p className="truncate text-[11px] text-default-400">{g.purpose}</p>
-                </div>
+        <div className="topo">
+          {machines.map((machine) => {
+            const hosted = guestsOf(machine.id)
+            return (
+              <div key={machine.id} className="topo-group">
+                <Node target={machine} />
+                {hosted.length > 0 && (
+                  <div className="topo-children">
+                    {hosted.map((guest) => (
+                      <Node key={guest.id} target={guest} guest />
+                    ))}
+                  </div>
+                )}
               </div>
-              <Chip size="sm" variant="soft" color="warning">
-                {g.slice}
-              </Chip>
-            </Card.Header>
-            <Card.Content>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="rounded border border-default-200 px-1.5 py-0.5 font-mono text-[10px] text-default-500">
-                  {KIND_LABEL[g.kind]}
-                </span>
-                <span className="truncate font-mono text-[11px] text-default-500">
-                  {endpoint(g)}
-                </span>
-              </div>
-              {g.hostedOn && (
-                <p className="mt-2 text-[11px] text-default-400">
-                  hosted on{' '}
-                  <span className="text-default-600">
-                    {VM_TARGETS.find((t) => t.id === g.hostedOn)?.label}
-                  </span>
-                </p>
-              )}
-            </Card.Content>
-          </Card>
-        ))}
-      </div>
-    </>
+            )
+          })}
+        </div>
+      </section>
+    </div>
   )
 }

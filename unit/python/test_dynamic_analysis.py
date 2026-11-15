@@ -26,11 +26,11 @@ def tree(tmp_path):
 
 
 def test_missing_file_is_the_documented_default(tree):
-    assert da.load(tree) == {"communication": "tcp"}
+    assert da.load(tree) == {"communication": "tcp", "socket_timeout": 30.0}
     snapshot = da.snapshot(tree)
     assert snapshot["exists"] is False
     assert snapshot["error"] is None
-    assert snapshot["settings"] == {"communication": "tcp"}
+    assert snapshot["settings"] == {"communication": "tcp", "socket_timeout": 30.0}
     assert [o["id"] for o in snapshot["options"]] == ["tcp", "sftp"]
     assert [o["selected"] for o in snapshot["options"]] == [True, False]
 
@@ -39,8 +39,8 @@ def test_write_persists_and_round_trips(tree):
     da.write(tree, {"communication": "sftp"})
     path = tree / "config" / "dynamic_analysis.json"
     assert json.loads(path.read_text(encoding="utf-8")) == {
-        "communication": "sftp"}
-    assert da.load(tree) == {"communication": "sftp"}
+        "communication": "sftp", "socket_timeout": 30.0}
+    assert da.load(tree) == {"communication": "sftp", "socket_timeout": 30.0}
     snapshot = da.snapshot(tree)
     assert snapshot["exists"] is True
     assert snapshot["modified"] is not None
@@ -51,7 +51,7 @@ def test_unknown_transport_is_refused_and_the_file_untouched(tree):
     da.write(tree, {"communication": "sftp"})
     with pytest.raises(ValueError, match="communication"):
         da.write(tree, {"communication": "udp"})
-    assert da.load(tree) == {"communication": "sftp"}
+    assert da.load(tree) == {"communication": "sftp", "socket_timeout": 30.0}
 
 
 def test_unknown_key_is_refused(tree):
@@ -70,7 +70,7 @@ def test_a_malformed_file_is_reported_not_ignored(tree):
     assert snapshot["error"]
     # The snapshot still answers with the default so the page can render and
     # say what is wrong, rather than failing to load its only control.
-    assert snapshot["settings"] == {"communication": "tcp"}
+    assert snapshot["settings"] == {"communication": "tcp", "socket_timeout": 30.0}
 
 
 def test_the_options_are_labelled_exactly_as_the_page_shows_them():

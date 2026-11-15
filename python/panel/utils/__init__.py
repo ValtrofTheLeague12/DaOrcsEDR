@@ -1,1 +1,2 @@
-"""Cross-cutting helpers: job runners, YARA checks, Eagle builds and MalAPI refresh."""
+"""Cross-cutting helpers: job runners, YARA checks, Unprotect.it imports,
+Eagle builds and MalAPI refresh."""

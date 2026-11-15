@@ -18,6 +18,10 @@ struct options {
   // fails, so a broken password file can never quietly downgrade the bundle to
   // an unprotected upload.
   bool encrypt = false;
+  // Generate a unique zip password for this bundle alone (stored in the
+  // operator profile by the uploader) instead of reading the shared operator
+  // password file. The password value never crosses this process boundary.
+  bool per_bundle_password = false;
   // The password file the zip encryption reads. empty = the uploader's default
   // operator password file outside the repo (the one the panel manages).
   std::string password_file;

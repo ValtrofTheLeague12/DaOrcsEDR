@@ -83,8 +83,8 @@ granularity artefact. One bundle has no interval and therefore no rate; the
 chart says so instead of drawing a zero.
 
 The page reports; it does not push. Uploading is available as an explicit
-**Export to MEGA** action per bundle on the Remote tab, and it is gated on
-the *effective* upload toggle — `MEGA_UPLOAD` from `config/analysis.yaml` wins over
+**Export to MEGA** action per bundle on the Local tab — where the archive still
+is — and it is gated on the *effective* upload toggle — `MEGA_UPLOAD` from `config/analysis.yaml` wins over
 `upload_artifacts` in `config/artifacts.yaml`, the same precedence the analyzer
 applies. That setting is the operator saying "this lab does not send evidence
 off the host", so a button in a browser has to obey it exactly as the binary
@@ -107,4 +107,23 @@ Before the job starts, the panel pre-flights the password through the same
 message instead of a job log that ends in exit 4. A successful export
 invalidates the five-minute MEGA listing cache; otherwise the button would work
 and the page would insist nothing had arrived.
+
+**Public links are a separate, explicit capability.** The Remote tab shows which
+bundles are already published; it reads that with `GET /api/artifacts/links`,
+which is one read-only `export` call, never a side effect of the listing poll.
+Creating a link is `POST /api/artifacts/link` and deleting one is
+`POST /api/artifacts/link/delete`: the latter removes MEGA's export so anyone
+holding the URL loses access, while the bundle itself stays on the account.
+`deleted: false` means there was no export to remove — already revoked, or never
+created — which the page treats as success, because the end state asked for is
+true either way. The delete button asks for confirmation inline and warns when
+the bundle is unprotected; an unprotected MEGA link is the whole capability, not
+just a name for it.
+
+**Duplicate remote folders are reported, not hidden.** MEGA permits several
+folders with the same name, and `mega/upload.py` calls `put` with a destination
+folder rather than checking first, so a repeated upload can produce
+`file_artifact` two or three times. The listing keys bundles by name like the
+rest of the page, so the Remote tab counts the copies, marks the affected cards
+and warns that link actions resolve by folder name rather than by one copy.
 

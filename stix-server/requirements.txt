@@ -1,0 +1,9 @@
+bcrypt
+colorama
+cryptography
+faker
+Flask
+jinja2
+loguru
+numpy
+requests

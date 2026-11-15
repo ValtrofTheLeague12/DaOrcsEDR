@@ -5,7 +5,7 @@ import Icon from '../components/Icon'
 import { bytes, compact, duration, ms, pct, shortDuration } from '../lib/format'
 import type { Stats } from '../types'
 
-const INTERVAL = 5000
+const INTERVAL = 10000
 
 const VERDICT_TONE: Record<string, 'success' | 'warning' | 'danger' | 'default'> = {
   success: 'success',

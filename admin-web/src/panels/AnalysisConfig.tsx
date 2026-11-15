@@ -9,7 +9,7 @@ import Loading from '../components/Loading'
 import Switch, { OptionField } from '../components/Switch'
 import { StatTile } from '../components/Stat'
 import { HardeningCard } from '../components/HardeningCard'
-import type { AnalysisConfig, AnalysisSettingsSnapshot, BuildHardening } from '../types'
+import type { AnalysisConfig, AnalysisSettingsSnapshot, BuildHardening, ShareSettings } from '../types'
 
 // ---------------------------------------------------------------------------
 // Analysis Configuration - the global layer, config/analysis.yaml.
@@ -50,6 +50,116 @@ function asBool(raw: string | null, fallback: boolean): boolean {
   if (['1', 'true', 'yes', 'on'].includes(low)) return true
   if (['0', 'false', 'no', 'off'].includes(low)) return false
   return fallback
+}
+
+// ---------------------------------------------------------------------------
+// Public share-link expiry.
+//
+// The value on disk is one MEGA duration string ("7d", "1m12d3h"). The control
+// is an amount plus a unit rather than a free-text field because MEGA's case
+// matters - M is minutes and m is months - and a typo there is a link that
+// outlives the policy the operator thought they set. A compound value written
+// by hand is shown as it stands; saving replaces it with the simple one here.
+//
+// "No expiry" writes null, which removes the key and makes links permanent.
+// ---------------------------------------------------------------------------
+
+function ShareExpiryControl({
+  setting,
+  saving,
+  onSave,
+}: {
+  setting: ShareSettings
+  saving: boolean
+  onSave: (value: string | null) => void
+}) {
+  const simple = /^(\d+)([smhdMy])$/.exec(setting.link_expire.trim())
+  const [amount, setAmount] = useState(simple ? simple[1] : '')
+  const [unit, setUnit] = useState(simple ? simple[2] : 'd')
+
+  // Re-sync when the server's value changes (a save, a refusal, a reload).
+  // Keyed on the value, not on every render, so typing is not overwritten.
+  useEffect(() => {
+    const match = /^(\d+)([smhdMy])$/.exec(setting.link_expire.trim())
+    setAmount(match ? match[1] : '')
+    setUnit(match ? match[2] : 'd')
+  }, [setting.link_expire])
+
+  const number = Number(amount)
+  const valid = amount.trim() !== '' && Number.isFinite(number)
+    && number > 0 && Number.isInteger(number)
+  const composed = valid ? `${number}${unit}` : ''
+  const unchanged = composed !== '' && composed === setting.link_expire
+
+  return (
+    <OptionField
+      label="Public link expiry"
+      detail="How long a MEGA link created from Artifacts stays alive. Unset means permanent. MEGA applies this only when a link is created - an existing link keeps its expiry until it is revoked and recreated. Expiry is a PRO-account feature; on a free account link creation fails with MEGA's own reason rather than silently creating a permanent link."
+      footnote={setting.path}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className="field max-w-[7rem] font-mono"
+          type="number"
+          min={1}
+          step={1}
+          value={amount}
+          aria-label="Link expiry amount"
+          onChange={(e) => setAmount(e.currentTarget.value)}
+          disabled={saving}
+        />
+        <select
+          className="field max-w-[9rem]"
+          aria-label="Link expiry unit"
+          value={unit}
+          onChange={(e) => setUnit(e.currentTarget.value)}
+          disabled={saving}
+        >
+          {setting.units.map((u) => (
+            <option key={u.value} value={u.value}>{u.label}</option>
+          ))}
+        </select>
+        <Button
+          size="sm"
+          variant="outline"
+          isDisabled={saving || !valid || unchanged}
+          onPress={() => onSave(composed)}
+        >
+          {saving ? 'Saving…' : 'Save expiry'}
+        </Button>
+        {setting.link_expire !== '' && (
+          <Button
+            size="sm"
+            variant="ghost"
+            isDisabled={saving}
+            onPress={() => onSave(null)}
+          >
+            No expiry
+          </Button>
+        )}
+        <Chip
+          size="sm"
+          variant="soft"
+          color={setting.error ? 'danger' : setting.link_expire ? 'warning' : 'default'}
+        >
+          {setting.error
+            ? 'invalid setting'
+            : setting.link_expire
+              ? `expires after ${setting.summary || setting.link_expire}`
+              : 'permanent'}
+        </Chip>
+      </div>
+      {setting.link_expire && !simple && (
+        <p className="mt-1 font-mono text-[11px] text-default-500">
+          current: {setting.link_expire} - saving above replaces it
+        </p>
+      )}
+      <p className="mt-1 text-[11px] text-default-400">
+        MEGA duration: {setting.example}. This setting is panel-owned; it is not
+        read by the analyzer.
+      </p>
+    </OptionField>
+  )
 }
 
 export default function AnalysisSettings() {
@@ -234,6 +344,10 @@ export default function AnalysisSettings() {
   // a token that happened to linger on screen cannot outlive its purpose.
   const [pwGenerated, setPwGenerated] = useState<string | null>(null)
   const [pwCustom, setPwCustom] = useState('')
+  // The generator's knobs. Length is bound to the same 12..128 floor/ceiling
+  // as the endpoint; mode picks characters or a retype-friendly word phrase.
+  const [pwMode, setPwMode] = useState<'random' | 'stale'>('random')
+  const [pwLength, setPwLength] = useState(24)
 
   const loadPassword = useCallback(async () => {
     try {
@@ -270,7 +384,7 @@ export default function AnalysisSettings() {
 
   const generatePassword = () =>
     pwAction('generate', async () => {
-      const res = await api.generateBundlePassword()
+      const res = await api.generateBundlePassword(pwLength, pwMode)
       setPwGenerated(res.password)
       setPwStatus({ present: res.present, path: res.path })
       setFlash('Generated password shown below - copy it somewhere real now; it is never displayed again.')
@@ -297,6 +411,53 @@ export default function AnalysisSettings() {
       setPwStatus({ present: res.present, path: res.path })
       setFlash('Password file removed. Protected uploads will refuse until a new one is set.')
     })
+
+  // --- public link expiry ----------------------------------------------------
+  //
+  // config/share.json, not analysis.yaml. The analyzer never creates a share
+  // link; the Artifacts page does. Fetched once per visit for the same reason
+  // the password card is: this page is the only writer, so a poll would be
+  // motion rather than information.
+  const [share, setShare] = useState<ShareSettings | null>(null)
+  const [savingShare, setSavingShare] = useState(false)
+  const [shareError, setShareError] = useState<string | null>(null)
+
+  const loadShare = useCallback(async () => {
+    try {
+      setShare(await api.shareSettings())
+      setShareError(null)
+    } catch (exc) {
+      setShareError(exc instanceof Error ? exc.message : String(exc))
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadShare()
+  }, [loadShare])
+
+  const saveShare = useCallback(
+    async (linkExpire: string | null) => {
+      setSavingShare(true)
+      setShareError(null)
+      setFlash(null)
+      try {
+        const res = await api.setShareSettings(linkExpire)
+        setShare(res.share)
+        setFlash(
+          linkExpire
+            ? `Public links will expire after ${res.share.summary || linkExpire}. This applies to new links only.`
+            : 'Public links are now permanent.',
+        )
+      } catch (exc) {
+        // Re-read so the control shows what is on disk, not what was asked for.
+        void loadShare()
+        setShareError(exc instanceof Error ? exc.message : String(exc))
+      } finally {
+        setSavingShare(false)
+      }
+    },
+    [loadShare],
+  )
 
   if (error && !data) {
     return (
@@ -584,7 +745,8 @@ export default function AnalysisSettings() {
                 outside the repository at{' '}
                 <code className="font-mono">{pwStatus?.path || 'the operator profile password file'}</code>{' '}
                 — never in a repo config, and it is shown to you exactly once,
-                in this card, right after you generate it.
+                in this card, right after you generate it. Generate printable
+                characters or a retype-friendly word phrase with a random tag.
               </p>
             </div>
             <Chip
@@ -604,6 +766,27 @@ export default function AnalysisSettings() {
           )}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <select
+              className="field max-w-[10rem]"
+              aria-label="Password generation mode"
+              value={pwMode}
+              onChange={(e) => setPwMode(e.currentTarget.value as 'random' | 'stale')}
+              disabled={pwSaving !== null}
+            >
+              <option value="random">Random characters</option>
+              <option value="stale">Words + a tag</option>
+            </select>
+            <input
+              className="field max-w-[6rem] font-mono"
+              aria-label="Password length"
+              type="number"
+              min={12}
+              max={128}
+              value={pwLength}
+              onChange={(e) => setPwLength(Number(e.currentTarget.value) || 12)}
+              onBlur={() => setPwLength((n) => Math.min(128, Math.max(12, n)))}
+              disabled={pwSaving !== null}
+            />
             <Button
               size="sm"
               variant="outline"
@@ -659,6 +842,31 @@ export default function AnalysisSettings() {
             </Button>
             <span className="text-[11px] text-default-400">minimum 8 bytes; stored byte-exact, no newline</span>
           </div>
+        </div>
+
+        {/* The last half of the upload decision: how long the link an export
+            creates stays alive. Panel-owned, in config/share.json - the
+            analyzer never publishes a link, so this is not an analysis.yaml
+            key and adding one would make the binary refuse to start. */}
+        {shareError && (
+          <Alert status="danger" className="mt-4">
+            <Alert.Title>That link expiry was not written</Alert.Title>
+            <Alert.Description>{shareError}</Alert.Description>
+          </Alert>
+        )}
+        <div className="mt-4 rounded-medium border border-default-200 p-3">
+          {share ? (
+            <ShareExpiryControl
+              setting={share}
+              saving={savingShare}
+              onSave={(value) => void saveShare(value)}
+            />
+          ) : (
+            <p className="text-xs text-default-500">
+              Reading <code className="font-mono">config/share.json</code> for
+              the public link expiry.
+            </p>
+          )}
         </div>
       </Card>
 

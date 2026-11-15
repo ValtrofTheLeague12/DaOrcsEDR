@@ -56,8 +56,11 @@ class Check(NamedTuple):
 def load_vm_info() -> dict:
     """Read and validate vm_info.json (VM_NAME, VM_IP, VM_PORT|PORT)."""
     if not VM_INFO_FILE.is_file():
+        example = VM_INFO_FILE.with_name("vm_info.example.json")
+        hint = (f" - copy {example.name} to {VM_INFO_FILE.name} and fill it in"
+                if example.is_file() else "")
         raise VmCheckError(
-            f"{VM_INFO_FILE.name} not found in {VM_INFO_FILE.parent}")
+            f"{VM_INFO_FILE.name} not found in {VM_INFO_FILE.parent}{hint}")
     try:
         data = json.loads(VM_INFO_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

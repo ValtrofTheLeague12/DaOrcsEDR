@@ -57,6 +57,7 @@ differs (a person versus the clock).
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import shlex
@@ -65,6 +66,7 @@ import threading
 import time
 from pathlib import Path
 
+from ..analysis import cti_settings
 from ..build import pe_tools
 from ..core import config
 from ..samples import samples
@@ -101,6 +103,11 @@ _jobs: dict[str, dict] = {}
 _procs: dict[str, subprocess.Popen] = {}
 _jobs_lock = threading.Lock()
 _running: str | None = None
+# Seconds-resolution time plus pid is not unique across two runs started in
+# the same second (and tests deliberately clear _running between runs, so a
+# previous run's daemon thread can still be alive). A monotonically increasing
+# suffix keeps a lingering thread from writing into a newer job's record.
+_jid_seq = itertools.count(1)
 
 # For tests: the constructor the runner uses, in one indirection that
 # monkeypatch can replace without touching the real subprocess module.
@@ -337,7 +344,7 @@ def start(pipeline: str, sample: str, duration: object = None,
         log.warning("packed gate OVERRIDDEN for %s by operator request (%s)",
                     full_sample, verdict["evidence"])
 
-    jid = f"r{_now():.0f}{os.getpid() % 1000:03d}"
+    jid = f"r{_now():.0f}{os.getpid() % 1000:03d}{next(_jid_seq)}"
     argv = [str(_exe()), "--no-curses", "--pipeline", pipeline, full_sample]
 
     job = {
@@ -463,6 +470,7 @@ def _append(job_id: str, line: str) -> None:
 # call it directly, synchronously, with _POPEN replaced.
 def _run(job_id: str, argv: list[str]) -> None:
     global _running
+    cti_config: Path | None = None
     try:
         env = dict(os.environ)
         # The single most important line in this file. The analysis settings
@@ -470,6 +478,16 @@ def _run(job_id: str, argv: list[str]) -> None:
         # would push an evidence bundle to the operator's cloud account.
         # Forced, not inherited, exactly as the Tests section does.
         env["IA_ARTIFACT_UPLOAD"] = "0"
+        # Provider keys are stored outside the repository. Preserve an existing
+        # CTI_CONFIG (including endpoint overrides) by passing the merged,
+        # panel-managed config only when keys have been saved in the panel.
+        cti_config = cti_settings.analyzer_config_path()
+        if cti_config is not None:
+            env["CTI_CONFIG"] = str(cti_config)
+        # The analyzer reads provider keys with getenv() and does not parse
+        # .env itself. Copy any keys declared there (or exported by the shell)
+        # into the child; a managed panel key still wins through CTI_CONFIG.
+        cti_settings.export_environment(env)
         # stdout is a pipe here, so the analyzer's startup logo is suppressed
         # by default. The panel's log IS the operator's view of the run, though,
         # so opt back in - and let a crash add crash.logo to the same log the
@@ -524,6 +542,10 @@ def _run(job_id: str, argv: list[str]) -> None:
                 job["error"] = f"{type(exc).__name__}: {exc}"
                 job["finished_at"] = round(_now(), 1)
     finally:
+        try:
+            cti_settings.cleanup_analyzer_config(cti_config)
+        except OSError as exc:
+            _append(job_id, f"--- CTI config cleanup failed: {exc}")
         with _jobs_lock:
             _procs.pop(job_id, None)
             if _running == job_id:

@@ -632,11 +632,46 @@ foreach(_dll IN LISTS _runtime_dlls_graphviz)
     endif()
 endforeach()
 
+# OpenSSL-backed libcurl gets its default CA bundle path at build time, relative
+# to the MSYS2 installation (for UCRT64: /ucrt64/etc/ssl/certs/ca-bundle.crt).
+# That path is resolved relative to the directory the DLL lives in, so the
+# moment libcurl-4.dll is copied next to static_analyzer.exe the compiled-in
+# path stops existing and every HTTPS request fails with CURLE_SSL_CACERT_BADFILE
+# ("Problem with the SSL CA cert (path? access rights?)"). Shipping the bundle
+# beside the exe and pointing http_client at it keeps TLS verification working
+# in a packaged build; src/net/http_client.cpp resolves it.
+set(_curl_ca_bundle "${_ucrt_bin}/../etc/ssl/certs/ca-bundle.crt")
+if(EXISTS "${_curl_ca_bundle}")
+    get_filename_component(_curl_ca_bundle "${_curl_ca_bundle}" ABSOLUTE)
+    list(APPEND _copy_runtime_commands
+         COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                 "${_curl_ca_bundle}"
+                 "$<TARGET_FILE_DIR:static_analyzer>/ca-bundle.crt")
+endif()
+
 # Ship pipeline and artifact configuration, plus the uploader's runtime
 # modules, beside the executable. This keeps named pipelines and opt-in bundle
 # actions available when launched outside the source tree.
 add_custom_command(TARGET static_analyzer POST_BUILD
     ${_copy_runtime_commands}
+    COMMENT "Copying runtime DLLs next to static_analyzer"
+)
+# The sidecar copy below rides on the ALL target, so it re-runs every build.
+# That matters more than it looks: the Analyzer Configuration page edits
+# pipelines/*.yaml in place, and the uploader is a Python file this CMake tree
+# does not compile. A copy attached only to the exe link therefore served stale
+# pipeline settings and, after protection became a password zip, a stale
+# upload.py still importing `seal` beside a current uploader that imports
+# `protect`. The runtime set is explicit - copying mega/*.py wholesale would
+# ship test_seal.py, which is not runtime code.
+file(GLOB_RECURSE _pipeline_sidecar_deps CONFIGURE_DEPENDS
+     "${CMAKE_SOURCE_DIR}/pipelines/*")
+set(_mega_sidecar_files
+    "${CMAKE_SOURCE_DIR}/mega/upload.py"
+    "${CMAKE_SOURCE_DIR}/mega/megacmd.py"
+    "${CMAKE_SOURCE_DIR}/mega/credential.py"
+    "${CMAKE_SOURCE_DIR}/mega/protect.py")
+add_custom_target(static_analyzer_sidecar ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/pipelines"
             "$<TARGET_FILE_DIR:static_analyzer>/pipelines"
@@ -648,37 +683,10 @@ add_custom_command(TARGET static_analyzer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
             "$<TARGET_FILE_DIR:static_analyzer>/mega"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/mega/upload.py"
-            "$<TARGET_FILE_DIR:static_analyzer>/mega/upload.py"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/mega/megacmd.py"
-            "$<TARGET_FILE_DIR:static_analyzer>/mega/megacmd.py"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/mega/credential.py"
-            "$<TARGET_FILE_DIR:static_analyzer>/mega/credential.py"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/mega/seal.py"
-            "$<TARGET_FILE_DIR:static_analyzer>/mega/seal.py"
-    COMMENT "Copying runtime DLLs, pipeline and config next to static_analyzer"
-)
-# The copies above ride on the exe link, so make has no reason to re-run them
-# when only a YAML file changed - and that is exactly the common case, because
-# the Analysis Configuration page edits pipelines/*.yaml in place without
-# touching a source file. The result was a copy beside the executable that
-# served stale settings to anyone launching the analyzer from outside the tree.
-# This target runs on every build for that reason, and depends on the directory
-# so an edit re-triggers it.
-file(GLOB_RECURSE _pipeline_sidecar_deps CONFIGURE_DEPENDS
-     "${CMAKE_SOURCE_DIR}/pipelines/*")
-add_custom_target(static_analyzer_sidecar ALL
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/pipelines"
-            "$<TARGET_FILE_DIR:static_analyzer>/pipelines"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/config/artifacts.yaml"
-            "$<TARGET_FILE_DIR:static_analyzer>/config/artifacts.yaml"
-    DEPENDS ${_pipeline_sidecar_deps}
-    COMMENT "Refreshing pipelines/ and config/ next to static_analyzer"
+            ${_mega_sidecar_files}
+            "$<TARGET_FILE_DIR:static_analyzer>/mega"
+    DEPENDS ${_pipeline_sidecar_deps} ${_mega_sidecar_files}
+    COMMENT "Refreshing pipelines/, config/ and mega/ next to static_analyzer"
 )
 add_dependencies(static_analyzer_sidecar static_analyzer)
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/pipelines/"
@@ -694,8 +702,8 @@ install(FILES
         "${CMAKE_SOURCE_DIR}/mega/upload.py"
         "${CMAKE_SOURCE_DIR}/mega/megacmd.py"
         "${CMAKE_SOURCE_DIR}/mega/credential.py"
+        "${CMAKE_SOURCE_DIR}/mega/protect.py"
         DESTINATION bin/mega)
-
 
 target_compile_options(static_analyzer PRIVATE
     $<$<CONFIG:Release>:-O2>

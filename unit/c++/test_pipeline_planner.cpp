@@ -28,6 +28,8 @@
 #include <string>
 #include <vector>
 
+using pipeline::planner::apply_environment;
+using pipeline::planner::load_artifact_options;
 using pipeline::planner::artifact_options;
 using pipeline::planner::catalog;
 using pipeline::planner::catalog_json;
@@ -58,6 +60,18 @@ bool throws_with(const std::string& spec, const std::string& needle) {
     return std::string(e.what()).find(needle) != std::string::npos;
   }
   return false;
+}
+
+void set_test_env(const char* key, const char* value) {
+#ifdef _WIN32
+  _putenv_s(key, value ? value : "");
+#else
+  if (value) {
+    setenv(key, value, 1);
+  } else {
+    unsetenv(key);
+  }
+#endif
 }
 
 // Writes a temp config file and hands back its path. YAML is only reachable
@@ -419,6 +433,53 @@ TEST(a_config_without_environment_changes_nothing) {
   const pipeline_config cfg = load("[\"strings\"]");
   CHECK(cfg.environment.empty());
   apply_environment(cfg);  // must not crash or clear the environment
+}
+
+// IA_ARTIFACT_UPLOAD=0 is the panel's and CI's "never send evidence off this
+// host" switch. It used to be applied before MEGA_UPLOAD, so config/analysis.yaml
+// saying MEGA_UPLOAD: true turned uploading back on after the suppression - the
+// exact opposite of the promise. Pin the final ordering, not just the flag.
+TEST(ia_artifact_upload_zero_wins_over_mega_upload) {
+  namespace fs = std::filesystem;
+  const fs::path prior_cwd = fs::current_path();
+  const auto prior_ia = std::getenv("IA_ARTIFACT_UPLOAD");
+  const auto prior_mega = std::getenv("MEGA_UPLOAD");
+  const std::string saved_ia = prior_ia ? prior_ia : "";
+  const std::string saved_mega = prior_mega ? prior_mega : "";
+
+  const fs::path dir = fs::temp_directory_path() / "ia-artifact-upload-precedence";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  fs::create_directories(dir / "config", ec);
+  {
+    std::ofstream out(dir / "config" / "artifacts.yaml");
+    out << "upload_artifacts: true\n";
+  }
+
+  struct Cleanup {
+    fs::path cwd;
+    fs::path dir;
+    std::string saved_ia;
+    std::string saved_mega;
+    bool had_ia;
+    bool had_mega;
+    ~Cleanup() {
+      std::error_code ec;
+      fs::current_path(cwd, ec);
+      set_test_env("IA_ARTIFACT_UPLOAD", had_ia ? saved_ia.c_str() : nullptr);
+      set_test_env("MEGA_UPLOAD", had_mega ? saved_mega.c_str() : nullptr);
+      fs::remove_all(dir, ec);
+    }
+  } cleanup{prior_cwd, dir, saved_ia, saved_mega,
+            prior_ia != nullptr, prior_mega != nullptr};
+
+  fs::current_path(dir, ec);
+  CHECK(!ec);
+  set_test_env("MEGA_UPLOAD", "1");
+  set_test_env("IA_ARTIFACT_UPLOAD", "0");
+
+  const artifact_options opts = load_artifact_options();
+  CHECK(!opts.upload_artifacts);
 }
 
 // ---------------------------------------------------------------------------

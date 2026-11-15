@@ -9,11 +9,12 @@ eight things you don't.
 | [Getting started](getting-started.md) | What the project does, invoking it, running the analyzer, the Python API server |
 | [Pipelines and analysis phases](pipelines-and-phases.md) | The phase catalog, format detection, which stages apply to what, validation, the safe test fixture |
 | [Evidence bundles, encryption and output](evidence-and-encryption.md) | What gets written, where generated files live, and what happens before anything leaves the machine |
+| [MEGA Python wrapper](mega-python-wrapper.md) | The `mega/` API: build, upload, list, link, download, verify and extract bundles from your own server |
 | [Admin console](admin-console/README.md) | The web console at `127.0.0.1:60100` — see below |
 | [Qiling analysis VM](qiling-vm.md) | The emulated VM, its rootfs, and the registry/DLL collection workflow |
 | [Failure handling and recovery](failure-and-recovery.md) | Exit codes, stopping a run, resuming it, and what a fault prints |
 | [Results](results.md) | The HTML dashboard, STIX/ATT&CK output, assembly collection |
-| [Building the analyzer](building.md) | Requirements, the build, container images, repository layout, and how to run the tests |
+| [Building the analyzer](building.md) | Requirements, the build, Compose services, repository layout, and how to run the tests |
 | [Security and responsible use](security.md) | Scope, what the tool will and will not do with a sample, licensing |
 | [Troubleshooting](troubleshooting.md) | The failures people actually hit |
 
@@ -32,6 +33,7 @@ the first after the second, so a key may be set in only one of them.
 | Page | Covers |
 | --- | --- |
 | [Overview](admin-console/README.md) | Starting it, binding, auth, the three things it is easy to confuse it with |
+| [Services](admin-console/services.md) | The probe cards, and Start/Stop for the Analyzer API, MalAPI and the ML scorer |
 | [Networking](admin-console/networking.md) | The live host/adapter/container/VirtualBox graph |
 | [Artifacts](admin-console/artifacts.md) | Local and remote evidence bundles, export, recovery |
 | [Analysis configuration](admin-console/analysis-config.md) | `config/analysis.yaml` — the settings that apply to every run |
@@ -46,10 +48,6 @@ the first after the second, so a key may be set in only one of them.
   run both suites.
 - **`admin-terminal/`** — the TUI. It is a small, self-contained tool with its
   own menu and no configuration surface worth a page here.
-- **`CONTAINER-TESTING.md`** — linked from [Building](building.md), but it does
-  not exist. That link was already dead before this split; it is left in place
-  because inventing a target for it would be worse than a visible dangling
-  reference.
 
 ## If you are here to do something specific
 
@@ -63,3 +61,4 @@ the first after the second, so a key may be set in only one of them.
 | see why a run failed | [Failure handling](failure-and-recovery.md) |
 | build it from scratch | [Building](building.md) |
 | find out what a phase writes | [Output layout](evidence-and-encryption.md#output-layout) |
+| export/retrieve bundles from my own server | [MEGA Python wrapper](mega-python-wrapper.md) |

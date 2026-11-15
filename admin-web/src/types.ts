@@ -35,6 +35,43 @@ export interface Probe {
   trend: { samples: number; ms: (number | null)[] }
   /** Routing facts for host:port - interface, CIDR, class, port band. */
   net: NetFacts
+  /**
+   * True for the three Python services this panel can start and stop itself
+   * (Analyzer API, MalAPI, ML scorer). Containers and VMs are controlled from
+   * their own pages, so their cards get no buttons.
+   */
+  control: boolean
+  /**
+   * Why Start would be refused right now - an empty string when it is
+   * startable. Server-computed so the button cannot promise a start the
+   * backend will decline ("ml/model.txt is missing").
+   */
+  control_blocked: string
+  /**
+   * The compose unit behind this card, when it is a container: which project
+   * and which service name. Null for the services this panel runs itself, and
+   * for anything that is not docker (the VM). The card links to the Containers
+   * page when this is set.
+   */
+  container: { project: string; service: string } | null
+}
+
+/** One start/stop action, as the launcher reports it. */
+export interface ServiceActionResult {
+  ok: boolean
+  key: string
+  action: 'start' | 'stop'
+  /** started | already-running | stopped | blocked | port-held | busy |
+   *  not-running | not-ours | timeout | exited | spawn-failed | stop-failed */
+  code: string
+  /** The sentence to show: what happened, or why it did not. */
+  detail: string
+  pid: number | null
+  log: string | null
+  /** Milliseconds from spawn to the endpoint answering. */
+  ms: number | null
+  /** Last lines of the start log, for a failure. */
+  tail: string[]
 }
 
 export interface Overview {
@@ -197,8 +234,7 @@ export interface LogTail {
   truncated?: boolean
   empty?: boolean
   error?: string
-  // How many SGR escape sequences the server removed before sending. Reported
-  // so the viewer can say so rather than silently dropping data.
+  // Legacy field. Current log tails preserve ANSI sequences for browser rendering.
   ansi_stripped?: number
   // True for .jsonl and .json logs, which get structured rendering.
   jsonl?: boolean
@@ -415,6 +451,8 @@ export interface ArtifactExportJob {
   dropped: number
   exit_code: number | null
   elapsed: number
+  /** Public MEGA folder link created when the upload finished, if it worked. */
+  link?: string | null
 }
 
 // --- clamav (guest on the Qiling VM) --------------------------------------
@@ -609,16 +647,6 @@ export interface AnalysisConfig {
   checked_at: number
 }
 
-export type DynamicTransport = 'tcp' | 'sftp'
-
-export interface DynamicAnalysisOption {
-  id: DynamicTransport
-  label: string
-  summary: string
-  detail: string
-  selected: boolean
-}
-
 export type MemoryProfilingTarget = 'analyzer' | 'sample'
 
 export interface MemoryProfilingOption {
@@ -659,10 +687,14 @@ export interface MemoryProfilingJob {
   report_dir: string | null
   snapshot_path: string | null
   csv_path: string | null
+  keep_open: boolean
   log_line_count: number
   log_dropped: number
   duration_sec: number | null
   log: string[]
+  /** stdout/stderr of the profiled analyzer or sample, kept separately from
+   *  VMMap's own console output. */
+  target_log: string[]
 }
 
 export interface MemoryMapCategory {
@@ -681,6 +713,7 @@ export interface MemoryMapRegion {
   total_ws_bytes: number | null
   protection: string
   details: string
+  children: MemoryMapRegion[]
 }
 
 export interface MemoryMapLayout {
@@ -696,14 +729,21 @@ export interface MemoryMapLayout {
   }
   categories: MemoryMapCategory[]
   regions: MemoryMapRegion[]
+  root_count: number
   region_count: number
+  region_total: number
   regions_truncated: boolean
 }
 
 export interface MemoryProfilingSnapshot {
   path: string
   exists: boolean
-  settings: { enabled: boolean; target: MemoryProfilingTarget; sample: string }
+  settings: {
+    enabled: boolean
+    target: MemoryProfilingTarget
+    sample: string
+    keep_open: boolean
+  }
   targets: MemoryProfilingOption[]
   samples: MemoryProfilingSample[]
   vmmap: VMMapInstallation
@@ -712,13 +752,23 @@ export interface MemoryProfilingSnapshot {
   error: string | null
 }
 
+export type DynamicTransport = 'tcp' | 'sftp'
+
+export interface DynamicAnalysisOption {
+  id: DynamicTransport
+  label: string
+  summary: string
+  detail: string
+  selected: boolean
+}
+
 export interface DynamicAnalysisSnapshot {
   path: string
   exists: boolean
   /** last write, unix seconds; null when the file has never been written */
   modified: number | null
   options: DynamicAnalysisOption[]
-  settings: { communication: DynamicTransport }
+  settings: { communication: DynamicTransport; socket_timeout: number }
   default: DynamicTransport
   error: string | null
 }
@@ -767,13 +817,39 @@ export interface ClamdCommunication {
   error: string | null
 }
 
+/** One service ping through the VM utility protocol (vm_utility.py). */
+export interface ClamdPing {
+  /** The utility server answered the request. */
+  ok: boolean
+  /** The guest's own verdict on the clamav service. */
+  alive: boolean
+  /** tcp://VM_IP:port of the VM utility server. */
+  endpoint: string
+  /** Human-readable evidence from the utility server. */
+  detail: string
+  /** systemd's state word, when the server provided one. */
+  state: string
+  /** Round-trip time in seconds. */
+  seconds: number
+  /** When the ping ran (epoch seconds). */
+  checked_at: number
+  /** The utility server's reply, verbatim. */
+  response: unknown
+  error: string | null
+  code?: string | null
+}
+
 export interface ClamdStatus {
   /** Whether the selected transport can run right now. */
   ready?: boolean
-  /** A daemon answered (TCP PING). False for SFTP: not probed here. */
+  /**
+   * The selected transport's socket opened (TCP connect). SFTP is not probed
+   * here. Service health is the separate on-demand ping.
+   */
   reachable: boolean
   mode: string
   endpoint: string
+  /** Older payloads carried clamd's VERSION; the status check no longer asks. */
   version: string
   vm: { ip: string; host: string; port: number }
   checks: ClamdCheck[]
@@ -898,8 +974,18 @@ export interface QilingRuns {
   rootfs: {
     archive_present: boolean
     archive_bytes: number
+    /** Absolute path of the packaged rootfs archive. */
+    archive?: string
     complete: boolean
-    trees: { arch: string; files: number; complete: boolean }[]
+    trees: {
+      arch: string
+      files: number
+      /** Sum of the tree's file sizes, so the card can show where the bytes are. */
+      bytes?: number
+      /** Absolute path of this architecture's Windows tree. */
+      path?: string
+      complete: boolean
+    }[]
   }
   harness: {
     present: boolean
@@ -920,6 +1006,27 @@ export interface QilingVmCheck {
   name: string
   ok: boolean
   detail: string
+}
+
+/** One step of the connection test, with the sentence it announced. */
+export interface QilingConnectionCheck extends QilingVmCheck {
+  advisory?: boolean
+  echo?: string
+  icon?: string
+}
+
+/** The guest's own answer to a service ping. */
+export interface QilingPing {
+  ok: boolean
+  alive: boolean
+  endpoint: string
+  checked_at: number
+  seconds: number
+  detail: string
+  state: string
+  error: string | null
+  code: string | null
+  response: unknown
 }
 
 export interface QilingVmStatus {
@@ -960,6 +1067,88 @@ export interface QilingRootfsJob {
   state: 'queued' | 'running' | 'done' | 'error'
   already_running: boolean
   detail: string
+  /** Phase lines plus the elevated collector's own output, oldest first. */
+  output?: string[]
+  /** Lines trimmed from the front of `output` because the console is bounded. */
+  dropped?: number
+  complete?: boolean | null
+  rootfs?: QilingRuns['rootfs']
+}
+
+/** One way to move a sample to Qiling, with the reason it cannot be used. */
+export interface QilingTransport {
+  id: string
+  available: boolean
+  reason: string | null
+  /** The script or client that does the work, shown so it is never a black box. */
+  path: string
+  /** Every file the transport needs, so a missing one is visible by name. */
+  files?: string[]
+  detail: string
+}
+
+export interface QilingCommunication {
+  mode: DynamicTransport
+  path: string
+  error: string | null
+}
+
+/** The job handle a Qiling submission returns. */
+export interface QilingSubmitStart {
+  ok: boolean
+  job_id?: string
+  mode?: DynamicTransport
+  filename?: string
+  bytes?: number
+  sha256?: string
+  code?: string
+  error?: string
+  limit_bytes?: number
+}
+
+export interface QilingRunRow {
+  id: string
+  label: string
+  state: 'pending' | 'running' | 'passed' | 'failed'
+  detail: string | null
+  duration: number | null
+  report_file?: string | null
+  bytes?: number | null
+  architecture?: string | null
+  sha256?: string
+}
+
+/** A Qiling submission polled through the shared job endpoint. */
+export interface QilingSubmitJob extends Omit<AnalyzerBuildJob, 'results' | 'kind'> {
+  kind?: 'qiling'
+  mode?: DynamicTransport
+  results?: QilingRunRow[]
+}
+
+export interface QilingSubmitInfo {
+  communication: QilingCommunication
+  transports: Record<'sftp' | 'tcp', QilingTransport>
+  default_transport: DynamicTransport
+  /** The harness's systemd service type, e.g. oneshot. */
+  mode: string
+  /** The address the selected transport dials. */
+  endpoint: string
+  checked_at: number
+  /** The selected transport's connection-test steps. */
+  checks: QilingConnectionCheck[]
+  /** The connection test as a transcript, rendered in a Console. */
+  output: string[]
+  note: string
+  vm: { ip: string; host: string; port: number }
+  ready: boolean
+  /** The run in progress, or the most recent one, so a reload reattaches. */
+  current: QilingSubmitJob | null
+  limits?: {
+    max_bytes: number
+    timeout: [number, number]
+    max_insn: [number, number]
+  }
+  error?: string
 }
 
 // --- network map -----------------------------------------------------------
@@ -1072,11 +1261,32 @@ export interface RemoteBundle {
   date_text: string | null
   file_count: number
   files: { name: string | null; bytes: number; date: string | null }[]
+  /** Existing public MEGA folder link, or null when the bundle is not shared. */
+  link?: string | null
+  /** Per-file SHA-256 from the bundle manifest, when available. */
+  hash?: string
+}
+
+/**
+ * Existing public links for the bundles under one MEGA root, keyed by artifact
+ * name. A bundle with no export is absent rather than null: "not shared" and
+ * "shared" are the only states the page needs, and an absent key is the first.
+ */
+export interface ArtifactLinks {
+  ok: boolean
+  links: Record<string, string>
+  account: string | null
+  remote_root: string
+  error?: string
 }
 
 export interface RemoteState {
   /** False when MEGAcmd is missing, logged out, or the listing failed. */
   available: boolean
+  /** False when the configured root is absent on MEGA (not an account failure). */
+  root_exists?: boolean
+  /** True while an expired or explicitly refreshed listing is being probed. */
+  refreshing?: boolean
   reason: string | null
   account: string | null
   remote_root: string
@@ -1137,15 +1347,16 @@ export interface HistoryBundle {
   first_seen?: number
   last_seen?: number
   generated_at?: number | null
+  /** Set while the bundle is still on MEGA and has been exported publicly. */
+  link?: string | null
 }
 
 /**
- * A bundle from either end, with `where` saying which.
- *
- * The Remote tab lists these rather than remote-only, because an empty MEGA
- * account is the normal state of a lab that bundles locally and has not
- * uploaded yet - and "no artifacts" next to a bundle sitting on disk is the
- * most misleading thing this page could show.
+ * The merged view: every current local and remote bundle, with `where` saying
+ * which. It is not a "remote" list - render `ArtifactsSnapshot.remote.bundles`
+ * (or filter `where !== 'local'`) for what MEGA is actually holding, and keep
+ * the local-only rows in the Local tab. Historical uploads are kept in the
+ * transfer history and are not rendered as live files.
  */
 export interface UnifiedBundle extends HistoryBundle {
   where: 'both' | 'local' | 'remote' | 'remembered'
@@ -1171,6 +1382,9 @@ export interface ArtifactsSnapshot {
     updated_at: number | null
   }
   transfer: TransferSummary | null
+  /** Merged local+remote view, one row per name, `where` marks the side(s).
+   *  Optional: a panel server predating the merged view omits it, and the UI
+   *  falls back to `history.bundles` rather than rendering an empty tab. */
   unified?: UnifiedBundle[]
   unified_counts?: { both: number; local: number; remote: number; remembered: number }
   diff: {
@@ -1179,6 +1393,80 @@ export interface ArtifactsSnapshot {
     both: string[]
   }
   error?: string
+}
+
+export interface ArtifactSettings {
+  mega_upload: boolean
+  mega_encrypt: boolean
+  artifacts: { remote_root: string }
+  bundle_password: { present: boolean }
+}
+
+export interface EvidenceFile {
+  path: string
+  bytes: number
+  html: boolean
+  url: string
+}
+
+export interface EvidenceFiles {
+  name: string
+  directory: string
+  files: EvidenceFile[]
+  truncated: boolean
+}
+
+export interface CTIProviderSetting {
+  id: string
+  name: string
+  env: string
+  optional: boolean
+  description: string
+  /** A key is saved through the panel (application-data file). */
+  configured: boolean
+  /** A key is visible from the process environment or the repository .env. */
+  environment: boolean
+}
+
+export interface CTISettings {
+  providers: CTIProviderSetting[]
+  source: string
+}
+
+export interface CTIServerSettings {
+  path: string
+  exists: boolean
+  ip: string
+  port: number
+  banned: { name: string | null; hash: string | null }[]
+  error: string | null
+}
+
+/**
+ * The generated CTI listener, as the panel sees it right now.
+ *
+ * `running` means the process on the configured port is stix-server/server.py
+ * and its /health route answered. `foreign` means something else holds the
+ * port, and `error` means the saved config cannot be understood.
+ */
+export interface CTIListenerStatus {
+  state: 'running' | 'stopped' | 'unhealthy' | 'foreign' | 'error'
+  ip: string
+  port: number
+  url: string | null
+  pid: number | null
+  log: string | null
+  detail: string
+}
+
+export interface CTIListenerResult {
+  ok: boolean
+  code: string
+  detail: string
+  pid: number | null
+  log: string | null
+  tail: string[]
+  status: CTIListenerStatus
 }
 
 /**
@@ -1691,6 +1979,30 @@ export interface YargenState {
   note?: string
 }
 
+export interface UnprotectState {
+  available: boolean
+  reason?: string | null
+  note?: string
+  source?: string
+  scraper_path?: string
+  /** `httrack` on PATH; the wrapper re-mirrors on every run, so this is required. */
+  httrack?: string | null
+  /** Whether the HTTrack mirror the scraper reads is present. */
+  html_src_present?: boolean
+  /** yara-rules/unprotect_it/ - the only collection the card imports into. */
+  target_path?: string
+  yara_files: number
+  yara_bytes: number
+  /** Sigma is staged only: there is no Sigma engine in the analyzer yet. */
+  sigma_files: number
+  sigma_path?: string
+  /** Legacy CAPA files downloaded but deliberately not imported. */
+  capa_files: number
+  generated_at?: string | null
+  last_import?: Record<string, unknown> | null
+  deps_missing?: string[]
+}
+
 export interface EagleArtifact {
   name: string
   exists: boolean
@@ -1722,7 +2034,7 @@ export interface EagleState {
 export interface UtilEntry {
   id: string
   label: string
-  utility: 'sbom' | 'malapi' | 'yara' | 'yargen' | 'eagle'
+  utility: 'sbom' | 'malapi' | 'yara' | 'yargen' | 'unprotect' | 'eagle'
   description: string
   effects: string[]
   available: boolean
@@ -1736,6 +2048,7 @@ export interface UtilsOverview {
   malapi: MalapiState
   yara: YaraState
   yargen: YargenState
+  unprotect: UnprotectState
   eagle: EagleState
 }
 
@@ -2470,6 +2783,25 @@ export interface AnalysisSettingsSnapshot {
   unknown: string[]
 }
 
+/**
+ * `config/share.json`: the expiry applied to public MEGA links the panel
+ * creates. Panel-owned rather than an analysis.yaml key - the analyzer never
+ * publishes a link.
+ *
+ * `summary` is the duration in words ("7 days"); `error` is set when the file
+ * is unreadable or holds an invalid duration, and link creation then refuses
+ * instead of silently creating a permanent link.
+ */
+export interface ShareSettings {
+  path: string
+  exists: boolean
+  link_expire: string
+  summary: string
+  error: string | null
+  units: { value: string; label: string }[]
+  example: string
+}
+
 // --- service endpoints and the endpoint agent ----------------------------
 
 /** An address this host actually has, as `ifaddr` reports it. */
@@ -2573,3 +2905,95 @@ export interface AgentSaveResult {
   validation?: AgentValidation
   agent?: AgentConfig
 }
+
+// ---------------------------------------------------------------------------
+// Endpoint-agent heartbeats
+//
+// The agent's GET /api/v1/health snapshot, proxied through the panel. Only the
+// fields the fleet card renders are typed; the agent may add more without
+// breaking this page.
+// ---------------------------------------------------------------------------
+
+export interface AgentHeartbeatAgent {
+  name: string
+  version: string
+  host: string
+  platform: string
+  pid: number
+  service: boolean
+  started_at: string
+  uptime_seconds: number
+  state: string
+}
+
+export interface AgentHeartbeat {
+  status: string
+  agent: AgentHeartbeatAgent
+  config: {
+    path: string
+    watch_dirs: string[]
+    scan_interval_seconds: number
+  }
+  kafka: {
+    bootstrap_servers: string
+    topic: string
+    last_publish_ok: boolean | null
+    last_publish_at: string | null
+  }
+  counters: {
+    samples_published: number
+    publish_errors: number
+    records_logged: number
+  }
+  last_scan: {
+    started_at: string | null
+    finished_at: string | null
+    duration_seconds: number | null
+  }
+  last_sample: {
+    detected_at: string
+    file_name: string
+    file_size: number
+    sha256: string
+  } | null
+  last_error: { message: string; at: string } | null
+  detections: { file: string }
+  api: { enabled: boolean; host: string; port: number }
+}
+
+export interface AgentFleetEntry {
+  name: string
+  url: string
+  online: boolean
+  /** ok | degraded | starting | auth | unreachable | http-error |
+   *  invalid-response. `auth` means the agent still requires a token, i.e. it
+   *  is running 0.4.0 or older and needs an update. */
+  code: string
+  detail: string | null
+  latency_ms: number | null
+  health: AgentHeartbeat | null
+}
+
+export interface AgentFleetSnapshot {
+  config_file: string
+  checked_at: string
+  count: number
+  online: number
+  agents: AgentFleetEntry[]
+}
+
+export interface AgentFleetMutation {
+  ok: boolean
+  code?: string
+  error?: string
+  agent?: { name: string; url: string }
+}
+
+export interface AgentDetections {
+  agent: string
+  url: string
+  file: string
+  count: number
+  detections: Array<Record<string, unknown>>
+}
+

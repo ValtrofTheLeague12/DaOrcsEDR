@@ -1,0 +1,18 @@
+{
+  "server": {
+    "ip": "192.168.56.1",
+    "port": 10000
+  },
+  "catalog_file": "artifact_catalog.json",
+  "banned_artifacts": [],
+  "auth": {
+    "enabled": true,
+    "session_ttl_hours": 12,
+    "cookie_secure": false,
+    "trust_proxy": false,
+    "allow_loopback": false,
+    "max_attempts": 5,
+    "lockout_seconds": 300,
+    "debug": true
+  }
+}

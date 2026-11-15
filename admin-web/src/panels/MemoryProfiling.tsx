@@ -5,7 +5,11 @@ import { Card } from '@heroui/react/card'
 import { Chip } from '@heroui/react/chip'
 import { api } from '../api'
 import Loading from '../components/Loading'
-import MemoryLayout from '../components/MemoryLayout'
+import MemoryLayout, { type MemoryView } from '../components/MemoryLayout'
+import LogoSpinner from '../components/LogoSpinner'
+import { LogoMark } from '../components/Logo'
+import { ago } from '../lib/format'
+import MemoryOutput from '../components/MemoryOutput'
 import Switch from '../components/Switch'
 import type {
   MemoryProfilingJob,
@@ -18,6 +22,7 @@ export default function MemoryProfiling() {
   const [job, setJob] = useState<MemoryProfilingJob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [tab, setTab] = useState<MemoryView>('overview')
 
   const load = useCallback(async () => {
     try {
@@ -38,6 +43,7 @@ export default function MemoryProfiling() {
     enabled?: boolean
     target?: MemoryProfilingTarget
     sample?: string | null
+    keep_open?: boolean
   }) => {
     setSaving(true)
     setError(null)
@@ -58,7 +64,10 @@ export default function MemoryProfiling() {
     try {
       const response = await api.runMemoryProfiling({
         target: memory.settings.target,
-        sample: memory.settings.sample || null,
+        // A capture always needs a sample. When the stored setting is empty,
+        // use the first one the picker found rather than sending null and
+        // having the request refused.
+        sample: memory.settings.sample || memory.samples[0]?.path || null,
       })
       setJob(response.job)
     } catch (exc) {
@@ -92,31 +101,48 @@ export default function MemoryProfiling() {
   }
 
   const current = memory
+  // The stored setting starts empty, and the backend refuses to profile either
+  // target without a sample. Falling back to the first discovered sample keeps
+  // the page usable on a machine that has one instead of showing a permanently
+  // disabled Capture button next to the "choose a Windows .exe" placeholder.
+  const selectedSample = current?.settings.sample || current?.samples[0]?.path || ''
   const ready = Boolean(
     current?.settings.enabled
     && current.vmmap.installed
     && (current.settings.target !== 'analyzer' || current.vmmap.analyzer_present)
-    && current.settings.sample,
+    && selectedSample,
   )
 
+  const targetOk = Boolean(
+    current?.vmmap.installed
+    && (current.settings.target !== 'analyzer' || current.vmmap.analyzer_present),
+  )
+  const hasMap = Boolean(job?.csv_path) && job?.state !== 'running'
+  const activeTab: MemoryView = hasMap ? tab : 'output'
+  const sampleName = (job?.sample || job?.target || '').split(/[\\/]/).pop()
+
+  const tabs: { id: MemoryView; label: string; note?: string }[] = [
+    ...(hasMap ? [
+      { id: 'overview' as const, label: 'Overview' },
+      { id: 'tree' as const, label: 'Memory tree' },
+    ] : []),
+    { id: 'output', label: 'Output', note: job ? String(job.log_line_count) : undefined },
+  ]
+
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-5">
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-default-200 pb-4">
+    <div className="mem-page">
+      <header className="mem-header">
         <div>
           <p className="eyebrow">MAINTENANCE</p>
           <h2 className="page-title mt-1">Memory profiling</h2>
-          <p className="mt-1 max-w-2xl text-sm text-default-500">
+          <p className="mem-lede">
             Capture a Windows process with Sysinternals VMMap. Completed captures
             show memory totals and address regions, with the original snapshot
             available to download.
           </p>
         </div>
         {current && (
-          <Chip
-            size="sm"
-            variant="soft"
-            color={current.settings.enabled ? 'success' : 'default'}
-          >
+          <Chip size="sm" variant="soft" color={current.settings.enabled ? 'success' : 'default'}>
             {current.settings.enabled ? 'Ready when requested' : 'Disabled'}
           </Chip>
         )}
@@ -130,22 +156,14 @@ export default function MemoryProfiling() {
       )}
 
       {current ? (
-        <>
-          <Card className="w-full">
+        <div className="mem-grid">
+          <Card className="mem-capture">
             <Card.Header>
-              <Card.Title className="text-sm font-semibold">Capture settings</Card.Title>
+              <Card.Title className="text-sm font-semibold">Capture</Card.Title>
             </Card.Header>
             <Card.Content className="flex flex-col gap-5">
-              <Switch
-                label="Enable manual captures"
-                checked={current.settings.enabled}
-                pending={saving}
-                onChange={(value) => void save({ enabled: value })}
-                detail="This does not profile routine analysis runs. Captures start only when requested here or from Sample Factory."
-                footnote={current.path}
-              />
-
-              <div className="grid gap-4 sm:grid-cols-2">
+              <fieldset className="mem-group">
+                <legend>Source</legend>
                 <label className="flex flex-col gap-1.5">
                   <span className="text-xs font-medium text-default-700">Process to capture</span>
                   <select
@@ -171,7 +189,7 @@ export default function MemoryProfiling() {
                   </span>
                   <select
                     className="field font-mono"
-                    value={current.settings.sample}
+                    value={selectedSample}
                     disabled={saving}
                     onChange={(event) => void save({ sample: event.currentTarget.value })}
                   >
@@ -185,111 +203,151 @@ export default function MemoryProfiling() {
                     ))}
                   </select>
                   <span className="text-[11px] text-default-500">
-                    Required for either target. The analyzer otherwise defaults
-                    to <code>a.exe</code>, which may not exist.
+                    Required for either target. When none is stored, the first
+                    sample found is used.
                   </span>
                 </label>
-              </div>
+              </fieldset>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-default-200 bg-default-50/60 p-3">
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-default-700">VMMap</p>
-                  <p className="mt-0.5 break-all font-mono text-[10px] text-default-500">
-                    {current.vmmap.executable || 'Not detected'}
-                  </p>
-                  {current.settings.target === 'analyzer' && (
-                    <p className="mt-0.5 text-[10px] text-default-500">
-                      Analyzer {current.vmmap.analyzer_present ? 'built' : 'not built'}
+              <fieldset className="mem-group">
+                <legend>Behaviour</legend>
+                <Switch
+                  label="Enable manual captures"
+                  checked={current.settings.enabled}
+                  pending={saving}
+                  onChange={(value) => void save({ enabled: value })}
+                  detail="This does not profile routine analysis runs. Captures start only when requested here or from Sample Factory."
+                  footnote={current.path}
+                />
+                <Switch
+                  label="Keep VMMap GUI open"
+                  checked={current.settings.keep_open}
+                  pending={saving}
+                  onChange={(value) => void save({ keep_open: value })}
+                  detail="After a successful capture, open the saved .mmp in VMMap's GUI and leave it running. Without this, VMMap only writes the export and exits."
+                />
+              </fieldset>
+
+              <fieldset className="mem-group">
+                <legend>Tooling</legend>
+                <div className="mem-tool">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-default-700">VMMap</p>
+                    <p className="mt-0.5 break-all font-mono text-[10px] text-default-500">
+                      {current.vmmap.executable || 'Not detected'}
                     </p>
-                  )}
+                    {current.settings.target === 'analyzer' && (
+                      <p className="mt-0.5 text-[10px] text-default-500">
+                        Analyzer {current.vmmap.analyzer_present ? 'built' : 'not built'}
+                      </p>
+                    )}
+                  </div>
+                  <Chip size="sm" variant="soft" color={targetOk ? 'success' : 'warning'}>
+                    {targetOk ? 'Available' : 'Not ready'}
+                  </Chip>
                 </div>
-                <Chip
-                  size="sm"
-                  variant="soft"
-                  color={current.vmmap.installed
-                    && (current.settings.target !== 'analyzer' || current.vmmap.analyzer_present)
-                    ? 'success' : 'warning'}
-                >
-                  {current.vmmap.installed
-                    && (current.settings.target !== 'analyzer' || current.vmmap.analyzer_present)
-                    ? 'Available' : 'Not ready'}
-                </Chip>
-              </div>
-              {!current.vmmap.installed && (
-                <p className="text-xs text-warning">
-                  Install Sysinternals VMMap or put <code>VMMap64.exe</code> in
-                  <code> tools/sysinternals/</code>.
-                </p>
-              )}
-              {current.vmmap.error && (
-                <p className="text-xs text-warning">{current.vmmap.error}</p>
-              )}
+                {!current.vmmap.installed && (
+                  <p className="text-xs text-warning">
+                    Install Sysinternals VMMap or put <code>VMMap64.exe</code> in
+                    <code> tools/sysinternals/</code>.
+                  </p>
+                )}
+                {current.vmmap.error && (
+                  <p className="text-xs text-warning">{current.vmmap.error}</p>
+                )}
+              </fieldset>
 
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="mem-action">
                 <Button
-                  size="sm"
+                  size="md"
                   variant="primary"
+                  className="w-full"
                   onPress={() => void run()}
                   isDisabled={!ready || saving || job?.state === 'running'}
                 >
                   {job?.state === 'running' ? 'Capturing…' : 'Capture memory map'}
                 </Button>
-                <span className="text-[11px] text-default-500">
+                <p className="text-[11px] text-default-500">
                   Saved under <code>exports/memory_profiling/</code>
-                </span>
+                </p>
               </div>
 
               {current.settings.target === 'sample' && (
-                <p className="text-xs text-warning">
+                <p className="mem-caution">
                   The selected executable runs directly on the panel host. Use
                   trusted samples or an isolated VM.
                 </p>
               )}
-              <p className="text-[11px] text-default-500">
-                VMMap reports process regions and working set; it does not trace
-                allocations by function or detect individual leaks.
-              </p>
             </Card.Content>
           </Card>
 
-          {job && (
-            <Card className="w-full">
-              <Card.Header className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <Card.Title className="text-sm font-semibold">Latest capture</Card.Title>
-                  <p className="mt-1 break-all font-mono text-[10px] text-default-500">
-                    {job.sample || job.target}
-                    {job.duration_sec !== null ? ` · ${job.duration_sec}s` : ''}
-                  </p>
-                </div>
-                <Chip
-                  size="sm"
-                  variant="soft"
-                  color={job.state === 'running' ? 'accent'
-                    : job.state === 'failed' ? 'danger'
-                      : job.warning ? 'warning' : 'success'}
-                >
-                  {job.state === 'running' ? 'Capturing'
-                    : job.state === 'failed' ? 'Capture failed'
-                      : job.warning ? 'Captured with warning' : 'Captured'}
-                </Chip>
-              </Card.Header>
-              <Card.Content>
-                {job.error && <p className="mb-2 text-xs text-danger">{job.error}</p>}
-                {job.warning && <p className="mb-2 text-xs text-warning">{job.warning}</p>}
-                {job.state === 'failed' && job.log.length > 0 && (
-                  <details className="mb-3">
-                    <summary className="cursor-pointer text-xs text-default-500">Capture log</summary>
-                    <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-default-100 p-3 font-mono text-[10px]">
-                      {job.log.join('\n')}
-                    </pre>
-                  </details>
-                )}
-                <MemoryLayout job={job} />
+          <Card className="mem-results">
+            {job ? (
+              <>
+                <Card.Header className="mem-results-head">
+                  <div className="min-w-0">
+                    <Card.Title className="text-sm font-semibold">Latest capture</Card.Title>
+                    <p className="mem-results-sub" title={job.sample || job.target}>
+                      <span className="truncate">{sampleName}</span>
+                      {job.duration_sec !== null && <span>{job.duration_sec}s</span>}
+                      {job.finished_at && <span>{ago(job.finished_at)}</span>}
+                    </p>
+                  </div>
+                  <Chip
+                    size="sm"
+                    variant="soft"
+                    color={job.state === 'running' ? 'accent'
+                      : job.state === 'failed' ? 'danger'
+                        : job.warning ? 'warning' : 'success'}
+                  >
+                    {job.state === 'running' ? 'Capturing'
+                      : job.state === 'failed' ? 'Capture failed'
+                        : job.warning ? 'Captured with warning' : 'Captured'}
+                  </Chip>
+                </Card.Header>
+                <Card.Content className="flex flex-col gap-4">
+                  {job.error && <p className="text-xs text-danger">{job.error}</p>}
+                  {job.warning && <p className="text-xs text-warning">{job.warning}</p>}
+
+                  {job.state === 'running' && (
+                    <div className="mem-running">
+                      <LogoSpinner size={40} />
+                      <div>
+                        <p>Capturing with VMMap…</p>
+                        <span>Results appear here as soon as the export is written.</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mem-tabs" role="tablist" aria-label="Capture results">
+                    {tabs.map((entry) => (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === entry.id}
+                        className={activeTab === entry.id ? 'is-on' : ''}
+                        onClick={() => setTab(entry.id)}
+                      >
+                        {entry.label}
+                        {entry.note && <small>{entry.note}</small>}
+                      </button>
+                    ))}
+                  </div>
+
+                  <MemoryLayout job={job} view={activeTab} />
+                  {activeTab === 'output' && <MemoryOutput job={job} />}
+                </Card.Content>
+              </>
+            ) : (
+              <Card.Content className="mem-blank">
+                <LogoMark height={34} className="mem-blank-mark" />
+                <p>No capture yet</p>
+                <span>Pick a process and sample, then run a capture. Totals, charts and the address tree appear here.</span>
               </Card.Content>
-            </Card>
-          )}
-        </>
+            )}
+          </Card>
+        </div>
       ) : (
         <Button size="sm" variant="outline" onPress={() => void load()}>Retry</Button>
       )}

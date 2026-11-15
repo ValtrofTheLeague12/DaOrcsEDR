@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Alert, Card, Chip } from '@heroui/react'
+import { Button } from '@heroui/react/button'
 import { api } from '../api'
 import Loading from '../components/Loading'
 import { ago } from '../lib/format'
@@ -28,6 +29,7 @@ export default function DynamicAnalysisConfig() {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [flash, setFlash] = useState<string | null>(null)
+  const [socketTimeout, setSocketTimeout] = useState<string>('')
 
   const load = useCallback(async () => {
     try {
@@ -42,6 +44,10 @@ export default function DynamicAnalysisConfig() {
     void load()
   }, [load])
 
+  useEffect(() => {
+    if (data) setSocketTimeout(String(data.settings.socket_timeout))
+  }, [data])
+
   const choose = useCallback(async (next: DynamicTransport) => {
     if (!data || data.settings.communication === next) return
     setSaving(true)
@@ -50,7 +56,7 @@ export default function DynamicAnalysisConfig() {
     try {
       // The response is the same snapshot the GET returns, so the radio
       // re-renders from what is on disk rather than from what was clicked.
-      const saved = await api.setDynamicAnalysis(next)
+      const saved = await api.setDynamicAnalysis({ communication: next })
       setData(saved)
       const label = saved.options.find((o) => o.selected)?.label ?? next
       setFlash(`Saved: ${label}.`)
@@ -63,6 +69,28 @@ export default function DynamicAnalysisConfig() {
       setSaving(false)
     }
   }, [data, load])
+
+  const saveSocketTimeout = useCallback(async () => {
+    const value = Number(socketTimeout)
+    if (!Number.isFinite(value) || value <= 0) {
+      setError('socket timeout must be a positive number')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    setFlash(null)
+    try {
+      const saved = await api.setDynamicAnalysis({ socket_timeout: value })
+      setData(saved)
+      setSocketTimeout(String(saved.settings.socket_timeout))
+      setFlash(`Saved: socket timeout ${saved.settings.socket_timeout}s.`)
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc))
+      void load()
+    } finally {
+      setSaving(false)
+    }
+  }, [socketTimeout, load])
 
   if (!data) {
     return error
@@ -156,6 +184,46 @@ export default function DynamicAnalysisConfig() {
               )
             })}
           </div>
+        </Card.Content>
+      </Card>
+
+      <Card className="w-full">
+        <Card.Header className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <Card.Title className="text-sm font-semibold">Socket timeout</Card.Title>
+            <p className="mt-1 text-[11px] text-default-400">
+              How long a socket operation may wait before it is aborted, in
+              seconds. Applies to the TCP/INSTREAM transport.
+            </p>
+          </div>
+          {saving && (
+            <span className="font-mono text-[10px] text-default-400">saving…</span>
+          )}
+        </Card.Header>
+        <Card.Content className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="eyebrow">Timeout</span>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={socketTimeout}
+              disabled={saving}
+              onChange={(e) => setSocketTimeout(e.target.value)}
+              className="field w-28 font-mono"
+              aria-label="Socket timeout in seconds"
+            />
+          </label>
+          <span className="pb-2 text-[11px] text-default-400">seconds</span>
+          <Button
+            size="sm"
+            variant="primary"
+            isDisabled={saving}
+            onPress={() => void saveSocketTimeout()}
+            aria-busy={saving || undefined}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
         </Card.Content>
       </Card>
 

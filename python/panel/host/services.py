@@ -254,6 +254,34 @@ def resolve(index: EndpointIndex, *, ports=(), service: str | None = None) -> di
     return None
 
 
+def container_index() -> dict[str, dict]:
+    """Spec key -> the compose unit that runs it, for the "manage" link.
+
+    The Services page can start the three Python services; everything else on
+    it is a container, and the Controls that exist for those live on the
+    Containers page. This is the pointer, built by asking the SAME join the
+    Containers page uses (`resolve` with the compose service name) rather than
+    a second hand-written table: if the Containers page would not recognise a
+    container as this service, the Services card must not claim it can be
+    managed there.
+
+    A Spec that is not a compose service - the two Python APIs, the ML scorer,
+    the panel, the VM - is simply absent. That absence is what the UI reads to
+    decide there is nowhere to send the reader.
+    """
+    index = endpoint_index()
+    out: dict[str, dict] = {}
+    for project in config.compose_projects():
+        label = project["label"]
+        for service in project["services"]:
+            hit = resolve(index, service=service)
+            if hit:
+                # First compose file wins a contested Spec, matching resolve's
+                # own "first spec wins" rule so the page stays deterministic.
+                out.setdefault(hit["key"], {"project": label, "service": service})
+    return out
+
+
 # Latency trend per service. Same shape of idea as system.py's ring buffer:
 # in-process, reset on panel restart, no persistence - a status page that
 # quietly writes a database is a status page that eventually needs migrating.
@@ -427,6 +455,40 @@ def _probe_spec(spec: Spec, headers: dict | None = None) -> Probe:
     return p
 
 
+def spec_for(key: str) -> Spec | None:
+    """The Spec for one service key, or None if nothing is registered under it."""
+    return next((s for s in _specs() if s.key == key), None)
+
+
+def port_of(key: str) -> int:
+    """The configured port for a service key - 0 when it has no address yet."""
+    spec = spec_for(key)
+    return spec.port if spec else 0
+
+
+def probe_one(key: str) -> Probe | None:
+    """Probe one service by key, uncached.
+
+    `overview()` is cached for five seconds and probes everything; the start /
+    stop path needs the truth about one endpoint right now, and needs it
+    without disturbing the payload the page is about to render. None means
+    "no such service", which is a caller error rather than a down service.
+    """
+    spec = spec_for(key)
+    if spec is None:
+        return None
+    headers = None
+    if spec.auth:
+        token = config.ml_token()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        return _probe_spec(spec, headers)
+    except Exception as exc:  # noqa: BLE001 - same promise as probe_all()
+        return Probe(key=spec.key, name=spec.name, endpoint=spec.endpoint,
+                     kind=spec.kind, code="down",
+                     note=f"{type(exc).__name__}: {exc}")
+
+
 def probe_all(timeout: float | None = None) -> list[Probe]:
     """Probe every service concurrently - sequential probes would serialise
     ten connection timeouts into a multi-second page load.
@@ -479,10 +541,28 @@ _OVERVIEW_CACHE_TTL = 5.0
 _overview_cache: dict = {"at": 0.0, "payload": None}
 
 
+def _control_fields(key: str) -> dict:
+    """Whether this panel can start/stop the service, and why not.
+
+    Imported inside the function on purpose: launcher imports services for
+    probe_one(), so a module-level import here would be a cycle. The UI reads
+    these two fields instead of keeping its own list of controllable services.
+    """
+    from . import launcher
+
+    if key not in launcher.UNIT_KEYS:
+        return {"control": False, "control_blocked": ""}
+    return {"control": True, "control_blocked": launcher.blocker(key)}
+
+
 def _build_overview() -> dict:
     specs = [s for s in _specs() if not s.optional or s.host]
     probes = probe_all()
     _record(probes)
+    # Which cards are a compose service. Built once for the whole page: the
+    # join reads both compose files, and asking per card would parse them ten
+    # times for one render.
+    containers = container_index()
     return {
         "services": [
             {
@@ -497,6 +577,15 @@ def _build_overview() -> dict:
                 "ui_url": (spec.base + spec.ui_path) if spec.ui_path else None,
                 "auth": spec.auth,
                 "trend": _trend(p.key),
+                # Whether this card gets a Start/Stop button, and the sentence
+                # explaining a disabled one. Computed server-side so the UI
+                # cannot offer a control the backend would refuse.
+                **_control_fields(spec.key),
+                # The compose unit behind the card, when there is one. These
+                # services are stopped and started on the Containers page, so
+                # the card points there instead of pretending it has no
+                # controls. None for the Python services this panel runs.
+                "container": containers.get(spec.key),
                 # Routing facts for the address this service answers on, so the
                 # Services cards can show interface/CIDR/class without the UI
                 # having to fetch a second endpoint. Computed here rather than
@@ -531,3 +620,14 @@ def overview() -> dict:
     # which is the exact thing the cache exists to prevent.
     _overview_cache.update(at=time.time(), payload=payload)
     return payload
+
+
+def invalidate() -> None:
+    """Drop the cached payload. Called after a start or stop.
+
+    Without this the click looks like it did nothing: the action succeeds, then
+    the page re-reads a five-second-old snapshot and draws the old state. The
+    next read re-probes; that costs a few seconds once, which is the right
+    trade for a control that has to be believable.
+    """
+    _overview_cache.update(at=0.0, payload=None)

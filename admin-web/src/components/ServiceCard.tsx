@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Button } from '@heroui/react/button'
 import { Card } from '@heroui/react/card'
 import { Chip } from '@heroui/react/chip'
 import { Sparkline, type SparkTone } from './Stat'
@@ -79,7 +80,30 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   )
 }
 
-export function ServiceCard({ probe }: { probe: Probe }) {
+export interface ServiceNotice {
+  tone: 'success' | 'warning'
+  text: string
+}
+
+export function ServiceCard({ probe, onAction, busy, message, onContainers }: {
+  probe: Probe
+  /**
+   * Present only for services the panel can supervise (probe.control). The
+   * card never decides that itself: the backend's allowlist does, so a card
+   * cannot offer a control that would 404.
+   */
+  onAction?: (action: 'start' | 'stop') => void
+  /** The action in flight for this card, if any. */
+  busy?: 'start' | 'stop'
+  /** The last action's outcome, kept until the next click. */
+  message?: ServiceNotice
+  /**
+   * Present when the card is a compose service (probe.container). Those are
+   * started and stopped on the Containers page, so the card links there
+   * instead of leaving the reader with a red DOWN and no next step.
+   */
+  onContainers?: () => void
+}) {
   const [open, setOpen] = useState(false)
 
   // A TCP connect proves the port is listening and nothing more, so it never
@@ -181,6 +205,61 @@ export function ServiceCard({ probe }: { probe: Probe }) {
           )}
         </div>
 
+        {/* Start / Stop. Only the three Python services get this row - the
+            card does not guess, it reads probe.control from the backend's
+            allowlist. stopPropagation keeps a control click from also
+            expanding the card underneath it. */}
+        {onAction && probe.control && (
+          <div className="service-control" onClick={(e) => e.stopPropagation()}>
+            <Button
+              size="sm"
+              variant={probe.up ? 'danger-soft' : 'primary'}
+              isDisabled={Boolean(busy) || (!probe.up && Boolean(probe.control_blocked))}
+              onPress={() => onAction(probe.up ? 'stop' : 'start')}
+              aria-busy={busy ? true : undefined}
+            >
+              {busy === 'start'
+                ? 'Starting…'
+                : busy === 'stop'
+                  ? 'Stopping…'
+                  : probe.up
+                    ? 'Stop'
+                    : 'Start'}
+            </Button>
+            {/* The reason a disabled Start is disabled belongs next to it,
+                not in a tooltip that a disabled button will not show. */}
+            <span className="service-control-note">
+              {probe.up
+                ? `listening on port ${probe.port}`
+                : probe.control_blocked || 'not running'}
+            </span>
+          </div>
+        )}
+
+        {/* Containers: the panel cannot start these, so the card says where
+            it can. The compose unit is named because the Containers page
+            groups by project - without it "go to Containers" is a search. */}
+        {probe.container && onContainers && (
+          <div className="service-control" onClick={(e) => e.stopPropagation()}>
+            <Button
+              size="sm"
+              variant="outline"
+              onPress={onContainers}
+            >
+              Manage in Containers →
+            </Button>
+            <span className="service-control-note">
+              {probe.container.project} / {probe.container.service}
+            </span>
+          </div>
+        )}
+
+        {message && (
+          <p className={`service-notice is-${message.tone}`} title={message.text}>
+            {message.text}
+          </p>
+        )}
+
         {/* expandable: the service's own words about itself */}
         {open && hasMore && (
           <div
@@ -234,22 +313,6 @@ export function ServiceCard({ probe }: { probe: Probe }) {
             </p>
           </div>
         )}
-      </Card.Content>
-    </Card>
-  )
-}
-
-export function Placeholder({ title, slice }: { title: string; slice: string }) {
-  return (
-    <Card className="w-full">
-      <Card.Header>
-        <Card.Title className="text-sm font-semibold">{title}</Card.Title>
-      </Card.Header>
-      <Card.Content>
-        <p className="text-xs text-default-400">
-          Not built yet — planned for {slice}. The navigation is in place so the
-          shape of the console is settled before the panels land.
-        </p>
       </Card.Content>
     </Card>
   )

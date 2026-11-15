@@ -47,6 +47,7 @@ import urllib.request
 import yaml
 
 from ..core import config, yamlview
+from ..utils import password_generator
 
 PIPELINE_DIR = config.REPO / "pipelines"
 ARTIFACTS_FILE = config.REPO / "config" / "artifacts.yaml"
@@ -207,23 +208,32 @@ ENV_OPTIONS = [
           "run with a MEGA push, off suppresses it everywhere this applies. "
           "IA_ARTIFACT_UPLOAD=0 (the panel's own runner sets it for every job "
           "it starts) still wins over everything, in both directions.",
-          "src/main/pipeline_planner.cpp:745"),
+          "src/main/pipeline_planner.cpp:732"),
     _text("MEGA_REMOTE_ROOT", "MEGA destination parent",
           "The bundle lands under <remote_root>/<sample>_artifact. Overrides "
           "the file's remote_root for this run only; empty keeps it.",
-          "src/main/pipeline_planner.cpp:747"),
+          "src/main/pipeline_planner.cpp:738"),
     _flag("MEGA_SEAL", "Password-protect the bundle before upload",
           "Per-run override of artifacts.yaml's encrypt_artifacts: the archive "
           "is wrapped in a password-protected zip (WinZip AES-256) and only "
           "the zip is uploaded - the plaintext stays local. Off leaves it "
           "plain. The password comes from the operator password file outside "
           "the repo, managed just below; nothing here ever holds the value.",
-          "src/main/pipeline_planner.cpp:746"),
+          "src/main/pipeline_planner.cpp:733"),
+    _flag("MEGA_PER_BUNDLE_PASSWORD", "Generate a password per bundle",
+          "Each protected export is zipped under its own freshly generated "
+          "password instead of the shared operator password, so one leaked "
+          "password opens one bundle rather than every bundle. Each value is "
+          "stored outside the repo in the operator profile and shown per "
+          "artifact to signed-in CTI catalog users; the shared password keeps "
+          "protecting bundles exported while this is off. There is no "
+          "artifacts.yaml twin - the environment alone decides, default off.",
+          "src/main/pipeline_planner.cpp:737"),
     _number("MEGA_TIMEOUT", "Upload timeout, seconds",
             "How long the MEGA push may take before it is abandoned: 1 to "
             "86400. Out-of-range or non-numeric values are reported with the "
             "file's value standing. 900 is artifacts.yaml's default.",
-            "src/main/pipeline_planner.cpp:751", 900.0, 1.0, 86400.0),
+            "src/main/pipeline_planner.cpp:742", 900.0, 1.0, 86400.0),
 ]
 
 ENV_BY_KEY = {o["key"]: o for o in ENV_OPTIONS}
@@ -969,6 +979,22 @@ def artifact_upload_timeout() -> int:
     return int(_artifacts()["timeout_seconds"])
 
 
+def artifact_remote_root() -> str:
+    """The effective MEGA destination shared by analyzer and panel uploads."""
+    return str(_artifacts().get("remote_root") or "/")
+
+
+def artifact_settings() -> dict:
+    """Cheap dashboard settings without resolving the analyzer phase catalog."""
+    state = _artifacts()
+    return {
+        "mega_upload": bool(state["upload_artifacts"]),
+        "mega_encrypt": bool(state.get("encrypt_artifacts")),
+        "artifacts": {"remote_root": str(state.get("remote_root") or "/")},
+        "bundle_password": _password_payload(),
+    }
+
+
 def artifact_encrypt_enabled() -> bool:
     """Whether a bundle must be password-protected before it is uploaded.
 
@@ -977,6 +1003,20 @@ def artifact_encrypt_enabled() -> bool:
     in the clear.
     """
     return bool(_artifacts().get("encrypt_artifacts"))
+
+
+def artifact_per_bundle_password_enabled() -> bool:
+    """Whether each protected export gets its own generated zip password.
+
+    Same precedence as the analyzer's: config/analysis.yaml's
+    MEGA_PER_BUNDLE_PASSWORD, applied as an environment variable, with no
+    artifacts.yaml twin - so a value that is absent or not a flag reads as off
+    here exactly as the planner's env_truthy() leaves the default standing
+    there. An unusable value is the operator's problem to fix on the page
+    that owns it, not a reason for this gate to guess.
+    """
+    raw = _global_settings().get("MEGA_PER_BUNDLE_PASSWORD")
+    return raw is not None and str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
 # --- bundle password -------------------------------------------------------
@@ -1039,13 +1079,51 @@ def _bundle_password_status() -> dict:
     return _password_payload()
 
 
+def _sync_cti_password_sidecar(value: str | None) -> None:
+    """Mirror the ZIP password where the generated CTI catalog reads it.
+
+    The catalog publishes this password to signed-in users because it is the
+    only thing that opens a downloaded archive. Updating
+    ``stix-server/config/bundle-password`` on set/generate/clear keeps a
+    rotation or a removal effective without a new Generate Server run, so a
+    revoked value cannot linger on the dashboard. The path is git-ignored, and
+    a failed mirror must never fail the password write itself.
+    """
+    path = config.REPO / "stix-server" / "config" / "bundle-password"
+    try:
+        if value is None:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value, encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass
+
+
+def _password_result(**extra) -> dict:
+    """A success shape the page can read without unwrapping ``status``.
+
+    ``present``/``path`` are repeated at the top level because every password
+    action re-renders the status chip from the response, and a nested-only copy
+    left the chip reading ``undefined`` ("no password set") after a successful
+    write. ``status`` stays for callers written against the older shape.
+    """
+    state = _password_payload()
+    return {"ok": True, **state, "status": state, **extra}
+
+
 def _bundle_password_clear() -> dict:
     """Remove the password file; a missing one is already the wanted state."""
     protect, error = _load_protect()
     if protect is None:
         return {"ok": False, "error": error}
     protect.clear_password()
-    return {"ok": True, "status": _password_payload()}
+    _sync_cti_password_sidecar(None)
+    return _password_result()
 
 
 def _bundle_password_set(value: str) -> dict:
@@ -1064,25 +1142,34 @@ def _bundle_password_set(value: str) -> dict:
         protect.set_password(value)
     except protect.PasswordError as exc:
         return {"ok": False, "error": str(exc)}
+    _sync_cti_password_sidecar(value)
     # The value is deliberately NOT returned here: only a generate shows the
     # password once, because an operator-typed one is already in someone's
     # head / password manager.
-    return {"ok": True, "status": _password_payload()}
+    return _password_result()
 
 
-def _bundle_password_generate(length: int = 24) -> dict:
-    """Generate, store, and RETURN the password exactly once."""
+def _bundle_password_generate(length: int = password_generator.DEFAULT_PASSWORD_LENGTH,
+                              mode: str | None = None) -> dict:
+    """Generate, store, and RETURN the password exactly once.
+
+    Generation is the panel's own ``PasswordGenerator`` (modes ``random`` and
+    ``stale``); ``mega/protect.py`` stays the scheme that reads/writes the file
+    and does the zip, so the value still never enters a repo config.
+    """
     protect, error = _load_protect()
     if protect is None:
         return {"ok": False, "error": error}
     try:
-        if not 12 <= int(length) <= 128:
+        length = int(length)
+        if not password_generator.MIN_PASSWORD <= length <= password_generator.MAX_PASSWORD:
             return {"ok": False, "error": "length must be between 12 and 128"}
-        value, _ = protect.generate_password(int(length))
-    except (protect.PasswordError, TypeError, ValueError) as exc:
+        value = password_generator.generate_password(length, mode)
+        protect.set_password(value)
+    except (protect.PasswordError, TypeError, ValueError, RuntimeError) as exc:
         return {"ok": False, "error": str(exc)}
-    return {"ok": True, "status": _password_payload(),
-            "password": value, "shown_once": True}
+    _sync_cti_password_sidecar(value)
+    return _password_result(password=value, shown_once=True)
 
 
 # ---------------------------------------------------------------------------

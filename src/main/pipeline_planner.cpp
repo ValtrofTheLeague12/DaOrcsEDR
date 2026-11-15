@@ -705,19 +705,6 @@ artifact_options load_artifact_options() {
   if (options.timeout_seconds < 1 || options.timeout_seconds > 86400) {
     throw std::runtime_error(path.string() + ": 'timeout_seconds' must be between 1 and 86400");
   }
-  // IA_ARTIFACT_UPLOAD=0 is the escape hatch for anything that must not put
-  // evidence on a third-party account: CI, and the panel's test runner, which
-  // starts the analyzer from a browser button. It only ever turns uploading
-  // OFF - nothing can re-enable it - so it cannot be used to disable the
-  // operator's intent, only to override it in a context that asks for it
-  // explicitly by name.
-  if (const char* off = std::getenv("IA_ARTIFACT_UPLOAD");
-      off != nullptr && (std::string(off) == "0" || std::string(off) == "false")) {
-    if (options.upload_artifacts) {
-      LOG_WARN("artifacts: upload suppressed by IA_ARTIFACT_UPLOAD=0");
-    }
-    options.upload_artifacts = false;
-  }
   // The console's home for the MEGA upload-and-seal settings is
   // config/analysis.yaml now - they are applied as ordinary analysis settings
   // at startup and arrive here as environment variables, so the Analysis
@@ -744,6 +731,10 @@ artifact_options load_artifact_options() {
   };
   env_truthy("MEGA_UPLOAD", options.upload_artifacts);
   env_truthy("MEGA_SEAL", options.encrypt_artifacts);
+  // MEGA_PER_BUNDLE_PASSWORD has no artifacts.yaml twin: a per-bundle password
+  // is not a transfer setting the file ever owned, so env alone decides it and
+  // the default is off (the shared operator password).
+  env_truthy("MEGA_PER_BUNDLE_PASSWORD", options.per_bundle_password);
   if (const char* v = std::getenv("MEGA_REMOTE_ROOT"); v != nullptr && *v != '\0') {
     options.remote_root = v;
     mega_applied = true;
@@ -760,6 +751,20 @@ artifact_options load_artifact_options() {
     } catch (const std::exception&) {
       LOG_WARN("artifacts: MEGA_TIMEOUT={} is not a number; the file's value stands", v);
     }
+  }
+  // ...and the suppression is the LAST word, not an early one. It used to run
+  // before MEGA_UPLOAD was applied, so a shell or panel that set
+  // IA_ARTIFACT_UPLOAD=0 was overridden by analysis.yaml's MEGA_UPLOAD: true -
+  // exactly the "a button in a browser pushed the evidence bundle" outcome the
+  // escape hatch exists to prevent. Nothing may re-enable uploading after this
+  // point, which is why the check is repeated here rather than trusted to an
+  // earlier branch.
+  if (const char* off = std::getenv("IA_ARTIFACT_UPLOAD");
+      off != nullptr && (std::string(off) == "0" || std::string(off) == "false")) {
+    if (options.upload_artifacts) {
+      LOG_WARN("artifacts: upload suppressed by IA_ARTIFACT_UPLOAD=0");
+    }
+    options.upload_artifacts = false;
   }
   if (mega_applied) {
     LOG_INFO("artifacts: MEGA_* from the analysis settings decided the upload "
@@ -1126,6 +1131,7 @@ void write_run_summary(const context& ctx, const pipeline_config& cfg,
                         {"remote_root", cfg.artifacts.remote_root},
                         {"timeout_seconds", cfg.artifacts.timeout_seconds},
                         {"encrypt_artifacts", cfg.artifacts.encrypt_artifacts},
+                        {"per_bundle_password", cfg.artifacts.per_bundle_password},
                     }}}},
       {"input", ctx.path},
       {"stem", ctx.stem},

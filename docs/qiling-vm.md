@@ -14,6 +14,14 @@ connection installs this machine's `~/.ssh/id_ed25519` public key on the VM
 using the password from `vms.json` (`password`) or `qiling_dlls/vm_info.json`
 (`VM_PASSWORD`); later connections use key login only.
 
+`vm_info.json` is **not** tracked: it carries that password. Copy the committed
+template once and fill in the values:
+
+    copy qiling_dlls\vm_info.example.json qiling_dlls\vm_info.json
+
+The same rule applies to `python/clamd/vm_info.json`, which is generated from
+`python/clamd/vm_info.example.json`.
+
 In Admin Terminal → Analysis VMs, choose **q** to collect Windows registry/DLL
 files into the local Qiling rootfs (Windows displays a UAC prompt), or **d** to
 prepare the rootfs, upload it only if the VM does not already have it, send

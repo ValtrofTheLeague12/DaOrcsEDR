@@ -141,7 +141,9 @@ python/d3.min.js              Vendored dashboard plotting library
 python/world-110m.json        Vendored offline world geometry
 python/country-codes.json     Country code/name/centroid table
 qiling_dlls/                  VM payload only: rootfs.tar.gz, examples/,
-                               templates/, dll_collector.bat, vm_info.json.
+                               templates/, dll_collector.bat, and the tracked
+                               vm_info.example.json. The real vm_info.json is
+                               local (it holds the VM password) and gitignored.
                                Its basename is also the analysis VM's
                                remote_dir (admin-terminal/vms.json), so it
                                keeps the name even though the scripts moved

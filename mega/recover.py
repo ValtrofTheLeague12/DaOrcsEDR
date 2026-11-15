@@ -31,6 +31,7 @@ import megacmd  # noqa: E402
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 SUFFIX = "_artifact"
+ARCHIVE_SUFFIXES = ("_evidence.tar.gz", "_evidence.zip")
 
 
 def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
@@ -140,9 +141,20 @@ def main() -> int:
     local = landed
 
     print(f"[+] verifying {local}")
-    archives = sorted(local.glob("*_evidence.tar.gz"))
+    # A protected bundle ships only the encrypted zip; an unprotected one ships
+    # the tar.gz. recover.py has to accept either, otherwise every encrypted
+    # bundle fails even though the download itself succeeded.
+    archives = sorted(
+        archive
+        for suffix in ARCHIVE_SUFFIXES
+        for archive in local.glob(f"*{suffix}")
+    )
     if not archives:
-        print(f"recover: no *_evidence.tar.gz inside {local}", file=sys.stderr)
+        print(
+            "recover: no " + " or ".join("*" + suffix for suffix in ARCHIVE_SUFFIXES)
+            + f" inside {local}",
+            file=sys.stderr,
+        )
         return 1
     archive = archives[0]
 
@@ -150,12 +162,17 @@ def main() -> int:
     expected = read_sidecar(local, archive)
     manifest = local / "manifest.json"
     manifest_digest = None
+    sealed_digest = None
     if manifest.is_file():
         try:
-            manifest_digest = json.loads(
-                manifest.read_text(encoding="utf-8")).get("archive_sha256")
+            document = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            manifest_digest = None
+            document = {}
+        if isinstance(document, dict):
+            manifest_digest = document.get("archive_sha256")
+            encryption = document.get("encryption")
+            if isinstance(encryption, dict):
+                sealed_digest = encryption.get("sealed_sha256")
 
     print(f"    archive : {archive.name}  ({archive.stat().st_size} bytes)")
     print(f"    sha256  : {actual}")
@@ -166,9 +183,15 @@ def main() -> int:
         return 1
     print(f"    sidecar : {expected}")
 
-    if manifest_digest:
-        state = "match" if manifest_digest.lower() == actual else "MISMATCH"
-        print(f"    manifest: {manifest_digest}  ({state})")
+    # The manifest carries two digests for a protected bundle: archive_sha256
+    # describes the plaintext tar.gz, sealed_sha256 the zip that was uploaded.
+    # Compare against the one that describes the file we actually downloaded.
+    protected = archive.name.endswith(".zip")
+    reference = sealed_digest if protected else manifest_digest
+    if reference:
+        label = "sealed" if protected else "manifest"
+        state = "match" if str(reference).lower() == actual else "MISMATCH"
+        print(f"    {label}: {reference}  ({state})")
 
     if expected != actual:
         print("recover: CHECKSUM MISMATCH - this copy is not what was uploaded.",

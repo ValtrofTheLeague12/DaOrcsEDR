@@ -7,8 +7,14 @@
   "stable_seconds": 2,
   "chunk_bytes": 262144,
   "state_file": "%PROGRAMDATA%\\DaOrcs\\Agent\\state.sqlite3",
-  "log_file": "%PROGRAMDATA%\\DaOrcs\\Agent\\logs\\agent.log",
+  "log_file": "%APPDATA%\\DaOrcs\\Agent\\logs\\agent.log",
+  "detections_file": "%APPDATA%\\DaOrcs\\Agent\\logs\\detections.log",
   "log_level": "INFO",
+  "api": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 8787
+  },
   "kafka": {
     "bootstrap_servers": "192.168.56.1:9092",
     "topic": "analysis-artifacts",

@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..core import config
@@ -114,7 +115,22 @@ def _logstats() -> dict:
     }
 
 
+# Walking every export tree is expensive, while run totals are not live metrics.
+_RUNSTATS_TTL = 30.0
+_runstats_cache: dict = {"at": 0.0, "payload": None}
+
+
 def _runstats() -> dict:
+    now = time.time()
+    if _runstats_cache["payload"] is not None and \
+            now - _runstats_cache["at"] < _RUNSTATS_TTL:
+        return _runstats_cache["payload"]
+    payload = _runstats_uncached()
+    _runstats_cache.update(at=time.time(), payload=payload)
+    return payload
+
+
+def _runstats_uncached() -> dict:
     """Read exports/ directly.
 
     The analyzer's own task API only covers a 24h retention window, so counting
@@ -259,8 +275,21 @@ def _containers_uncached() -> dict:
 # ---------------------------------------------------------------------------
 
 def snapshot() -> dict:
-    svc = _services()
-    mach = _machine()
+    # These contributors do independent I/O (service probes, host metrics,
+    # filesystem scans and Docker subprocesses). Running them together makes
+    # the slowest check, rather than the sum of all checks, set panel latency.
+    with ThreadPoolExecutor(max_workers=5, thread_name_prefix="panel-stats") as pool:
+        service_result = pool.submit(_services)
+        machine_result = pool.submit(_machine)
+        logs_result = pool.submit(_logstats)
+        runs_result = pool.submit(_runstats)
+        containers_result = pool.submit(_containers)
+        svc = service_result.result()
+        mach = machine_result.result()
+        log_data = logs_result.result()
+        run_data = runs_result.result()
+        container_data = containers_result.result()
+
     _record(svc, mach)
 
     span = 0.0
@@ -271,9 +300,9 @@ def snapshot() -> dict:
         "generated_at": round(time.time(), 1),
         "services": svc,
         "machine": mach,
-        "logs": _logstats(),
-        "runs": _runstats(),
-        "containers": _containers(),
+        "logs": log_data,
+        "runs": run_data,
+        "containers": container_data,
         "history": {
             "samples": len(_history),
             "window_seconds": round(span),

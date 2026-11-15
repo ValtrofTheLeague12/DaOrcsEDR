@@ -28,8 +28,9 @@ chain is:
                                                           actually queries)
 
 So "update MalAPI" means re-mirroring malapi.io and regenerating the API. The
-mirror runs under WSL, where `httrack` lives; `_extract_files.py` drives it and
-installs it if it is missing.
+mirror uses the real `httrack` binary: the native Windows build when it is on
+PATH, with WSL as the fallback. `_extract_files.py` drives it and, on the WSL
+path only, installs it if it is missing.
 
 What this used to do, and why it was wrong: the button ran `git pull --ff-only`
 on `malt/`, believing it to be the rules. `malt/` is memtt/malt, the MalAPI
@@ -40,9 +41,10 @@ stayed exactly where they were. The checkout is still reported, under its real
 name, because deleting someone's clone is not this panel's decision.
 
 `yara-rules/` is NOT a git checkout. It is five unpacked collections with no
-upstream recorded anywhere, so there is no "update" to offer - only a way to
-find out what is there and whether it compiles. That is deliberately reported
-as unavailable rather than quietly omitted.
+upstream recorded anywhere, plus `unprotect_it/`, which the Unprotect.it card
+regenerates. There is no "update" on the YARA card itself - only a way to find
+out what is there and whether it compiles. That is deliberately reported as
+unavailable rather than quietly omitted.
 
 yarGen-Go's own script documents a failure mode this page exists to prevent:
 `config/config.yaml` is read at startup, only `config.example.yml` is
@@ -56,6 +58,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -64,6 +67,7 @@ from pathlib import Path
 from ..build import build
 from ..core import config
 from ..samples import eagle
+from . import unprotect_it
 
 # ---------------------------------------------------------------------------
 # Layout
@@ -114,6 +118,9 @@ SBOM_TIMEOUT = 900.0
 # git pull on malt/.
 MIRROR_TIMEOUT = 1800.0
 YARA_TIMEOUT = 600.0
+# The Unprotect.it scrape is ~150 raw HTTP requests plus the import pass. Slow
+# links are the only reason it needs more than the YARA check's budget.
+UNPROTECT_TIMEOUT = 1800.0
 # A cold configure plus a Release build of the VM core is minutes, and the
 # whole tree is recompiled after a source change. Bounded generously rather
 # than left unbounded.
@@ -337,23 +344,34 @@ def _mirror_age_days(directory: Path) -> int | None:
 
 
 def _httrack_available() -> tuple[bool, str | None]:
-    """Is the mirroring tool reachable? The mirror runs under WSL.
+    """Is the mirroring tool reachable?
+
+    The native Windows `httrack` is preferred: it is what the mirror actually
+    runs, and finding it is a PATH lookup. WSL is only consulted when no Windows
+    binary exists, because a stopped or unresponsive distro makes
+    `wsl bash -lc` block until the timeout and the card then reports a probe
+    failure instead of the tool that is installed.
 
     Checked here rather than discovered as a failed job: _extract_files.py will
-    try to apt-get install httrack when it is missing, which is a slow thing to
-    discover from a spinner.
+    try to apt-get install httrack on the WSL fallback when it is missing, which
+    is a slow thing to discover from a spinner.
     """
+    if shutil.which("httrack"):
+        return True, None
+    if shutil.which("wsl") is None:
+        return False, "httrack is not installed and WSL is not available"
     try:
         out = subprocess.run(
             ["wsl", "bash", "-lc", "command -v httrack || echo MISSING"],
             capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=20, check=False,
+            errors="replace", timeout=8, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, f"could not probe WSL: {exc}"
+        return False, (f"httrack is not installed and WSL could not be probed: "
+                       f"{exc}")
     text = (out.stdout or "").strip()
     if not text or text == "MISSING" or "not installed" in text:
-        return False, "httrack is not installed in WSL"
+        return False, "httrack is not installed (native or in WSL)"
     return True, None
 
 
@@ -454,7 +472,9 @@ def malapi() -> dict:
                 f"live mirror, so the refresh refuses to touch a lock under a day "
                 f"old - if no mirror is running, delete it and retry." if live_lock else None)
         ),
-        "source": "https://malapi.io/ (mirrored with httrack under WSL)",
+        "source": ("https://malapi.io/ (mirrored with "
+                   + ("httrack)" if shutil.which("httrack")
+                      else "httrack under WSL)")),
         "mirror_path": _rel(MALAPI_SITE),
         "mirror_age_days": mirror_age,
         "yaml_path": _rel(MALAPI_YAML),
@@ -481,9 +501,10 @@ def yara() -> dict:
     """Inventory of the rule packs.
 
     Read-only and cheap enough to call on a poll: a directory walk with no
-    parsing. There is deliberately no "update" here - yara-rules/ is five
-    unpacked collections with no recorded upstream, so pretending to be able to
-    refresh it would be a button that lies.
+    parsing. There is deliberately no "update" here - the packs are unpacked
+    collections with no recorded upstream (the `unprotect_it` collection is
+    refreshed by its own card), so pretending to be able to pull would be a
+    button that lies.
     """
     if not YARA_RULES.is_dir():
         return {"available": False, "reason": "yara-rules/ is not present", "total": 0}
@@ -530,8 +551,9 @@ def yara() -> dict:
         "largest": largest,
         "is_git_checkout": (YARA_RULES / ".git").is_dir(),
         "can_update": False,
-        "update_reason": ("yara-rules/ is an unpacked directory with no recorded "
-                          "upstream, so there is nothing to pull"),
+        "update_reason": ("yara-rules/ has no recorded upstream, so there is "
+                          "nothing to pull; Unprotect.it is regenerated from its "
+                          "own card"),
         "compiler": str(YARAC) if YARAC.is_file() else None,
         "yara_version": _yara_version(),
         "ignore_compile_failures": _yara_check_settings()["ignore_compile_failures"],
@@ -660,6 +682,17 @@ _UTIL_SPEC = [
                     "reported here rather than at the first scan of a real sample.",
      "effects": ["reads every rule file", "compiles to a temp file"],
      "timeout": YARA_TIMEOUT},
+    {"id": "unprotect-update", "label": "Regenerate Unprotect.it rules",
+     "utility": "unprotect",
+     "description": "Re-scrape unprotect.it's detection rules, then import only "
+                    "the YARA rules that are not already vendored under "
+                    "yara-rules/. Files that use pe.* without importing it get "
+                    "the import added. Sigma stays staged; the site's CAPA rules "
+                    "are legacy syntax that capa 9 rejects, so they are ignored.",
+     "effects": ["reaches the network", "rewrites yara-rules/unprotect_it/",
+                 "keeps Sigma in unprotect_it_scraper/extracted_rules/sigma",
+                 "ignores legacy CAPA rules"],
+     "timeout": UNPROTECT_TIMEOUT},
     {"id": "yargen-update", "label": "Update yarGen-Go", "utility": "yargen",
      "description": "Download yarGen-Go's opcode and string databases, then "
                     "re-run every prerequisite check. Does not generate rules - "
@@ -682,6 +715,7 @@ def catalogue() -> dict:
     """The utilities, with per-entry availability resolved right now."""
     mal = malapi()
     eagle_state = eagle.status()
+    unprotect_state = unprotect_it.state()
     entries = []
     for spec in _UTIL_SPEC:
         entry = dict(spec)
@@ -694,7 +728,7 @@ def catalogue() -> dict:
             # what this rewrites, and `can_update` was never a key malapi()
             # returned, so reading it left this button permanently disabled with
             # no reason to show. What actually decides is `blocked`: no httrack
-            # in WSL, or a lock young enough to be a live mirror.
+            # (native or WSL), or a lock young enough to be a live mirror.
             #
             # A missing mirror is deliberately NOT a reason to refuse. The
             # scrape stage creates it from nothing, which is exactly what it is
@@ -704,6 +738,9 @@ def catalogue() -> dict:
         elif entry["id"] == "yara-check":
             available = YARAC.is_file()
             reason = "yarac not found in the MSYS2 toolchain"
+        elif entry["id"] == "unprotect-update":
+            available = unprotect_state["available"]
+            reason = unprotect_state.get("reason")
         elif entry["id"] == "yargen-update":
             available = YARGEN_UPDATE.is_file()
             reason = "update_and_check.ps1 not found"
@@ -719,14 +756,14 @@ def catalogue() -> dict:
 
     return {"entries": entries,
             "sbom": sbom(), "malapi": mal, "yara": yara(), "yargen": yargen(),
-            "eagle": eagle_state}
+            "unprotect": unprotect_state, "eagle": eagle_state}
 
 
 def overview() -> dict:
-    """All four states in one call.
+    """Every card's state in one call.
 
-    The panel would otherwise make four requests to render one page, and could
-    show four cards describing four different moments.
+    The panel would otherwise make one request per card to render one page, and
+    could show cards describing different moments.
     """
     return catalogue()
 
@@ -750,6 +787,8 @@ def _argv(utility: str) -> list[str]:
     if utility == "yargen":
         return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-File", str(YARGEN_UPDATE), "-UpdateOnly"]
+    if utility == "unprotect":
+        return [_python(), str(unprotect_it.SCRIPT)]
     if utility == "eagle":
         return [_python(), str(EAGLE_SCRIPT), "--build"]
     return []

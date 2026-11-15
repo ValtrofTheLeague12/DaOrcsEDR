@@ -138,8 +138,16 @@ Two consequences worth stating, because the files are easy to conflate:
 Memory profiling is managed from **Maintenance → Memory profiling** because
 VMMap is an optional diagnostic tool, not an analyzer run-time setting. It
 captures a selected Windows executable or runs the analyzer on one. The page
-shows the VMMap setup status, capture controls, category totals, and address
-regions; the native snapshot can be downloaded for inspection in VMMap.
+shows the VMMap setup status, capture controls, category totals, a collapsible
+memory tree, and the console output from the capture. The tree keeps VMMap's
+parent/child region structure instead of repeating subregions as flat address
+rows. The CSV memory map and the native snapshot can both be downloaded for
+inspection in VMMap. Each `$ …` command in the captured output is shown as a
+copyable command row. The newest export on disk is recovered after a panel
+restart, so the tree and downloads remain available without capturing again.
+Enabling **Keep VMMap GUI open** launches VMMap with the saved `.mmp` after a
+successful capture and leaves the GUI running; otherwise the command-line
+capture writes its exports and exits.
 
 ## Where it is read
 

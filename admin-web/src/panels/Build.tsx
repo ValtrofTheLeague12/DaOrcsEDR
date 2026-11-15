@@ -3,8 +3,9 @@ import type { ReactNode } from 'react'
 import { Alert, Card, Chip } from '@heroui/react'
 import { api } from '../api'
 import Icon from '../components/Icon'
+import CommandLine from '../components/CommandLine'
 import Loading from '../components/Loading'
-import { parseLine, stripAnsi, TONE_CLASS } from '../lib/logColor'
+import { parseLine, TONE_CLASS } from '../lib/logColor'
 import { ago, bytes } from '../lib/format'
 import Switch from '../components/Switch'
 import SubNav from '../components/SubNav'
@@ -54,14 +55,19 @@ import type {
 // parseLine runs inside the memo rather than being passed in, because passing
 // the parsed object would hand every row a fresh identity on every poll and the
 // memo would never hit.
-const LogRow = memo(function LogRow({ line, n }: { line: string; n: number }) {
+const LogRow = memo(function LogRow({ line, n, numbered = true }: {
+  line: string
+  n: number
+  /** The static run view omits the gutter so copy/paste stays clean. */
+  numbered?: boolean
+}) {
   const p = useMemo(() => parseLine(line), [line])
   return (
     <div
       className={`build-log-line ${p.notable ? 'is-notable' : ''}`}
       title={p.stamp ?? undefined}
     >
-      <span className="build-log-num">{n}</span>
+      {numbered && <span className="build-log-num">{n}</span>}
       <span className="build-log-text">
         {p.pieces
           // ANSI-coloured output (the analyzer annotating its own imports
@@ -407,7 +413,6 @@ function PipelineRunCard({ analyzerReady, pipelines, pipeline, onPipelineChange,
   })
 
   const logRef = useRef<HTMLDivElement>(null)
-  const taRef = useRef<HTMLTextAreaElement>(null)
 
   const running = job?.state === 'running'
 
@@ -702,17 +707,11 @@ function PipelineRunCard({ analyzerReady, pipelines, pipeline, onPipelineChange,
     ? Math.max(0, Math.round(job.deadline - Date.now() / 1000))
     : null
 
-  // The cursor-off mode is a plain <textarea>, which cannot paint an SGR
-  // sequence - it would show the escape byte as a control glyph and the rest as
-  // literal `[36m` text. Strip them: that mode exists so the whole output can
-  // be selected and copied, and copied text should not carry terminal control
-  // bytes either. The colour is not lost from the page; it is on the cursor-on
-  // view and on the Build output tab.
-  const plainLog = useMemo(
-    () => (job?.log ?? []).map(stripAnsi).join('\n'),
-    [job?.log],
-  )
-
+  // Both views use the same renderer. The old cursor-off mode was a <textarea>
+  // filled with stripAnsi(), which turned the whole run - banner included - into
+  // uncoloured text; a copied log losing its escape bytes is the point, but the
+  // screen losing them is not. The static view drops the line-number gutter
+  // instead, so a selection copies clean text while the colours stay on screen.
   // --- follow the tail (cursor mode) ----------------------------------------
   const onRunScroll = useCallback(() => {
     const el = logRef.current
@@ -723,7 +722,6 @@ function PipelineRunCard({ analyzerReady, pipelines, pipeline, onPipelineChange,
     if (!cursor || !follow) return
     const scroll = () => {
       if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
-      else if (taRef.current) taRef.current.scrollTop = taRef.current.scrollHeight
     }
     scroll()
     const raf = window.requestAnimationFrame(scroll)
@@ -806,7 +804,7 @@ function PipelineRunCard({ analyzerReady, pipelines, pipeline, onPipelineChange,
             detail={
               cursor
                 ? 'Live view with a caret, pinned to the tail.'
-                : 'Plain text area - copy the whole output from it.'
+                : 'Static view - scroll and select freely; colour stays on.'
             }
           />
         </div>
@@ -910,15 +908,10 @@ function PipelineRunCard({ analyzerReady, pipelines, pipeline, onPipelineChange,
             from the two selectors; once a job exists it is the server's exact
             argv, so the absolute executable and resolved sample path are
             visible without opening the log. */}
-        <div className="build-command"
-             title={job?.command
-               ? 'The exact command the server spawned for this run'
-               : 'Preview - the server resolves the sample to an absolute path when the run starts'}>
-          <span className="build-command-label">
-            {job?.command ? (running ? 'Running' : 'Last run') : 'Will run'}
-          </span>
-          <code>{job?.command ?? commandPreview}</code>
-        </div>
+        <CommandLine
+          value={job?.command ?? commandPreview}
+          label={job?.command ? (running ? 'Running command' : 'Last run') : 'Command preview'}
+        />
 
         {/* The picker's own state. A listing failure does not block Upload -
             the endpoint validates independently and the run gate would catch
@@ -1080,16 +1073,21 @@ function PipelineRunCard({ analyzerReady, pipelines, pipeline, onPipelineChange,
             {running && <span className="run-cursor" aria-hidden="true" />}
           </div>
         ) : (
-          <textarea
-            ref={taRef}
-            className="run-textarea"
-            readOnly
-            rows={16}
-            spellCheck={false}
-            aria-label="Pipeline output as plain text"
-            value={plainLog}
-            placeholder="The run's output appears here, one line per line."
-          />
+          <div
+            className="build-log build-log-static"
+            role="log"
+            aria-label="Pipeline output, selectable"
+            tabIndex={0}
+          >
+            {job.log_dropped ? (
+              <div className="build-log-line is-truncated">
+                ... {job.log_dropped} earlier line{job.log_dropped === 1 ? '' : 's'} dropped
+              </div>
+            ) : null}
+            {job.log.map((line, i) => (
+              <LogRow key={i} line={line} n={i + 1} numbered={false} />
+            ))}
+          </div>
         )}
       </Card.Content>
     </Card>

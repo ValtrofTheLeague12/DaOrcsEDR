@@ -65,12 +65,20 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
+import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_TIMEOUT = 300
 QUICK_TIMEOUT = 60
+
+# CREATE_NO_WINDOW: keep MEGAclient from flashing a console when the analyzer or
+# the panel (which have no console of their own) spawn it. Only meaningful on
+# Windows; ignored everywhere else.
+_CREATE_NO_WINDOW = 0x08000000
 
 # Interactive front-end. Never a valid target for a scripted call.
 INTERACTIVE = {"megacmdshell.exe"}
@@ -155,6 +163,69 @@ def client() -> Path | None:
     return None
 
 
+def server() -> Path | None:
+    """The daemon that holds the session (Windows ships it separately).
+
+    Starting a command through the client usually auto-starts this, but only
+    after a wait the caller cannot see or bound. The dashboard and the build
+    script start it explicitly so the first artifact operation does not pay
+    that cost, or time out while it happens.
+    """
+    return _find(["MEGAcmdServer.exe", "megacmdserver"])
+
+
+def _server_answering() -> bool:
+    """True when the client can answer without having to start a daemon."""
+    try:
+        res = run("whoami", timeout=5, check=False)
+    except MegaError:
+        return False
+    return res.code == 0
+
+
+def ensure_server(wait: float = 20.0) -> tuple[bool, str]:
+    """Start MEGAcmdServer if it is installed but not already answering.
+
+    Idempotent on purpose: the dashboard launcher and the build script both
+    call it, and whichever runs second must be a no-op rather than a second
+    daemon or a login prompt. Returns (ok, human-readable detail); never
+    raises, because a missing daemon must not stop the panel from opening.
+    """
+    if not available():
+        return False, missing_message().splitlines()[0]
+
+    if os.name != "nt":
+        # POSIX megacmd starts and owns its daemon; there is no separate exe.
+        return True, "managed by megacmd"
+
+    exe = server()
+    if exe is None:
+        return False, "MEGAcmdServer.exe not found"
+
+    if _server_answering():
+        return True, "already running"
+
+    try:
+        subprocess.Popen(
+            [str(exe)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=_CREATE_NO_WINDOW |
+                          getattr(subprocess, "DETACHED_PROCESS", 0),
+            close_fds=True,
+        )
+    except OSError as exc:
+        return False, f"could not start {exe.name}: {exc}"
+
+    deadline = time.monotonic() + max(wait, 0)
+    while time.monotonic() < deadline:
+        if _server_answering():
+            return True, f"started {exe.name}"
+        time.sleep(0.5)
+    return False, f"{exe.name} did not answer within {wait:.0f}s"
+
+
 def wrapper(command: str) -> Path | None:
     """The mega-<command>.bat shim, used only if no direct client was found."""
     return _find([f"mega-{command}.bat", f"mega-{command}.cmd", f"mega-{command}.exe"])
@@ -216,28 +287,111 @@ def clean(text: str) -> str:
 # Running
 # ---------------------------------------------------------------------------
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill a MEGAcmd child and anything it started, without waiting on pipes.
+
+    `subprocess.run(..., timeout=...)` is not enough here. Its cleanup calls
+    communicate() again after killing the direct child, and if that child
+    spawned something that inherited stdout/stderr - MEGAclient starting its
+    daemon, or a `cmd /c mega-*.bat` shim - the pipe never reaches EOF and the
+    caller blocks forever even though the timeout already fired. That is the
+    hang this function exists to end: kill the tree, then stop listening.
+    """
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=15, check=False,
+                creationflags=_CREATE_NO_WINDOW)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        # start_new_session=True in run() made the child a process-group
+        # leader, so a negative pid reaches its whole tree.
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _read_output(path: Path, limit: int = 8 << 20) -> str:
+    """Read a capped snapshot of a redirect file, tolerating a live writer."""
+    try:
+        with path.open("rb") as fh:
+            raw = fh.read(limit)
+    except OSError:
+        return ""
+    return raw.decode("utf-8", errors="replace")
+
+
 def run(command: str, *args, timeout: int = DEFAULT_TIMEOUT,
         check: bool = True) -> Result:
-    """Invoke a MEGAcmd subcommand. Raises MegaError unless check=False."""
-    argv = build_argv(command, args)
-    try:
-        proc = subprocess.run(
-            argv, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise MegaError(
-            f"megacmd {command} did not finish within {timeout}s. "
-            "MEGAcmd may be starting its server, resuming a session, or "
-            "waiting on an MFA prompt.") from None
-    except OSError as exc:
-        raise MegaError(f"could not run {argv[0]}: {exc}") from None
+    """Invoke a MEGAcmd subcommand. Raises MegaError unless check=False.
 
-    res = Result(command, argv, proc.returncode,
-                 clean(proc.stdout or ""), clean(proc.stderr or ""))
-    if check and res.code != 0:
-        detail = res.err or res.out or "(no output)"
-        raise MegaError(f"megacmd {command} failed (exit {res.code}): {detail}")
-    return res
+    stdout/stderr are redirected to temporary FILES rather than pipes. A pipe
+    is the thing that can outlive the process holding it: if MEGAclient starts
+    MEGAcmdServer, or a .bat shim leaves a grandchild behind, the pipe's write
+    end stays open after the command exits and a reader waits for an EOF that
+    never comes. A file has no such conversation, so a timeout can be enforced
+    by the clock alone. `stdin=DEVNULL` closes the other way a CLI can wait
+    forever - an MFA or password prompt that no script can answer.
+    """
+    argv = build_argv(command, args)
+    if timeout is None or timeout <= 0:
+        timeout = DEFAULT_TIMEOUT
+
+    root = Path(tempfile.mkdtemp(prefix="megacmd-"))
+    out_path, err_path = root / "stdout", root / "stderr"
+    timed_out = False
+    try:
+        with out_path.open("wb") as out_file, err_path.open("wb") as err_file:
+            kwargs = {"stdin": subprocess.DEVNULL,
+                      "stdout": out_file, "stderr": err_file}
+            if os.name == "nt":
+                kwargs["creationflags"] = _CREATE_NO_WINDOW
+            else:
+                kwargs["start_new_session"] = True
+            try:
+                proc = subprocess.Popen(argv, **kwargs)
+            except OSError as exc:
+                raise MegaError(f"could not run {argv[0]}: {exc}") from None
+
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _kill_tree(proc)
+
+        if timed_out:
+            raise MegaError(
+                f"megacmd {command} did not finish within {timeout}s. "
+                "MEGAcmd may be starting its server, resuming a session, or "
+                "waiting on an MFA prompt.")
+
+        res = Result(command, argv, proc.returncode,
+                     clean(_read_output(out_path)),
+                     clean(_read_output(err_path)))
+        if check and res.code != 0:
+            detail = res.err or res.out or "(no output)"
+            raise MegaError(
+                f"megacmd {command} failed (exit {res.code}): {detail}")
+        return res
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -267,3 +421,112 @@ def logged_in(email: str | None = None, timeout: int = QUICK_TIMEOUT) -> bool:
     if not who:
         return False
     return who.lower() == email.lower() if email else True
+
+
+# ---------------------------------------------------------------------------
+# Public links
+#
+# `export <path>` reports the link a node already has; `export -a -f <path>`
+# creates one. The two are kept separate because listing a page must never
+# publish evidence: remote() only ever asks for an existing link, and creating
+# one is an explicit operator action (or the end of an export they started).
+#
+# MEGA puts the decryption key in the link's fragment, so the URL is the whole
+# capability and must be treated as a secret when the bundle is not protected.
+# ---------------------------------------------------------------------------
+
+_LINK = re.compile(
+    r"https://mega\.nz/(?:folder|file)/[A-Za-z0-9_-]+(?:#[A-Za-z0-9_-]+)?")
+
+# MEGA's --expire grammar: s seconds, M minutes, h hours, d days, m months,
+# y years. The case matters - M is minutes and m is months - so this cannot be
+# case-insensitive. Components combine: "1m12d3h".
+_DURATION = re.compile(r"^(?:\d+[smhdMy])+$")
+
+
+def valid_duration(text: str) -> bool:
+    """True for a MEGA time delay with at least one non-zero component."""
+    text = str(text or "").strip()
+    if not _DURATION.match(text):
+        return False
+    return any(int(part) > 0 for part in re.findall(r"\d+", text))
+
+
+
+def _link_from(text: str) -> str | None:
+    found = _LINK.search(text or "")
+    return found.group(0) if found else None
+
+
+def link_from(text: str) -> str | None:
+    """The first public MEGA URL in some MEGAcmd output, or None."""
+    return _link_from(text)
+
+
+def exported_link(remote_path: str, timeout: int = QUICK_TIMEOUT) -> str | None:
+    """The existing public link for a node, or None if it is not exported.
+
+    Read-only: a node that is not exported returns MEGAcmd's "not exported.
+    Use -a" with exit 53, which is a normal answer here, not an error.
+    """
+    res = run("export", remote_path, timeout=timeout, check=False)
+    if res.code != 0:
+        return None
+    return _link_from(res.text)
+
+
+def public_link(remote_path: str, timeout: int = QUICK_TIMEOUT,
+                expire: str | None = None) -> str:
+    """The node's public link, creating one if it has none.
+
+    `-f` accepts the copyright terms shown the first time an account exports
+    anything; without it the first call can fail on a prompt no script can
+    answer. An already-exported node is read first so `-a` is not attempted
+    (MEGAcmd errors when the export exists).
+
+    `expire` is a MEGA time delay ("12h", "7d", "1m12d3h") applied only when a
+    link is created. An existing link is returned unchanged: MEGA cannot modify
+    an export in place. Only PRO accounts may set an expiry; the refusal is
+    raised rather than retried without it, because a permanent link would
+    outlive the policy the operator asked for.
+    """
+    if expire is not None:
+        expire = str(expire).strip()
+        if not expire:
+            expire = None
+        elif not valid_duration(expire):
+            raise MegaError(
+                f"invalid MEGA link expiry {expire!r}: use e.g. "
+                "12h, 7d or 1m12d3h (M = minutes, m = months)")
+
+    link = exported_link(remote_path, timeout)
+    if link:
+        return link
+    args = ["-a"]
+    if expire:
+        args.append(f"--expire={expire}")
+    args += ["-f", remote_path]
+    res = run("export", *args, timeout=timeout)
+    link = _link_from(res.text)
+    if not link:
+        raise MegaError(
+            f"megacmd export returned no link for {remote_path}: "
+            f"{res.text[:200] or '(no output)'}")
+    return link
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    ap = argparse.ArgumentParser(description="MEGAcmd helper for the launcher scripts")
+    ap.add_argument("--ensure-server", action="store_true",
+                    help="start MEGAcmdServer if it is not already running")
+    ap.add_argument("--wait", type=float, default=20.0,
+                    help="seconds to wait for the daemon (default: 20)")
+    ns = ap.parse_args()
+    if ns.ensure_server:
+        ok, detail = ensure_server(ns.wait)
+        print(detail)
+        sys.exit(0 if ok else 1)
+    ap.print_help()

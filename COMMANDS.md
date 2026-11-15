@@ -332,8 +332,7 @@ Set in the shell, or in a pipeline's `environment:` block, or in `.env`.
 | `MEGA_UPLOAD` | `1` uploads the evidence bundle; overrides artifacts.yaml's `upload_artifacts`. |
 | `MEGA_REMOTE_ROOT` | MEGA destination parent, `<root>/<sample>_artifact`. |
 | `MEGA_SEAL` | `1` seals the bundle before upload; overrides `encrypt_artifacts`. |
-| `MEGA_RECIPIENT` | `user` or `admin` - which sealing keypair. |
-| `MEGA_ADMIN_PUBKEY` | Admin public key (or a path to it) for `admin` sealing. |
+| `MEGA_ADMIN_PUBKEY` | Removed with the keypair scheme. Protection is now a password zip; the password lives in the operator password file (see `mega/protect.py`). |
 | `MEGA_TIMEOUT` | Upload command timeout in seconds, `1`–`86400`. Default `900`. |
 | `KNOWN_PE_HASHES_FILE` | Overrides `data\known_pe_hashes.jsonl`. |
 | `SA_API_HOST`, `SA_API_PORT` | API server bind address. |

@@ -1,5 +1,6 @@
 {
   "enabled": true,
   "target": "analyzer",
-  "sample": ""
+  "sample": "",
+  "keep_open": false
 }

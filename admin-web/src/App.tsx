@@ -3,6 +3,9 @@ import { api, auth, usePoll } from './api'
 import Icon, { type IconName } from './components/Icon'
 import PanelBoundary from './components/PanelBoundary'
 import Login from './panels/Login'
+import BootScreen from './components/BootScreen'
+import LogoSpinner from './components/LogoSpinner'
+import { LogoMark } from './components/Logo'
 import ThemeToggle from './components/ThemeToggle'
 import { VM_TARGETS } from './lib/vms'
 
@@ -29,8 +32,12 @@ const Documentation = lazy(() => import('./panels/Documentation'))
 const Stats = lazy(() => import('./panels/Stats'))
 const System = lazy(() => import('./panels/System'))
 const Network = lazy(() => import('./panels/Network'))
+const EndpointAgents = lazy(() => import('./panels/EndpointAgents'))
 const Logs = lazy(() => import('./panels/Logs'))
 const Artifacts = lazy(() => import('./panels/Artifacts'))
+const ThreatIntelligence = lazy(() => import('./panels/ThreatIntelligence'))
+const ThreatIntelligenceBans = lazy(() => import('./panels/ThreatIntelligenceBans'))
+const ThreatIntelligenceApis = lazy(() => import('./panels/ThreatIntelligenceApis'))
 const Containers = lazy(() => import('./panels/Containers'))
 const Build = lazy(() => import('./panels/Build'))
 const Utils = lazy(() => import('./panels/Utils'))
@@ -45,10 +52,12 @@ const MemoryProfiling = lazy(() => import('./panels/MemoryProfiling'))
 // Exported so panels can accept an `onNavigate` prop without importing the
 // whole App module graph - the type is all they need.
 export type PanelId =
-  | 'overview' | 'docs' | 'stats' | 'system' | 'network' | 'logs' | 'artifacts'
+  | 'overview' | 'docs' | 'stats' | 'system' | 'network' | 'endpoint-agents'
+  | 'logs' | 'artifacts'
   | 'pipelines' | 'analysis' | 'build' | 'utils' | 'memory-profiling'
   | 'containers'
-  | 'dynamic-analysis' | 'vm' | 'qiling-vm' | 'clamd' | 'qiling'
+  | 'dynamic-analysis' | 'threat-intel' | 'threat-intel-bans' | 'threat-intel-apis'
+  | 'vm' | 'qiling-vm' | 'clamd' | 'qiling'
 
 interface NavEntry {
   id: PanelId
@@ -57,9 +66,11 @@ interface NavEntry {
 }
 
 const BUILT: PanelId[] = [
-  'stats', 'overview', 'docs', 'system', 'network', 'artifacts', 'pipelines',
+  'stats', 'overview', 'docs', 'system', 'network', 'endpoint-agents',
+  'artifacts', 'pipelines',
   'analysis', 'dynamic-analysis', 'build', 'utils', 'containers', 'logs', 'vm',
-  'qiling-vm', 'qiling', 'clamd', 'memory-profiling',
+  'qiling-vm', 'qiling', 'clamd', 'memory-profiling', 'threat-intel',
+  'threat-intel-bans', 'threat-intel-apis',
 ]
 
 // The virtual-machine section is generated from lib/vms.ts, so bringing a new
@@ -93,6 +104,14 @@ const NAV: { group: string; items: NavEntry[] }[] = [
     ],
   },
   {
+    // Endpoints get their own section: the fleet is inspected on its own, and
+    // it used to be buried as a tab inside Networking next to topology scans.
+    group: 'Endpoints',
+    items: [
+      { id: 'endpoint-agents', label: 'Endpoint agents', icon: 'machine' },
+    ],
+  },
+  {
     group: 'Analysis',
     items: [
       // Two pages, two levels, and the names say which is which:
@@ -110,6 +129,14 @@ const NAV: { group: string; items: NavEntry[] }[] = [
       { id: 'pipelines', label: 'Pipelines Configuration', icon: 'analyze' },
       { id: 'artifacts', label: 'Artifacts', icon: 'artifacts' },
       { id: 'build', label: 'Build', icon: 'build' },
+    ],
+  },
+  {
+    group: 'Threat Intelligence',
+    items: [
+      { id: 'threat-intel', label: 'Threat Intelligence Server', icon: 'server' },
+      { id: 'threat-intel-bans', label: 'Available Users', icon: 'user' },
+      { id: 'threat-intel-apis', label: 'API Configuration', icon: 'plug' },
     ],
   },
   {
@@ -142,6 +169,10 @@ const NAV: { group: string; items: NavEntry[] }[] = [
   { group: 'Diagnostics', items: [{ id: 'logs', label: 'Logs', icon: 'logs' }] },
 ]
 
+const GROUP_OF: Partial<Record<PanelId, string>> = Object.fromEntries(
+  NAV.flatMap((g) => g.items.map((i) => [i.id, g.group])),
+)
+
 const ALL_ITEMS = NAV.flatMap((g) => g.items)
 const TITLES: Record<PanelId, string> = Object.fromEntries(
   ALL_ITEMS.map((i) => [i.id, i.label]),
@@ -161,7 +192,7 @@ function PanelFallback({ label }: { label: string }) {
       role="status"
       aria-live="polite"
     >
-      <div className="h-7 w-7 animate-pulse rounded-full border-2 border-accent/30 border-t-accent" />
+      <LogoSpinner />
       <p className="font-mono text-[10px] text-default-400">
         Loading {label.toLowerCase()}…
       </p>
@@ -171,8 +202,17 @@ function PanelFallback({ label }: { label: string }) {
 
 export default function App() {
   const [panel, setPanel] = useState<PanelId>('stats')
+  const [query, setQuery] = useState('')
+  const [closed, setClosed] = useState<Record<string, boolean>>({})
   const [gate, setGate] = useState<'checking' | 'in' | 'out'>('checking')
   const [state, setState] = useState<Awaited<ReturnType<typeof auth.state>> | null>(null)
+  // Hold the boot screen for a beat even when the server answers instantly, so
+  // the opening reads as a deliberate moment rather than a flash.
+  const [booted, setBooted] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setBooted(true), 1800)
+    return () => clearTimeout(t)
+  }, [])
 
   const cfg = usePoll(api.config, 60000)
 
@@ -192,82 +232,108 @@ export default function App() {
     void check()
   }, [])
 
-  if (gate === 'checking') {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="h-8 w-8 animate-pulse rounded-full border-2 border-accent/30 border-t-accent" />
-      </div>
-    )
+  if (gate === 'checking' || !booted) {
+    return <BootScreen />
   }
 
   if (gate === 'out') {
     return <Login onOk={() => void check()} />
   }
 
+  const q = query.trim().toLowerCase()
+  const groups = NAV.map((g) => ({
+    ...g,
+    items: q ? g.items.filter((it) => it.label.toLowerCase().includes(q)) : g.items,
+  })).filter((g) => g.items.length > 0)
+  const host = cfg.data ? `${cfg.data.panel.host}:${cfg.data.panel.port}` : null
+
   return (
-    <>
-      <div className="ambient" aria-hidden />
-      <div className="app-shell relative z-10 grid h-full grid-cols-[236px_1fr]">
-        <aside className="sidebar-glass flex flex-col">
-          <div className="flex items-center gap-2.5 border-b border-default-200/60 px-4 py-4">
-            <span className="brand-mark">
-              <Icon name="stats" size={15} />
-            </span>
-            <div className="min-w-0">
-              <h1 className="brand-title leading-tight tracking-tight">
-                Admin Console
-              </h1>
-              <p className="metric truncate font-mono text-[10px] text-default-400">
-                {cfg.data ? `${cfg.data.panel.host}:${cfg.data.panel.port}` : 'connecting…'}
-              </p>
+    <div className="ui-shell">
+      <aside className="ui-sidebar">
+        <div className="ui-brand">
+          <span className="ui-brand-mark" aria-hidden="true"><LogoMark height={16} /></span>
+          <div className="ui-brand-text">
+            <span className="ui-brand-name">Da Orks</span>
+            <span className="ui-brand-tag">console</span>
+          </div>
+        </div>
+
+        <label className="ui-search">
+          <Icon name="search" size={14} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find a page…"
+            aria-label="Find a page"
+          />
+        </label>
+
+        <nav className="ui-nav">
+          {groups.map((g) => {
+            const isClosed = !q && g.group && closed[g.group]
+            return (
+              <div key={g.group || 'main'} className="ui-nav-group">
+                {g.group && (
+                  <button
+                    className="ui-nav-heading"
+                    onClick={() => setClosed((c) => ({ ...c, [g.group]: !c[g.group] }))}
+                    aria-expanded={!isClosed}
+                  >
+                    <span>{g.group}</span>
+                    <span className={`ui-chev ${isClosed ? '' : 'open'}`}><Icon name="chevron" size={12} /></span>
+                  </button>
+                )}
+                {!isClosed && g.items.map((it) => (
+                  <button
+                    key={it.id}
+                    onClick={() => setPanel(it.id)}
+                    className={`ui-nav-item ${panel === it.id ? 'active' : ''}`}
+                    aria-current={panel === it.id ? 'page' : undefined}
+                  >
+                    <Icon name={it.icon} size={16} />
+                    <span className="truncate">{it.label}</span>
+                  </button>
+                ))}
+              </div>
+            )
+          })}
+          {groups.length === 0 && <p className="ui-nav-empty">No page matches “{query}”.</p>}
+        </nav>
+
+        <div className="ui-sidebar-foot">
+          <ThemeToggle />
+          {state?.required && (
+            <button onClick={() => void auth.logout().then(check)} className="btn-ghost" title="Sign out">
+              <Icon name="logout" size={14} />
+            </button>
+          )}
+        </div>
+      </aside>
+
+      <main className="ui-main">
+        <header className="ui-topbar">
+          <div className="ui-crumbs">
+            <span>{GROUP_OF[panel] || 'Overview'}</span>
+            <Icon name="chevron" size={12} />
+            <strong>{TITLES[panel]}</strong>
+          </div>
+          <span className={`ui-status ${host ? 'ok' : 'down'}`}>
+            <span className="ui-dot" />
+            {host ? `Connected · ${host}` : 'Server not connected'}
+          </span>
+        </header>
+
+        {!host && cfg.error && (
+          <div className="ui-banner">
+            <LogoMark height={16} className="ui-banner-mark" />
+            <div>
+              <strong>Can’t reach the analysis server.</strong>{' '}
+              Pages will fill in with live data once the console runs alongside your server.
             </div>
           </div>
+        )}
 
-          <nav className="nav-scroll flex-1 space-y-4 px-3 py-4">
-            {NAV.map((g) => (
-              <div key={g.group} className="nav-group" data-group={g.group}>
-                {g.group && <p className="section-label mb-1.5 px-2">{g.group}</p>}
-                <div className="flex flex-col gap-0.5">
-                  {g.items.map((it) => (
-                    <button
-                      key={it.id}
-                      onClick={() => setPanel(it.id)}
-                      className={`nav-item ${panel === it.id ? 'active' : ''}`}
-                      title={it.label}
-                    >
-                      <Icon name={it.icon} size={15} />
-                      <span className="flex-1 truncate">{it.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </nav>
-
-          <div className="flex items-center justify-between gap-2 border-t border-default-200/60 px-3 py-3">
-            <ThemeToggle />
-            {state?.required && (
-              <button
-                onClick={() => void auth.logout().then(check)}
-                className="btn-ghost"
-                title="Sign out"
-              >
-                <Icon name="logout" size={13} />
-              </button>
-            )}
-          </div>
-        </aside>
-
-        <main className="app-main overflow-y-auto px-6 py-6 pb-12">
-          {/* The boundary sits around the panel only. The sidebar must never
-              unmount while a chunk downloads - a nav that blinks out during a
-              page switch reads as the whole app having crashed. */}
-          {/* Two boundaries, for two different failures. Suspense covers a chunk
-              that has not arrived yet. This one covers a chunk that arrived and
-              then threw: without it React unmounts the whole tree, sidebar
-              included, and the operator is left with a blank page and no
-              explanation. It resets on navigation, so one bad panel cannot lock
-              them out of the rest of the console. */}
+        <div className="ui-content" key={panel}>
           <PanelBoundary label={TITLES[panel]}>
             <Suspense fallback={<PanelFallback label={TITLES[panel]} />}>
             {panel === 'stats' && <Stats />}
@@ -275,8 +341,12 @@ export default function App() {
             {panel === 'docs' && <Documentation />}
             {panel === 'system' && <System />}
             {panel === 'network' && <Network />}
+            {panel === 'endpoint-agents' && <EndpointAgents />}
             {panel === 'logs' && <Logs />}
             {panel === 'artifacts' && <Artifacts />}
+            {panel === 'threat-intel' && <ThreatIntelligence />}
+            {panel === 'threat-intel-bans' && <ThreatIntelligenceBans />}
+            {panel === 'threat-intel-apis' && <ThreatIntelligenceApis />}
             {panel === 'analysis' && <AnalysisConfig />}
             {panel === 'memory-profiling' && <MemoryProfiling />}
             {panel === 'dynamic-analysis' && <DynamicAnalysisConfig />}
@@ -286,13 +356,16 @@ export default function App() {
             {panel === 'containers' && <Containers />}
             {panel === 'vm' && <VM />}
             {(panel === 'qiling-vm' || panel === 'qiling') && (
-              <QilingVM onOpenProfiler={() => setPanel('memory-profiling')} />
+              <QilingVM
+                onOpenProfiler={() => setPanel('memory-profiling')}
+                onNavigate={(next) => setPanel(next as PanelId)}
+              />
             )}
             {panel === 'clamd' && <Clamd onNavigate={setPanel} />}
-          </Suspense>
+            </Suspense>
           </PanelBoundary>
-        </main>
-      </div>
-    </>
+        </div>
+      </main>
+    </div>
   )
 }

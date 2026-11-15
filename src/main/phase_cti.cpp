@@ -200,7 +200,9 @@ void run_cti(context& ctx) {
 
     cti::pipeline pipe(std::move(cti_cfg));
     if (!pipe.network_available()) {
-      console::info("No internet connection found — skipping CTI phase.");
+      std::string reason = pipe.network_probe_error();
+      if (reason.empty()) reason = "connectivity probe failed";
+      console::info("No internet connection found — skipping CTI phase (" + reason + ").");
     } else {
 
     // Seed the pipeline from the artifacts already extracted in this run.
@@ -211,12 +213,14 @@ void run_cti(context& ctx) {
     // hash the hasher produced (md5/sha1 are left empty and ignored).
     cti::add_file_hashes(pipe, ctx.file_hash.hash, "", "");
 
-    // Progress: one line per completed (source, artifact) query. The source
-    // name is the provider that answered, which is what makes the trace
-    // readable - a bare round/task counter says nothing about where the
-    // intelligence came from. A header is printed whenever the pipeline
-    // moves to the next round (the callback fires per task, possibly from
-    // several worker threads at once, hence the lock).
+    // Progress: one line when a (source, artifact) query starts and another
+    // when it completes. The source is shown with its human-readable API name
+    // (provider_label), which is what makes the trace readable - a bare
+    // round/task counter says nothing about where the intelligence came from.
+    // The "querying" line exists so a provider waiting on its rate limiter is
+    // visible instead of looking like a hung phase. A header is printed
+    // whenever the pipeline moves to the next round (the callback fires per
+    // task, possibly from several worker threads at once, hence the lock).
     std::mutex cti_progress_mtx;
     int        cti_progress_round = -1;
 
@@ -234,9 +238,12 @@ void run_cti(context& ctx) {
       }
 
       std::ostringstream os;
-      os << std::left << std::setw(18) << info.provider
+      os << std::left << std::setw(22) << cti::provider_label(info.provider)
          << ' ' << std::left << std::setw(46) << info.artifact
-         << " [" << info.done << '/' << info.total << ']';
+         << " [" << (info.started ? std::string("querying")
+                                   : std::to_string(info.done) + '/' + std::to_string(info.total))
+         << ']';
+      if (!info.started && !info.detail.empty()) os << "  " << info.detail;
       console::info(os.str());
     });
 

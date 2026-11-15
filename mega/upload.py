@@ -32,7 +32,8 @@ Protection is the password zip in mega/protect.py: when --encrypt is given the
 archive is wrapped in a WinZip AES-256 encrypted zip whose password comes from
 the operator profile (never the repo), and only the zip is a candidate for
 upload - the plaintext archive stays local. see protect.py for the scheme and
-the password file's location.
+the password file's location. --per-bundle-password generates a fresh password
+for this bundle alone instead of reading the shared operator password.
 
 Uploads go through the MEGAcmd CLI. When it is not installed, the bundle is
 still built and verified locally and the script says exactly what is missing -
@@ -70,6 +71,90 @@ EXCLUDE_TOP = {"mega", ".git", ".venv", "node_modules", "__pycache__"}
 
 class BundleError(RuntimeError):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Colour
+#
+# The analyzer prints ANSI colour on every path, including when stdout is a
+# pipe: the console log in the admin panel parses those escapes and paints the
+# line, and a run redirected to a file keeps the same bytes a terminal showed.
+# The uploader is the last thing a run does, so its narration being the only
+# grey block at the end of a coloured log looked like a failure to report - not
+# a deliberate style. It follows the same rule, with the standard opt-outs:
+# NO_COLOR (any value) and --color never turn it off, --color always forces it.
+# ---------------------------------------------------------------------------
+_ANSI = {
+    "reset": "\x1b[0m",
+    "bold": "\x1b[1m",
+    "red": "\x1b[31m",
+    "green": "\x1b[32m",
+    "yellow": "\x1b[33m",
+    "cyan": "\x1b[36m",
+    "grey": "\x1b[90m",
+}
+
+_color_enabled = True
+
+
+def _resolve_color(mode: str) -> bool:
+    """Whether narration should carry ANSI, from --color and the environment."""
+    if mode == "never" or os.environ.get("NO_COLOR") is not None:
+        return False
+    if mode == "always":
+        return True
+    force = os.environ.get("FORCE_COLOR")
+    if force is not None and force.strip().lower() not in ("", "0", "false", "no", "off"):
+        return True
+    if os.environ.get("TERM", "").lower() == "dumb":
+        return False
+    return sys.stdout.isatty()
+
+
+def paint(text: str, *names: str) -> str:
+    if not _color_enabled or not names:
+        return text
+    prefix = "".join(_ANSI.get(name, "") for name in names)
+    return f"{prefix}{text}{_ANSI['reset']}"
+
+
+def _enable_windows_vt() -> None:
+    """Turn on virtual-terminal processing for a real Windows console.
+
+    A pipe or a redirected file needs no help; this is only for the operator
+    running the uploader directly in cmd.exe, where ANSI would otherwise be
+    printed as literal ``[32m`` text. Best-effort: a console that refuses the
+    mode still gets plain output rather than an exception.
+    """
+    if os.name != "nt" or not _color_enabled:
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        for device in (-11, -12):  # STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+            handle = kernel32.GetStdHandle(device)
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:  # noqa: BLE001 - colour must never break an upload
+        pass
+
+
+def step(message: str) -> None:
+    print(f"{paint('[+]', 'green')} {message}")
+
+
+def note(message: str) -> None:
+    print(f"{paint('[*]', 'cyan')} {message}")
+
+
+def warn(message: str) -> None:
+    print(paint(message, "yellow"), file=sys.stderr)
+
+
+def fail(message: str) -> None:
+    print(paint(message, "red"), file=sys.stderr)
 
 
 def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
@@ -148,6 +233,28 @@ def write_readme(out_dir: Path, artifact: str, source: Path, archive: Path,
     now = datetime.now(timezone.utc).astimezone()
     readme = out_dir / "README.txt"
     if encryption:
+        if encryption.get("password_scope") == "bundle":
+            password_note = """To open the protected file, on any machine that holds THIS BUNDLE's password:
+
+    python mega/protect.py unzip {sealed} --out-dir .
+
+This bundle was protected with its own generated password (not the shared
+operator password). The value is stored outside the repo in the operator
+profile and shown to signed-in CTI catalog users on this artifact's page;
+it is deliberately never written here, because this README travels with
+the bundle. A password that is lost is a bundle that is gone - there is no
+recovery path, by design.
+""".format(sealed=encryption['sealed_file'])
+        else:
+            password_note = """To open the protected file, on any machine that holds the PASSWORD:
+
+    python mega/protect.py unzip {sealed} --out-dir .
+    (accepting a --password-file/-stdin override; the default reads the
+    operator password file outside the repo)
+
+A password that is lost is a bundle that is gone. There is no recovery path,
+by design.
+""".format(sealed=encryption['sealed_file'])
         crypto = f"""
 Protection
 ----------
@@ -159,18 +266,11 @@ never left this host.
     format           : {encryption['format']}
     protected file   : {encryption['sealed_file']} ({encryption['sealed_bytes']} bytes)
     protected sha256 : {sha256_file(out_dir / encryption['sealed_file'])}
+    password scope   : {encryption.get('password_scope', 'operator')}
     library          : python 'pyzipper' - WinZip AES-256 (WZ_AES), entirely
                        in-process (no gpg/openssl)
 
-To open the protected file, on any machine that holds the PASSWORD:
-
-    python mega/protect.py unzip {encryption['sealed_file']} --out-dir .
-    (accepting a --password-file/-stdin override; the default reads the
-    operator password file outside the repo)
-
-A password that is lost is a bundle that is gone. There is no recovery path,
-by design.
-"""
+{password_note}"""
     else:
         crypto = """
 Protection
@@ -223,7 +323,10 @@ def write_manifest(out_dir: Path, artifact: str, source: Path, archive: Path,
         "archive_sha256": digest,
         "archive_bytes": archive.stat().st_size,
         "file_count": len(members),
-        "files": [{"path": p, "size": s} for p, s in members],
+        "files": [
+            {"path": p, "size": s, "hash": h}
+            for p, s, h in members
+        ],
         "tool": "mega/upload.py",
         # Machine-readable counterpart of the README's Protection section: a
         # consumer that has the manifest can tell whether the remote copy is
@@ -233,7 +336,10 @@ def write_manifest(out_dir: Path, artifact: str, source: Path, archive: Path,
     if encryption:
         # The operator's password file path is deliberately NOT mirrored into
         # a manifest that itself travels to remote storage: the remote folder
-        # does not need insight into the local profile.
+        # does not need insight into the local profile. password_scope says
+        # WHICH password opens the zip - "operator" (the shared one) or
+        # "bundle" (this artifact's own) - and nothing more: the value itself
+        # never travels with the bundle, by the same rule.
         manifest["encryption"] = {
             "algorithm": encryption["algorithm"],
             "format": encryption["format"],
@@ -241,6 +347,7 @@ def write_manifest(out_dir: Path, artifact: str, source: Path, archive: Path,
             "sealed_bytes": encryption["sealed_bytes"],
             "sealed_sha256": sha256_file(out_dir / encryption["sealed_file"]),
             "library": encryption["library"],
+            "password_scope": encryption.get("password_scope", "operator"),
         }
     path = out_dir / "manifest.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -333,6 +440,47 @@ def remote_exists(remote_path: str) -> bool:
                        timeout=megacmd.QUICK_TIMEOUT).code == 0
 
 
+def sync_catalog_bundle_password(artifact: str,
+                                 password: str | bytes | None) -> None:
+    """Mirror one per-bundle password into the CTI catalog's sidecar.
+
+    ``stix-server/config/bundle-passwords.json`` is git-ignored and read by
+    the generated catalog server at request time, so a password generated
+    here is visible to signed-in CTI users without a new Generate Server
+    run. Passing ``None`` removes the artifact's entry, which is what a
+    re-export under the shared password does - a stale per-bundle value must
+    never outlive the zip it belonged to. Best-effort by design: a checkout
+    without a stix-server (a packaged analyzer tree) simply does not have a
+    catalog to keep in sync, and that must not fail the upload.
+    """
+    path = REPO_ROOT / "stix-server" / "config" / "bundle-passwords.json"
+    try:
+        if not path.parent.is_dir():
+            return
+        mapping: dict[str, str] = {}
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                mapping = {k: v for k, v in loaded.items()
+                           if isinstance(k, str) and isinstance(v, str)}
+        except (OSError, ValueError):
+            mapping = {}
+        if password is None:
+            mapping.pop(artifact, None)
+        else:
+            if isinstance(password, bytes):
+                password = password.decode("utf-8")
+            mapping[artifact] = password
+        tmp = path.with_name(path.name + ".uploader-tmp")
+        tmp.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n",
+                       encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, UnicodeError):
+        # The bundle itself is already protected and on its way; a failed
+        # mirror is a catalog that shows one password short, not data loss.
+        pass
+
+
 def sealed_email() -> str | None:
     """The account email held in the local seal, or None if unavailable.
 
@@ -351,7 +499,7 @@ def sealed_email() -> str | None:
         return None
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--artifact", required=True,
@@ -373,43 +521,122 @@ def main() -> int:
                          "(WinZip AES-256, in-process)")
     ap.add_argument("--no-encrypt", dest="encrypt", action="store_false",
                     help="upload the archive as-is, even when config asks for protection")
+    ap.add_argument("--per-bundle-password", dest="per_bundle_password",
+                    action="store_true", default=None,
+                    help="generate a fresh password for THIS bundle alone "
+                         "(stored in the operator profile, shown per artifact "
+                         "to signed-in CTI catalog users; never printed here)")
+    ap.add_argument("--no-per-bundle-password", dest="per_bundle_password",
+                    action="store_false",
+                    help="use the shared operator password file (default)")
     ap.add_argument("--password-file", default=None,
                     help="password file for the zip (default: the operator password "
                          "file outside the repo, or IA_BUNDLE_PASSWORD_FILE)")
     ap.add_argument("--expect-account", default=None,
                     help="refuse to upload unless MEGAcmd is logged in as this "
                          "address (default: the email in the sealed credential)")
-    args = ap.parse_args()
+    ap.add_argument("--color", choices=("auto", "always", "never"), default="always",
+                    help="colour the uploader's narration (default: always, so a "
+                         "captured pipeline log keeps its colour; NO_COLOR also "
+                         "turns it off)")
+
+    # Compatibility with an analyzer built before protection became a password
+    # zip: that binary passes --recipient/--admin-key because the bundle used to
+    # be sealed to an X25519 key. The flags no longer describe anything, but
+    # rejecting them turned every upload from such a binary into a usage error
+    # after the bundle had already been built. Accept and ignore them here; the
+    # scheme is decided by --encrypt/--no-encrypt and the operator password file.
+    ap.add_argument("--recipient", choices=("user", "admin"), default=None,
+                    help=argparse.SUPPRESS)
+    ap.add_argument("--admin-key", default=None, help=argparse.SUPPRESS)
+    return ap
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
+
+
+def main() -> int:
+    args = parse_args()
+
+    global _color_enabled
+    _color_enabled = _resolve_color(args.color)
+    _enable_windows_vt()
 
     artifact = args.artifact.strip()
     if not artifact or "/" in artifact or "\\" in artifact or artifact.startswith("."):
-        print("upload: --artifact must be a plain name", file=sys.stderr)
+        fail("upload: --artifact must be a plain name")
         return 2
+
+    if args.encrypt and (args.recipient is not None or args.admin_key is not None):
+        # Only when protection is actually selected: an older analyzer also
+        # passes --recipient on plain uploads, where it is equally inert and
+        # saying so would be noise.
+        note("legacy --recipient/--admin-key accepted but ignored: bundles are "
+             "password-protected, not sealed to a key")
 
     source = Path(args.source) if args.source else REPO_ROOT / "exports" / f"{artifact}_analysis"
     if not source.is_dir():
-        print(f"upload: no evidence directory at {source}", file=sys.stderr)
+        fail(f"upload: no evidence directory at {source}")
         return 2
 
     out_dir = Path(args.out_root) / f"{artifact}_artifact"
     archive = out_dir / f"{artifact}_evidence.tar.gz"
 
     try:
-        print(f"[+] archiving {source}")
+        step(f"archiving {source}")
         files, raw_bytes, archive_bytes = build_archive(source, archive)
-        print(f"[+] {archive.name}: {files} files, {raw_bytes} bytes source -> {archive_bytes} bytes")
+        step(f"{archive.name}: {files} files, {raw_bytes} bytes source -> {archive_bytes} bytes")
 
         digest = sha256_file(archive)
-        members = [(str(rel).replace("\\", "/"), p.stat().st_size)
-                   for p, rel in collect(source)]
+        members = [
+            (str(rel).replace("\\", "/"), p.stat().st_size,
+             sha256_file(p))
+            for p, rel in collect(source)
+        ]
 
-        print(f"[+] sha256  {digest}")
+        step(f"sha256  {digest}")
 
         # Protection happens before the manifest and README are written, because
         # both have to record what the protected bytes hash to. Writing them
         # first would produce a bundle whose own paperwork says it is plaintext.
         encryption = None
-        if args.encrypt:
+        # Per-bundle resolves the same way the analyzer's flags do: an explicit
+        # --(no-)per-bundle-password wins, then the environment the analyzer
+        # exported, then off. Truthiness matches planner::env_truthy().
+        per_bundle = args.per_bundle_password
+        if per_bundle is None:
+            env = os.environ.get("MEGA_PER_BUNDLE_PASSWORD", "")
+            per_bundle = env.strip().lower() in ("1", "true", "yes", "on")
+        if args.encrypt and per_bundle:
+            # Protect BEFORE anything leaves the machine. The plaintext archive
+            # stays local; only the zip is a candidate for upload.
+            out_zip = out_dir / f"{artifact}_evidence.zip"
+            # A per-bundle password is generated here, stored in the operator
+            # profile, and never printed: the CTI catalog shows it to signed-in
+            # users on this artifact's page, which is the delivery path.
+            try:
+                password, pw_path = protect.generate_bundle_password(artifact)
+            except protect.PasswordError as exc:
+                fail(f"upload: could not protect the bundle: {exc}")
+                warn("        Refusing to upload the unprotected archive.")
+                return 4
+            step(f"zipping {archive.name} under a fresh per-bundle password "
+                 f"(stored at {pw_path}; shown in the CTI catalog, never here)")
+            try:
+                encryption = protect.zip_bundle(archive, out_zip, password)
+                encryption["password_scope"] = "bundle"
+            except protect.PasswordError as exc:
+                # A failed protection must stop the upload. Falling through to
+                # "upload the plaintext anyway" is the one outcome that would
+                # silently undo the protection the operator asked for.
+                fail(f"upload: could not protect the bundle: {exc}")
+                warn("        Refusing to upload the unprotected archive.")
+                return 4
+            sync_catalog_bundle_password(artifact, password)
+            step(f"protected  {encryption['sealed_file']} "
+                 f"({encryption['sealed_bytes']} bytes, {encryption['algorithm']})")
+        elif args.encrypt:
             # Protect BEFORE anything leaves the machine. The plaintext archive
             # stays local; only the zip is a candidate for upload.
             out_zip = out_dir / f"{artifact}_evidence.zip"
@@ -417,24 +644,33 @@ def main() -> int:
                 password = protect.read_password(
                     Path(args.password_file) if args.password_file else None)
             except protect.PasswordError as exc:
-                print(f"upload: could not protect the bundle: {exc}", file=sys.stderr)
-                print("        Refusing to upload the unprotected archive.", file=sys.stderr)
+                fail(f"upload: could not protect the bundle: {exc}")
+                warn("        Refusing to upload the unprotected archive.")
                 return 4
             password_file_hint = (Path(args.password_file)
                                   if args.password_file else protect.password_file())
-            print(f"[+] zipping {archive.name} under a password "
-                  f"(password file: {password_file_hint})")
+            step(f"zipping {archive.name} under a password "
+                 f"(password file: {password_file_hint})")
             try:
                 encryption = protect.zip_bundle(archive, out_zip, password)
+                encryption["password_scope"] = "operator"
             except protect.PasswordError as exc:
                 # A failed protection must stop the upload. Falling through to
                 # "upload the plaintext anyway" is the one outcome that would
                 # silently undo the protection the operator asked for.
-                print(f"upload: could not protect the bundle: {exc}", file=sys.stderr)
-                print("        Refusing to upload the unprotected archive.", file=sys.stderr)
+                fail(f"upload: could not protect the bundle: {exc}")
+                warn("        Refusing to upload the unprotected archive.")
                 return 4
-            print(f"[+] protected  {encryption['sealed_file']} "
-                  f"({encryption['sealed_bytes']} bytes, {encryption['algorithm']})")
+            # A re-export under the shared password invalidates any per-bundle
+            # value an earlier export of this artifact left behind, in both
+            # places it lives: the profile file and the catalog sidecar.
+            try:
+                protect.clear_bundle_password(artifact)
+            except protect.PasswordError:
+                pass
+            sync_catalog_bundle_password(artifact, None)
+            step(f"protected  {encryption['sealed_file']} "
+                 f"({encryption['sealed_bytes']} bytes, {encryption['algorithm']})")
 
         # What actually goes to the remote, and the digest that describes it.
         if encryption:
@@ -458,7 +694,7 @@ def main() -> int:
                               raw_bytes, archive_bytes, encryption)
         manifest = write_manifest(out_dir, artifact, source, archive, digest,
                                   members, encryption)
-        print(f"[+] wrote   {readme.name}, {manifest.name}, {shipped_name}.sha256")
+        step(f"wrote   {readme.name}, {manifest.name}, {shipped_name}.sha256")
 
         if args.dry_run:
             again = out_dir / f"{artifact}_evidence.recheck.tar.gz"
@@ -466,27 +702,26 @@ def main() -> int:
             again_digest = sha256_file(again)
             again.unlink()
             if again_digest != digest:
-                print(f"upload: NOT deterministic ({again_digest} != {digest})", file=sys.stderr)
+                fail(f"upload: NOT deterministic ({again_digest} != {digest})")
                 return 1
-            print("[+] reproducible: rebuild produced the identical sha256")
+            step("reproducible: rebuild produced the identical sha256")
     except BundleError as exc:
-        print(f"upload: {exc}", file=sys.stderr)
+        fail(f"upload: {exc}")
         return 1
 
     if args.no_upload:
-        print("[+] --no-upload: bundle is local only"
-              + (f" (protected as {encryption['sealed_file']})" if encryption else ""))
+        step("--no-upload: bundle is local only"
+             + (f" (protected as {encryption['sealed_file']})" if encryption else ""))
         return 0
 
     remote_root = args.remote_root or "/"
     if not find_megacmd():
         print("", file=sys.stderr)
-        print("upload: the MEGAcmd CLI is not available, so the bundle was NOT "
-              "uploaded.", file=sys.stderr)
-        print("        The bundle above is complete and verified; nothing was lost.",
-              file=sys.stderr)
+        fail("upload: the MEGAcmd CLI is not available, so the bundle was NOT "
+             "uploaded.")
+        warn("        The bundle above is complete and verified; nothing was lost.")
         for line in megacmd.missing_message().splitlines():
-            print("        " + line, file=sys.stderr)
+            print(paint("        " + line, "grey"), file=sys.stderr)
         return 3
 
     # A wrong-account upload would file evidence under the wrong MEGA. The
@@ -496,38 +731,34 @@ def main() -> int:
     if expected:
         live = megacmd.whoami()
         if live is None:
-            print("upload: MEGAcmd has no usable session. Run: python mega/login.py --mega",
-                  file=sys.stderr)
+            fail("upload: MEGAcmd has no usable session. Run: python mega/login.py --mega")
             return 1
         if live.lower() != expected.lower():
-            print(f"upload: MEGAcmd is logged in as {live}, not {expected}.",
-                  file=sys.stderr)
-            print("        Refusing to upload. Fix the session and re-run.",
-                  file=sys.stderr)
+            fail(f"upload: MEGAcmd is logged in as {live}, not {expected}.")
+            warn("        Refusing to upload. Fix the session and re-run.")
             return 1
-        print(f"[+] session {live}")
+        step(f"session {live}")
 
     expected_remote = f"{remote_root.rstrip('/')}/{artifact}_artifact".replace("//", "/")
     stage = None
     try:
-        print(f"[+] uploading {out_dir.name}/ -> {expected_remote}"
-              + (f"  (protected: {shipped_name})" if encryption else ""))
+        step(f"uploading {out_dir.name}/ -> {expected_remote}"
+             + (f"  (protected: {shipped_name})" if encryption else ""))
         to_send, stage = stage_for_upload(out_dir, artifact, shipped, shipped_name, encryption)
         landed = upload_megacmd(to_send, remote_root, args.timeout)
         if not remote_exists(landed):
-            print(f"upload: MEGAcmd reported success but {landed} is not there.",
-                  file=sys.stderr)
+            fail(f"upload: MEGAcmd reported success but {landed} is not there.")
             return 1
-        print(f"[+] uploaded: {landed}")
+        step(f"uploaded: {landed}")
         if encryption:
-            print(f"[+] protected: {encryption['sealed_file']} goes to remote; "
-                  f"{archive.name} never left this host")
+            step(f"protected: {encryption['sealed_file']} goes to remote; "
+                 f"{archive.name} never left this host")
         return 0
     except megacmd.MegaError as exc:
-        print(f"upload: {exc}", file=sys.stderr)
+        fail(f"upload: {exc}")
         return 1
     except BundleError as exc:
-        print(f"upload: {exc}", file=sys.stderr)
+        fail(f"upload: {exc}")
         return 1
     finally:
         if stage is not None:

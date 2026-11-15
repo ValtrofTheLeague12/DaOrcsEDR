@@ -5,7 +5,8 @@ import { Card } from '@heroui/react/card'
 import { Chip } from '@heroui/react/chip'
 import { api, usePoll } from '../api'
 import Icon from '../components/Icon'
-import CopyButton, { useCopy } from '../components/CopyButton'
+import CommandLine from '../components/CommandLine'
+import CopyButton from '../components/CopyButton'
 import Loading from '../components/Loading'
 import PipelineWizard from '../components/PipelineWizard'
 import SubNav from '../components/SubNav'
@@ -88,24 +89,6 @@ function StatusChip({ pipeline }: { pipeline: PipelineConfig }) {
     )
   }
   return <Chip size="sm" variant="soft" color="success">valid</Chip>
-}
-
-/** The command an operator runs to use this pipeline. Copyable, because the
- *  whole point of the name is that it is typed on a command line. */
-function CommandLine({ value }: { value: string }) {
-  const { copied, copy } = useCopy()
-  return (
-    <button
-      type="button"
-      onClick={() => void copy(value)}
-      className="flex w-full items-center gap-2 rounded-lg border border-default-200 bg-default-50/60 px-3 py-2 text-left transition-colors hover:border-accent/40"
-      title="Copy"
-    >
-      <Icon name="terminal" size={13} className="shrink-0 text-default-400" />
-      <code className="metric flex-1 truncate font-mono text-[11px] text-foreground">{value}</code>
-      <Icon name={copied ? 'check' : 'copy'} size={12} className={copied ? 'text-success' : 'text-default-400'} />
-    </button>
-  )
 }
 
 /** One phase chip. `inserted` marks a phase the planner adds by itself, which

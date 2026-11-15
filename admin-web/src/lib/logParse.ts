@@ -226,7 +226,7 @@ const VBOX_WARN = /\b(Warn|Warning)\b/i
 // `]0;...`, which is exactly what "the log shows raw escape junk" looks like.
 const ANSI_PATTERN =
   // SGR: the only form whose parameters carry colour.
-  '\u001b\\[([0-9;]*)m' +
+  '\u001b?\\[([0-9;]*)m' +
   // Any other CSI: cursor movement, erase-line, bracketed paste, ...
   '|\u001b\\[[0-9;?]*[ -/]*[@-~]' +
   // OSC, terminated by BEL or ST. Unterminated ones claim the rest of the line.
