@@ -34,8 +34,8 @@ from .build import build, build_checks, hardening
 from .clamd import clamd
 from .core import auth, config, docs
 from .core.yamlview import jsonable as _jsonable, spans as _yaml_spans
-from .host import (containers, endpoints, launcher, logs, services, stats,
-                   system, trace)
+from .host import (agents as agent_fleet, containers, endpoints, launcher,
+                   logs, services, stats, system, trace)
 from .network import netmap, vms, vmmetrics
 from .pipeline import pipeline_run
 from .qiling import qiling
@@ -4522,6 +4522,147 @@ def create_app() -> Flask:
                            error="brokers and topic are required"), 400
         result = endpoints.save_agent(body["brokers"], body["topic"])
         return jsonify(result), 400 if not result["ok"] else 200
+
+    # --- endpoint agent heartbeats ------------------------------------------
+
+    def _agent_error(exc: agent_fleet.AgentError):
+        return jsonify(ok=False, error=str(exc), code=exc.code), exc.status
+
+    @app.get("/api/network/agents")
+    def agent_fleet_list():
+        """Endpoint Agents and Their Heartbeats
+        ---
+        tags: [network]
+        responses:
+          200:
+            description: Saved agents, each probed for GET /api/v1/health
+          500:
+            description: The agent inventory file cannot be read
+        description: >
+          The inventory is operator-maintained: each endpoint agent serves its
+          own read-only API, so the panel has nothing to discover and no push
+          channel. Probes run concurrently with a short timeout. `online` only
+          means the agent answered this request; `health` carries the service
+          state, Kafka result, counters and last error. The agent API has no
+          authentication (0.4.1+), so there is no secret here: an `auth` code
+          means the agent is still 0.4.0 and needs an update.
+        """
+        try:
+            return jsonify(agent_fleet.snapshot())
+        except agent_fleet.AgentError as exc:
+            return _agent_error(exc)
+
+    @app.post("/api/network/agents")
+    def agent_fleet_add():
+        """Register or Update an Endpoint Agent
+        ---
+        tags: [network]
+        parameters:
+          - name: body
+            in: body
+            required: true
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                url: {type: string, description: "host[:port], default port 8787"}
+        responses:
+          200:
+            description: Saved
+          400:
+            description: Invalid name or URL
+          409:
+            description: The URL is already registered under another name
+        description: >
+          Writes %APPDATA%/IAProject/agents.json. No credential is stored: the
+          agent API is read-only and unauthenticated, and access is limited by
+          the endpoint firewall rather than a token.
+        """
+        body = request.get_json(silent=True) or {}
+        try:
+            saved = agent_fleet.add_agent(body.get("name"), body.get("url"))
+        except agent_fleet.AgentError as exc:
+            return _agent_error(exc)
+        return jsonify(ok=True, agent=saved)
+
+    @app.delete("/api/network/agents/<path:name>")
+    def agent_fleet_remove(name: str):
+        """Remove an Endpoint Agent
+        ---
+        tags: [network]
+        responses:
+          200:
+            description: Removed
+          404:
+            description: No such agent
+        description: Removes the saved address. The agent itself is untouched.
+        """
+        try:
+            removed = agent_fleet.remove_agent(name)
+        except agent_fleet.AgentError as exc:
+            return _agent_error(exc)
+        return jsonify(ok=True, agent=removed)
+
+    @app.post("/api/network/agents/test")
+    def agent_fleet_test():
+        """Probe an Agent Without Saving It
+        ---
+        tags: [network]
+        parameters:
+          - name: body
+            in: body
+            required: true
+            schema:
+              type: object
+              properties:
+                url: {type: string}
+        responses:
+          200:
+            description: Probe result, online or not
+          400:
+            description: Invalid URL
+        description: >
+          The form's Test button. A failed probe is a 200 answer with
+          `online=false` and a `detail`, because "the VM is off" is information
+          the form needs to show, not a server error.
+        """
+        body = request.get_json(silent=True) or {}
+        try:
+            result = agent_fleet.test_agent(body.get("url"))
+        except agent_fleet.AgentError as exc:
+            return _agent_error(exc)
+        return jsonify(result)
+
+    @app.get("/api/network/agents/<path:name>/detections")
+    def agent_fleet_detections(name: str):
+        """Newest Detections From One Endpoint Agent
+        ---
+        tags: [network]
+        parameters:
+          - name: limit
+            in: query
+            type: integer
+            default: 20
+            description: Newest records to return (1-500)
+        responses:
+          200:
+            description: The agent's JSON Lines tail, proxied unchanged
+          404:
+            description: No such agent
+          502:
+            description: The agent could not be reached or answered 401
+        description: >
+          Proxies GET /api/v1/detections on the agent. The panel never stores
+          this copy: detections.log on the endpoint remains the record.
+        """
+        try:
+            limit = int(request.args.get("limit", "20"))
+        except ValueError:
+            limit = 20
+        try:
+            return jsonify(agent_fleet.detections(name, limit))
+        except agent_fleet.AgentError as exc:
+            return _agent_error(exc)
 
     return app
 

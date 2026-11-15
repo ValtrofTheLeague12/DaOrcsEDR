@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.server
+import ipaddress
 import json
 import logging
 import os
@@ -17,10 +19,13 @@ from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.2.0"
+VERSION = "0.4.1"
 LOG_DIR_ENV = "DAORCS_LOG_DIR"
 PROGRAM_DATA = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+DEFAULT_API_HOST = "127.0.0.1"
+DEFAULT_API_PORT = 8787
 
 
 def default_log_dir() -> Path:
@@ -44,9 +49,13 @@ DEFAULT_CONFIG = PROGRAM_DATA / "DaOrcs" / "Agent" / "agent.json"
 DEFAULT_STATE = PROGRAM_DATA / "DaOrcs" / "Agent" / "state.sqlite3"
 DEFAULT_LOG = default_log_dir() / "agent.log"
 DEFAULT_SERVICE_LOG = default_log_dir() / "service.log"
+DETECTIONS_LOG_NAME = "ia_endpoint_agent.detections"
 MAX_CHUNK_BYTES = 256 * 1024
 PE_SIGNATURE = b"PE\0\0"
 LOG = logging.getLogger("ia_endpoint_agent")
+# Detections get their own logger so captured samples are never mixed into the
+# runtime log: one JSON object per line in detections.log.
+DETECTIONS = logging.getLogger(DETECTIONS_LOG_NAME)
 
 # A PE has at most 96 sections; anything above that is a corrupt header, and
 # reading it as a table would allocate on a number the file controls.
@@ -160,7 +169,9 @@ def is_pe_file(path: Path) -> bool:
 
 def load_config(path: Path) -> dict[str, Any]:
     try:
-        config = json.loads(path.read_text(encoding="utf-8"))
+        # utf-8-sig tolerates a byte-order mark, which Windows editors and
+        # PowerShell 5 add when an admin edits agent.json by hand.
+        config = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"Cannot read agent configuration {path}: {exc}") from exc
     if not isinstance(config, dict):
@@ -192,11 +203,28 @@ def load_config(path: Path) -> dict[str, Any]:
     if (not isinstance(chunk_bytes, int) or isinstance(chunk_bytes, bool)
             or not 1 <= chunk_bytes <= MAX_CHUNK_BYTES):
         raise ValueError(f"chunk_bytes must be between 1 and {MAX_CHUNK_BYTES}")
+
+    api = config.get("api", {})
+    if not isinstance(api, dict):
+        raise ValueError("api must be a configuration object")
+    if not isinstance(api.get("enabled", True), bool):
+        raise ValueError("api.enabled must be true or false")
+    api_host = api.get("host", DEFAULT_API_HOST)
+    if not isinstance(api_host, str) or not api_host.strip():
+        raise ValueError("api.host must be a non-empty address")
+    api_port = api.get("port", DEFAULT_API_PORT)
+    if (not isinstance(api_port, int) or isinstance(api_port, bool)
+            or not 1 <= api_port <= 65535):
+        raise ValueError("api.port must be between 1 and 65535")
     return config
 
 
 def expand_path(value: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(value))).resolve()
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class SampleState:
@@ -225,6 +253,144 @@ class SampleState:
 
     def close(self) -> None:
         self._db.close()
+
+
+class AgentHealth:
+    """Thread-safe heartbeat shared by the scan loop and the REST API.
+
+    The scan loop writes progress here; HTTP worker threads read snapshots.
+    A lock rather than a queue keeps the newest value always available, which
+    is what a health probe wants: it never queues behind old samples.
+    """
+
+    def __init__(
+        self,
+        config: dict[str, Any],
+        config_path: Path,
+        service_mode: bool = False,
+    ):
+        self._lock = threading.Lock()
+        self._started_monotonic = time.monotonic()
+        self._started_at = _utc_now()
+        self._config_path = str(config_path)
+        self._service_mode = bool(service_mode)
+        self._watch_dirs = [str(expand_path(item)) for item in config["watch_dirs"]]
+        self._brokers = str(config["kafka"]["bootstrap_servers"])
+        self._topic = str(config["kafka"]["topic"])
+        self._scan_interval = float(config.get("scan_interval_seconds", 5))
+        self._detections_file = str(detections_path(config))
+        api = config.get("api") or {}
+        self._api = {
+            "enabled": bool(api.get("enabled", True)),
+            "host": str(api.get("host", DEFAULT_API_HOST)),
+            "port": int(api.get("port", DEFAULT_API_PORT)),
+        }
+        self._state = "starting"
+        self._last_scan_started_at: str | None = None
+        self._last_scan_finished_at: str | None = None
+        self._last_scan_seconds: float | None = None
+        self._samples_published = 0
+        self._publish_errors = 0
+        self._records_logged = 0
+        self._last_sample: dict[str, Any] | None = None
+        self._last_error: str | None = None
+        self._last_error_at: str | None = None
+        self._last_publish_ok: bool | None = None
+        self._last_publish_at: str | None = None
+
+    def set_state(self, state: str) -> None:
+        with self._lock:
+            self._state = state
+
+    def scan_started(self) -> None:
+        with self._lock:
+            self._state = "scanning"
+            self._last_scan_started_at = _utc_now()
+
+    def scan_finished(self, seconds: float) -> None:
+        with self._lock:
+            self._state = "idle"
+            self._last_scan_finished_at = _utc_now()
+            self._last_scan_seconds = round(max(0.0, seconds), 3)
+
+    def sample_published(self, name: str, sha256: str, size: int) -> None:
+        with self._lock:
+            stamp = _utc_now()
+            self._samples_published += 1
+            self._records_logged += 1
+            self._last_sample = {
+                "detected_at": stamp,
+                "file_name": name,
+                "file_size": size,
+                "sha256": sha256,
+            }
+            self._last_publish_ok = True
+            self._last_publish_at = stamp
+
+    def publish_failed(self, error: str) -> None:
+        with self._lock:
+            self._publish_errors += 1
+            self._last_publish_ok = False
+            self._last_error = str(error)[:500]
+            self._last_error_at = _utc_now()
+
+    def record_error(self, error: str) -> None:
+        with self._lock:
+            self._last_error = str(error)[:500]
+            self._last_error_at = _utc_now()
+
+    def _status_locked(self) -> str:
+        if self._state == "starting":
+            return "starting"
+        if self._last_publish_ok is False:
+            return "degraded"
+        return "ok"
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            uptime = time.monotonic() - self._started_monotonic
+            return {
+                "status": self._status_locked(),
+                "agent": {
+                    "name": "DaOrcsEndpointAgent",
+                    "version": VERSION,
+                    "host": platform.node(),
+                    "platform": platform.platform(),
+                    "pid": os.getpid(),
+                    "service": self._service_mode,
+                    "started_at": self._started_at,
+                    "uptime_seconds": round(uptime, 1),
+                    "state": self._state,
+                },
+                "config": {
+                    "path": self._config_path,
+                    "watch_dirs": list(self._watch_dirs),
+                    "scan_interval_seconds": self._scan_interval,
+                },
+                "kafka": {
+                    "bootstrap_servers": self._brokers,
+                    "topic": self._topic,
+                    "last_publish_ok": self._last_publish_ok,
+                    "last_publish_at": self._last_publish_at,
+                },
+                "counters": {
+                    "samples_published": self._samples_published,
+                    "publish_errors": self._publish_errors,
+                    "records_logged": self._records_logged,
+                },
+                "last_scan": {
+                    "started_at": self._last_scan_started_at,
+                    "finished_at": self._last_scan_finished_at,
+                    "duration_seconds": self._last_scan_seconds,
+                },
+                "last_sample": self._last_sample,
+                "last_error": (
+                    {"message": self._last_error, "at": self._last_error_at}
+                    if self._last_error else None
+                ),
+                "detections": {"file": self._detections_file},
+                "api": dict(self._api),
+            }
 
 
 class KafkaSamplePublisher:
@@ -308,7 +474,13 @@ class KafkaSamplePublisher:
 
 
 class EndpointAgent:
-    def __init__(self, config: dict[str, Any], producer: Any, state_path: Path):
+    def __init__(
+        self,
+        config: dict[str, Any],
+        producer: Any,
+        state_path: Path,
+        health: AgentHealth | None = None,
+    ):
         self.watch_dirs = [expand_path(item) for item in config["watch_dirs"]]
         self.scan_interval = float(config.get("scan_interval_seconds", 5))
         self.stable_seconds = float(config.get("stable_seconds", 2))
@@ -318,6 +490,7 @@ class EndpointAgent:
             config.get("chunk_bytes", MAX_CHUNK_BYTES),
         )
         self.state = SampleState(state_path)
+        self.health = health
 
     def close(self) -> None:
         self.state.close()
@@ -359,6 +532,9 @@ class EndpointAgent:
                     yield Path(current) / name
 
     def scan_once(self) -> None:
+        started = time.monotonic()
+        if self.health is not None:
+            self.health.scan_started()
         for path in self._files():
             if not is_pe_file(path):
                 continue
@@ -376,10 +552,22 @@ class EndpointAgent:
                     continue
                 self.publisher.publish(path, sha256, size)
                 self.state.mark_sent(sha256)
+                record_detection(path, sha256, size, self.publisher.topic)
+                if self.health is not None:
+                    self.health.sample_published(path.name, sha256, size)
                 LOG.info("Published PE sample %s (%s bytes, sha256=%s)",
                          path.name, size, sha256)
             except (OSError, RuntimeError, TimeoutError) as exc:
                 LOG.error("Could not publish %s: %s", path, exc)
+                if self.health is not None:
+                    if isinstance(exc, (RuntimeError, TimeoutError)):
+                        # Kafka delivery problems are what make the heartbeat
+                        # degraded; a locked file is not a broker failure.
+                        self.health.publish_failed(str(exc))
+                    else:
+                        self.health.record_error(str(exc))
+        if self.health is not None:
+            self.health.scan_finished(time.monotonic() - started)
 
     def run(
         self,
@@ -389,6 +577,8 @@ class EndpointAgent:
         LOG.info("Monitoring %s; Kafka topic %s",
                  ", ".join(str(path) for path in self.watch_dirs),
                  self.publisher.topic)
+        if self.health is not None:
+            self.health.set_state("running")
         while True:
             if stop_event is not None and stop_event.is_set():
                 return
@@ -432,6 +622,239 @@ def _configure_bootstrap_logging(
     return path
 
 
+def detections_path(config: dict[str, Any]) -> Path:
+    """Return the detections log path.
+
+    Defaults to ``detections.log`` next to ``agent.log`` so captures never
+    share the runtime log file.
+    """
+    configured = config.get("detections_file")
+    if isinstance(configured, str) and configured.strip():
+        return expand_path(configured)
+    log_path = config.get("log_file")
+    if isinstance(log_path, str) and log_path.strip():
+        return expand_path(log_path).parent / "detections.log"
+    return default_log_dir() / "detections.log"
+
+
+def _configure_detections_logging(config: dict[str, Any]) -> None:
+    """Send detection records to their own rotating file.
+
+    The logger does not propagate, so ``detections.log`` holds exactly one JSON
+    object per captured sample and ``agent.log`` stays free of them.
+    """
+    for handler in list(DETECTIONS.handlers):
+        DETECTIONS.removeHandler(handler)
+        handler.close()
+    try:
+        path = detections_path(config)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler: logging.Handler = RotatingFileHandler(
+            path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+    except OSError:
+        LOG.warning(
+            "Could not open the detections log; detections will only appear "
+            "in the agent log", exc_info=True,
+        )
+        return
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    DETECTIONS.addHandler(handler)
+    DETECTIONS.setLevel(logging.INFO)
+    DETECTIONS.propagate = False
+
+
+def record_detection(path: Path, sha256: str, size: int, topic: str) -> None:
+    """Append one JSON Lines record for a sample captured from the endpoint."""
+    record = {
+        "detected_at": datetime.now(timezone.utc).isoformat(),
+        "event": "sample_detected",
+        "file_name": path.name,
+        "file_path": str(path),
+        "file_size": size,
+        "sha256": sha256,
+        "host": platform.node(),
+        "username": os.environ.get("USERNAME", ""),
+        "kafka_topic": topic,
+        "agent_version": VERSION,
+    }
+    DETECTIONS.info(json.dumps(record, separators=(",", ":")))
+
+
+def _tail_jsonl(path: Path, limit: int) -> list[dict[str, Any]]:
+    """Return the last ``limit`` JSON objects from a JSON Lines file.
+
+    Reads backwards in blocks so a 5 MB detections log never has to be loaded
+    whole just to show the newest records.
+    """
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            data = b""
+            block = 64 * 1024
+            while position > 0 and data.count(b"\n") <= limit:
+                step = min(block, position)
+                position -= step
+                handle.seek(position)
+                data = handle.read(step) + data
+    except OSError:
+        return []
+
+    records: list[dict[str, Any]] = []
+    for line in data.splitlines()[-limit:]:
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            records.append(item)
+    return records
+
+
+def _make_api_handler(
+    health: AgentHealth,
+    detections_file: Path,
+    max_limit: int = 500,
+):
+    """Build the request handler with the agent state closed over."""
+
+    class AgentRequestHandler(http.server.BaseHTTPRequestHandler):
+        server_version = f"DaOrcsAgent/{VERSION}"
+        sys_version = ""
+
+        def do_GET(self) -> None:  # noqa: N802 - http.server API
+            parsed = urlparse(self.path)
+            path = parsed.path.rstrip("/") or "/"
+
+            if path in ("/health", "/api/v1/ping"):
+                self._json(200, {
+                    "status": "ok",
+                    "service": "DaOrcsEndpointAgent",
+                    "version": VERSION,
+                    "host": platform.node(),
+                    "time": _utc_now(),
+                })
+                return
+
+            if path in ("/api/v1/health", "/api/v1/heartbeat", "/api/v1/agent"):
+                self._json(200, health.snapshot())
+                return
+
+            if path == "/api/v1/detections":
+                try:
+                    limit = int(parse_qs(parsed.query).get("limit", ["20"])[0])
+                except ValueError:
+                    limit = 20
+                limit = max(1, min(limit, max_limit))
+                records = _tail_jsonl(detections_file, limit)
+                self._json(200, {
+                    "file": str(detections_file),
+                    "count": len(records),
+                    "detections": records,
+                })
+                return
+
+            self._json(404, {
+                "error": "not found",
+                "endpoints": [
+                    "GET /health",
+                    "GET /api/v1/health",
+                    "GET /api/v1/detections?limit=20",
+                ],
+            })
+
+        def do_POST(self) -> None:  # noqa: N802 - http.server API
+            self._json(405, {"error": "method not allowed",
+                             "detail": "this API is read-only (GET)"})
+
+        def _json(self, code: int, payload: dict[str, Any]) -> None:
+            body = json.dumps(payload, separators=(",", ":"),
+                              default=str).encode("utf-8")
+            try:
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, fmt: str, *args: Any) -> None:
+            LOG.debug("API %s - %s", self.address_string(), fmt % args)
+
+    return AgentRequestHandler
+
+
+class AgentApiServer:
+    """Read-only heartbeat HTTP server running inside the agent process."""
+
+    def __init__(self, health: AgentHealth, config: dict[str, Any]):
+        api = config.get("api") or {}
+        self.health = health
+        self.host = str(api.get("host") or DEFAULT_API_HOST)
+        self.port = int(api.get("port") or DEFAULT_API_PORT)
+        self.detections_file = detections_path(config)
+        self._server: http.server.ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+
+    @staticmethod
+    def _is_loopback(host: str) -> bool:
+        if host.strip().lower() in ("localhost", "::1"):
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
+
+    def start(self) -> bool:
+        """Start serving; a failure is logged and never stops the scan loop."""
+        if not self._is_loopback(self.host):
+            # The API is read-only and unauthenticated, so a widened bind is a
+            # decision the operator made knowingly. Say it once in the log so the
+            # posture is discoverable without reading agent.json.
+            LOG.warning(
+                "Agent API is unauthenticated and listening beyond loopback (%s). "
+                "Restrict port %s to the panel's subnet with a firewall rule.",
+                self.host, self.port,
+            )
+        try:
+            server = http.server.ThreadingHTTPServer(
+                (self.host, self.port),
+                _make_api_handler(self.health, self.detections_file),
+            )
+        except OSError as exc:
+            LOG.error("Agent API could not bind %s:%s: %s",
+                      self.host, self.port, exc)
+            return False
+        server.daemon_threads = True
+        self._server = server
+        self._thread = threading.Thread(
+            target=server.serve_forever, name="daorcs-agent-api", daemon=True
+        )
+        self._thread.start()
+        LOG.info("Agent API listening on http://%s:%s (read-only, no auth)",
+                 self.host, self.port)
+        return True
+
+    def stop(self) -> None:
+        server, self._server = self._server, None
+        if server is None:
+            return
+        try:
+            server.shutdown()
+            server.server_close()
+        except OSError:
+            LOG.debug("Agent API shutdown raised", exc_info=True)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
+
+
 def _configure_logging(config: dict[str, Any]) -> None:
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     log_path = config.get("log_file")
@@ -448,12 +871,14 @@ def _configure_logging(config: dict[str, Any]) -> None:
         handlers=handlers,
         force=True,
     )
+    _configure_detections_logging(config)
 
 
 def _run_agent(
     config_path: Path,
     stop_event: threading.Event | None = None,
     once: bool = False,
+    service: bool = False,
 ) -> int:
     LOG.info("DaOrcs endpoint agent %s starting (config %s)", VERSION, config_path)
     config = load_config(config_path)
@@ -467,10 +892,17 @@ def _run_agent(
     kafka_settings.setdefault("enable.idempotence", True)
     producer = Producer(kafka_settings)
     state_path = expand_path(config.get("state_file", str(DEFAULT_STATE)))
-    agent = EndpointAgent(config, producer, state_path)
+    health = AgentHealth(config, config_path, service_mode=service)
+    agent = EndpointAgent(config, producer, state_path, health=health)
+
+    api = AgentApiServer(health, config)
+    if (config.get("api") or {}).get("enabled", True):
+        api.start()
     try:
         agent.run(once=once, stop_event=stop_event)
     finally:
+        health.set_state("stopping")
+        api.stop()
         producer.flush(60)
         agent.close()
     return 0
@@ -509,6 +941,17 @@ def _self_test(config_path: Path, produce_test: bool = False) -> int:
             print(f"OK   watch directory: {path}")
         else:
             print(f"WARN watch directory does not exist yet: {path}")
+
+    api_cfg = config.get("api") or {}
+    if api_cfg.get("enabled", True):
+        api_host = str(api_cfg.get("host", DEFAULT_API_HOST))
+        api_port = int(api_cfg.get("port", DEFAULT_API_PORT))
+        print(f"OK   agent API: http://{api_host}:{api_port} (read-only, no auth)")
+        if not AgentApiServer._is_loopback(api_host):
+            print(f"WARN the agent API is reachable beyond loopback ({api_host}); "
+                  f"allow only the panel's address in the firewall")
+    else:
+        print("OK   agent API disabled")
 
     try:
         import confluent_kafka
@@ -609,7 +1052,8 @@ def _run_windows_service() -> int:
 
         def SvcDoRun(self):
             try:
-                _run_agent(DEFAULT_CONFIG, stop_event=self.stop_event)
+                _run_agent(DEFAULT_CONFIG, stop_event=self.stop_event,
+                           service=True)
             except Exception as exc:  # noqa: BLE001 - must reach the log
                 LOG.error("Endpoint agent service stopped with an error: %s", exc)
                 LOG.error("%s", traceback.format_exc())

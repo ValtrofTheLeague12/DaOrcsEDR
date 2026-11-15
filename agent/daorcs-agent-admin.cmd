@@ -10,6 +10,7 @@ rem  elevation prompt and the requested action runs in an elevated PowerShell.
 rem
 rem    daorcs-agent-admin.cmd              status
 rem    daorcs-agent-admin.cmd install      install / repair the service
+rem    daorcs-agent-admin.cmd upgrade      restart the service on updated files
 rem    daorcs-agent-admin.cmd uninstall    remove the service
 rem    daorcs-agent-admin.cmd diagnose     status + self-test
 rem ---------------------------------------------------------------------------
@@ -17,11 +18,12 @@ rem ---------------------------------------------------------------------------
 set "ACTION=%~1"
 if "%ACTION%"=="" set "ACTION=status"
 if /I "%ACTION%"=="install"   goto :action_ok
+if /I "%ACTION%"=="upgrade"   goto :action_ok
 if /I "%ACTION%"=="uninstall" goto :action_ok
 if /I "%ACTION%"=="status"    goto :action_ok
 if /I "%ACTION%"=="diagnose"  goto :action_ok
 echo Unknown action: %ACTION%
-echo Use: install, uninstall, status or diagnose.
+echo Use: install, upgrade, uninstall, status or diagnose.
 exit /b 2
 
 :action_ok

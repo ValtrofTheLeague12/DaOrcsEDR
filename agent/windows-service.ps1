@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("install", "uninstall", "status", "diagnose")]
+    [ValidateSet("install", "upgrade", "uninstall", "status", "diagnose")]
     [string]$Action,
     [string]$LogPath = ""
 )
@@ -113,6 +113,7 @@ function Set-AgentLogLocation {
     try {
         $doc = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
         $doc.log_file = Join-Path $LogDir "agent.log"
+        $doc.detections_file = Join-Path $LogDir "detections.log"
         $json = $doc | ConvertTo-Json -Depth 20
         # PowerShell 5.1's Set-Content -Encoding UTF8 adds a BOM, which Python's
         # json.loads does not strip. Write UTF-8 without a BOM instead.
@@ -121,6 +122,71 @@ function Set-AgentLogLocation {
         Write-Log "Agent log configured: $($doc.log_file)"
     } catch {
         Write-Log "Could not set log_file in ${ConfigPath}: $($_.Exception.Message)" "WARN"
+    }
+}
+
+function Set-AgentApiSettings {
+    param(
+        [string]$ConfigPath,
+        [int]$Port = 8787
+    )
+    # The heartbeat API is read-only and unauthenticated. A fresh config gets a
+    # 0.0.0.0 bind so the admin panel can reach it; the installer adds no
+    # firewall rule, so that stays a deliberate step. A host an operator already
+    # chose is never overwritten - narrowing back to loopback is a legitimate
+    # decision, not a mistake to correct.
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+        Write-Log "No agent config to update at $ConfigPath" "WARN"
+        return
+    }
+    try {
+        $doc = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+        $changed = $false
+
+        if ($null -eq $doc.api) {
+            $doc | Add-Member -NotePropertyName api -NotePropertyValue (
+                [pscustomobject]@{ enabled = $true; host = "0.0.0.0"; port = $Port }
+            ) -Force
+            $changed = $true
+        }
+        $api = $doc.api
+
+        if (-not $api.PSObject.Properties["enabled"]) {
+            $api | Add-Member -NotePropertyName enabled -NotePropertyValue $true
+            $changed = $true
+        }
+        if (-not $api.PSObject.Properties["port"]) {
+            $api | Add-Member -NotePropertyName port -NotePropertyValue $Port
+            $changed = $true
+        }
+        if (-not $api.PSObject.Properties["host"]) {
+            $api | Add-Member -NotePropertyName host -NotePropertyValue "0.0.0.0"
+            $changed = $true
+        }
+
+        # Upgrades from 0.4.0 or earlier carry a bearer token. The API no longer
+        # reads it; drop it so agent.json does not advertise auth that is gone.
+        if ($api.PSObject.Properties["token"]) {
+            $api.PSObject.Properties.Remove("token")
+            $changed = $true
+        }
+
+        if ($changed) {
+            $json = $doc | ConvertTo-Json -Depth 20
+            $utf8 = New-Object System.Text.UTF8Encoding($false)
+            [IO.File]::WriteAllText($ConfigPath, $json, $utf8)
+            Write-Log ("Agent API configured: http://{0}:{1} (read-only, no auth)" -f
+                $api.host, $api.port)
+        } else {
+            Write-Log ("Agent API unchanged: http://{0}:{1} (read-only, no auth)" -f
+                $api.host, $api.port)
+        }
+        if ("$($api.host)" -in @("127.0.0.1", "localhost", "::1")) {
+            Write-Log ("Agent API is loopback-bound; set api.host to 0.0.0.0 in " +
+                "$ConfigPath to let the admin panel reach it") "WARN"
+        }
+    } catch {
+        Write-Log "Could not configure the agent API in ${ConfigPath}: $($_.Exception.Message)" "WARN"
     }
 }
 
@@ -299,6 +365,18 @@ function Show-AgentStatus {
             $doc = Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
             Write-Log "Brokers: $($doc.kafka.bootstrap_servers)"
             Write-Log "Topic: $($doc.kafka.topic)"
+            $api = $doc.api
+            $apiHost = if ($api -and $api.host) { "$($api.host)" } else { "127.0.0.1" }
+            $apiPort = if ($api -and $api.port) { [int]$api.port } else { 8787 }
+            $apiEnabled = if ($api -and $api.PSObject.Properties["enabled"]) {
+                [bool]$api.enabled
+            } else { $true }
+            Write-Log ("Agent API: http://{0}:{1} (enabled={2}, auth=none)" -f
+                $apiHost, $apiPort, $apiEnabled)
+            $probeHost = if ($apiHost -in @("0.0.0.0", "::")) { "127.0.0.1" } else { $apiHost }
+            Write-Log ("Agent API probe {0}:{1} => {2}" -f
+                $probeHost, $apiPort,
+                $(if (Test-TcpPort -HostName $probeHost -Port $apiPort) { "OPEN" } else { "CLOSED" }))
             foreach ($entry in ("$($doc.kafka.bootstrap_servers)" -split ",")) {
                 $entry = $entry.Trim()
                 if (-not $entry) { continue }
@@ -328,6 +406,7 @@ function Install-AgentService {
     Write-Log "DaOrcs endpoint agent service install starting (user=$($identity.Name))"
     Write-Log "Log folder: $script:LogDir"
     Set-AgentLogLocation -ConfigPath (Get-AgentConfigPath) -LogDir $script:LogDir
+    Set-AgentApiSettings -ConfigPath (Get-AgentConfigPath)
     $selfTest = Invoke-AgentSelfTest
     if ($selfTest -eq 1) {
         throw "The agent self-test failed before service installation. See $script:LogFile"
@@ -380,7 +459,74 @@ function Install-AgentService {
     }
 }
 
-if (-not (Test-IsAdministrator) -and ($Action -eq "install" -or $Action -eq "uninstall")) {
+function Update-AgentService {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "Updating the DaOrcs agent service requires an elevated administrator."
+    }
+
+    Write-Log "DaOrcs endpoint agent service update starting (user=$($identity.Name))"
+    Write-Log "Log folder: $script:LogDir"
+
+    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if (-not $service) {
+        # A repair run on a half-installed endpoint: fall back to a full install.
+        Write-Log "The existing $serviceName service was not found; performing a full install" "WARN"
+        return (Install-AgentService)
+    }
+
+    Write-Log "Existing service detected: $serviceName status=$($service.Status) start=$($service.StartType)"
+    Set-AgentLogLocation -ConfigPath (Get-AgentConfigPath) -LogDir $script:LogDir
+    Set-AgentApiSettings -ConfigPath (Get-AgentConfigPath)
+    $selfTest = Invoke-AgentSelfTest
+    if ($selfTest -eq 1) {
+        throw "The agent self-test failed before the service update. See $script:LogFile"
+    }
+    if ($selfTest -eq 2) {
+        Write-Log "The Kafka broker is not reachable yet; the updated service will still be restarted and will retry." "WARN"
+    }
+
+    $executable = Join-Path $PSScriptRoot "DaOrcsAgent.exe"
+    $binaryPath = '"{0}" --service' -f $executable
+
+    [void](Invoke-Native "$env:SystemRoot\System32\schtasks.exe" @("/End", "/TN", $taskName) "schtasks end")
+    [void](Invoke-Native "$env:SystemRoot\System32\schtasks.exe" @("/Delete", "/TN", $taskName, "/F") "schtasks delete")
+
+    Stop-AgentService
+
+    try {
+        # Keep the same registration and configuration; only repoint it at the
+        # updated files. This preserves the service SID and any local policy.
+        [void](Invoke-Native "$env:SystemRoot\System32\sc.exe" @(
+            "config", $serviceName, "binPath=", $binaryPath) "sc config")
+        Set-ServiceLogEnvironment -Name $serviceName -LogDir $script:LogDir
+        [void](Invoke-Native "$env:SystemRoot\System32\sc.exe" @(
+            "config", $serviceName, "start=", "delayed-auto") "sc config")
+        [void](Invoke-Native "$env:SystemRoot\System32\sc.exe" @(
+            "failure", $serviceName, "reset=", "86400", "actions=",
+            "restart/60000/restart/60000/restart/60000") "sc failure")
+
+        Write-Log "Restarting $serviceName after the update"
+        Start-Service -Name $serviceName
+        $service = Get-Service -Name $serviceName
+        $service.WaitForStatus(
+            [System.ServiceProcess.ServiceControllerStatus]::Running,
+            [TimeSpan]::FromSeconds(60)
+        )
+        Write-Log "Service $serviceName is running (updated in place)"
+        return 0
+    } catch {
+        Write-Log "Service $serviceName did not restart after the update: $($_.Exception.Message)" "ERROR"
+        Write-Log "The updated files are in place; nothing was rolled back." "ERROR"
+        Write-ServiceDiagnostics
+        Write-Log "See $script:LogFile and $script:LogDir\service.log" "ERROR"
+        return 3
+    }
+}
+
+if (-not (Test-IsAdministrator) -and
+    ($Action -eq "install" -or $Action -eq "upgrade" -or $Action -eq "uninstall")) {
     Restart-Elevated -BoundParameters $PSBoundParameters -Reason "The '$Action' action"
 }
 
@@ -388,6 +534,9 @@ try {
     switch ($Action) {
         "install" {
             exit (Install-AgentService)
+        }
+        "upgrade" {
+            exit (Update-AgentService)
         }
         "uninstall" {
             Write-Log "DaOrcs endpoint agent service uninstall starting"

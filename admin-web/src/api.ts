@@ -9,6 +9,10 @@ import type {
   ShareSettings,
   AnalyzerPackedStop,
   AgentSaveResult,
+  AgentDetections,
+  AgentFleetEntry,
+  AgentFleetMutation,
+  AgentFleetSnapshot,
   ArtifactExportJob,
   ArtifactLinks,
   ArtifactSettings,
@@ -214,6 +218,46 @@ export const api = {
       () => ({ ok: false, code: 'failed', detail: `HTTP ${res.status}` }),
     ) as AgentSaveResult
   },
+  // Endpoint-agent heartbeats. The address book lives in the operator profile
+  // (%APPDATA%/IAProject/agents.json), not the repo: which machines a console
+  // watches is per-install. Probes are live HTTP calls, so this poll is slower
+  // than the local ones.
+  agentFleet: () => json<AgentFleetSnapshot>('/api/network/agents'),
+  addAgent: async (name: string, url: string) => {
+    const res = await fetch('/api/network/agents', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, url }),
+    })
+    return await res.json().catch(
+      () => ({ ok: false, code: 'failed', error: `HTTP ${res.status}` }),
+    ) as AgentFleetMutation
+  },
+  removeAgent: async (name: string) => {
+    const res = await fetch(
+      `/api/network/agents/${encodeURIComponent(name)}`,
+      { method: 'DELETE', credentials: 'same-origin' },
+    )
+    return await res.json().catch(
+      () => ({ ok: false, code: 'failed', error: `HTTP ${res.status}` }),
+    ) as AgentFleetMutation
+  },
+  testAgent: async (url: string) => {
+    const res = await fetch('/api/network/agents/test', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    })
+    return await res.json().catch(
+      () => ({ online: false, code: 'failed', detail: `HTTP ${res.status}` }),
+    ) as AgentFleetEntry
+  },
+  agentDetections: (name: string, limit = 20) =>
+    json<AgentDetections>(
+      `/api/network/agents/${encodeURIComponent(name)}/detections?limit=${limit}`,
+    ),
   // Every endpoint this lab exposes. The panel's own routes are introspected
   // from the live URL map server-side, so this is a reference that cannot drift
   // from the routes actually registered.

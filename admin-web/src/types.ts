@@ -2905,3 +2905,95 @@ export interface AgentSaveResult {
   validation?: AgentValidation
   agent?: AgentConfig
 }
+
+// ---------------------------------------------------------------------------
+// Endpoint-agent heartbeats
+//
+// The agent's GET /api/v1/health snapshot, proxied through the panel. Only the
+// fields the fleet card renders are typed; the agent may add more without
+// breaking this page.
+// ---------------------------------------------------------------------------
+
+export interface AgentHeartbeatAgent {
+  name: string
+  version: string
+  host: string
+  platform: string
+  pid: number
+  service: boolean
+  started_at: string
+  uptime_seconds: number
+  state: string
+}
+
+export interface AgentHeartbeat {
+  status: string
+  agent: AgentHeartbeatAgent
+  config: {
+    path: string
+    watch_dirs: string[]
+    scan_interval_seconds: number
+  }
+  kafka: {
+    bootstrap_servers: string
+    topic: string
+    last_publish_ok: boolean | null
+    last_publish_at: string | null
+  }
+  counters: {
+    samples_published: number
+    publish_errors: number
+    records_logged: number
+  }
+  last_scan: {
+    started_at: string | null
+    finished_at: string | null
+    duration_seconds: number | null
+  }
+  last_sample: {
+    detected_at: string
+    file_name: string
+    file_size: number
+    sha256: string
+  } | null
+  last_error: { message: string; at: string } | null
+  detections: { file: string }
+  api: { enabled: boolean; host: string; port: number }
+}
+
+export interface AgentFleetEntry {
+  name: string
+  url: string
+  online: boolean
+  /** ok | degraded | starting | auth | unreachable | http-error |
+   *  invalid-response. `auth` means the agent still requires a token, i.e. it
+   *  is running 0.4.0 or older and needs an update. */
+  code: string
+  detail: string | null
+  latency_ms: number | null
+  health: AgentHeartbeat | null
+}
+
+export interface AgentFleetSnapshot {
+  config_file: string
+  checked_at: string
+  count: number
+  online: number
+  agents: AgentFleetEntry[]
+}
+
+export interface AgentFleetMutation {
+  ok: boolean
+  code?: string
+  error?: string
+  agent?: { name: string; url: string }
+}
+
+export interface AgentDetections {
+  agent: string
+  url: string
+  file: string
+  count: number
+  detections: Array<Record<string, unknown>>
+}
+

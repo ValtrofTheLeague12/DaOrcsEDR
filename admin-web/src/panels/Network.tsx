@@ -38,8 +38,8 @@ export default function Network() {
   // fragment gets flagged as comparing against an already-exhausted literal.
   const isDocker = tab === 'docker'
   const isHypervisors = tab === 'hypervisors'
-  // The Configuration tab edits .env; it does not need the topology scan, and
-  // a scan that is slow or failing must not hide the controls underneath it.
+  // The Configuration tab does not need the topology scan, and a scan that is
+  // slow or failing must not hide the controls underneath it.
   const isConfiguration = tab === 'configuration'
   const interfaceGroups = data ? groupHostInterfaces(data.host_adapters) : []
 

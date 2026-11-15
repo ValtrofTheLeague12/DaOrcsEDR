@@ -32,6 +32,7 @@ const Documentation = lazy(() => import('./panels/Documentation'))
 const Stats = lazy(() => import('./panels/Stats'))
 const System = lazy(() => import('./panels/System'))
 const Network = lazy(() => import('./panels/Network'))
+const EndpointAgents = lazy(() => import('./panels/EndpointAgents'))
 const Logs = lazy(() => import('./panels/Logs'))
 const Artifacts = lazy(() => import('./panels/Artifacts'))
 const ThreatIntelligence = lazy(() => import('./panels/ThreatIntelligence'))
@@ -51,7 +52,8 @@ const MemoryProfiling = lazy(() => import('./panels/MemoryProfiling'))
 // Exported so panels can accept an `onNavigate` prop without importing the
 // whole App module graph - the type is all they need.
 export type PanelId =
-  | 'overview' | 'docs' | 'stats' | 'system' | 'network' | 'logs' | 'artifacts'
+  | 'overview' | 'docs' | 'stats' | 'system' | 'network' | 'endpoint-agents'
+  | 'logs' | 'artifacts'
   | 'pipelines' | 'analysis' | 'build' | 'utils' | 'memory-profiling'
   | 'containers'
   | 'dynamic-analysis' | 'threat-intel' | 'threat-intel-bans' | 'threat-intel-apis'
@@ -64,7 +66,8 @@ interface NavEntry {
 }
 
 const BUILT: PanelId[] = [
-  'stats', 'overview', 'docs', 'system', 'network', 'artifacts', 'pipelines',
+  'stats', 'overview', 'docs', 'system', 'network', 'endpoint-agents',
+  'artifacts', 'pipelines',
   'analysis', 'dynamic-analysis', 'build', 'utils', 'containers', 'logs', 'vm',
   'qiling-vm', 'qiling', 'clamd', 'memory-profiling', 'threat-intel',
   'threat-intel-bans', 'threat-intel-apis',
@@ -98,6 +101,14 @@ const NAV: { group: string; items: NavEntry[] }[] = [
       { id: 'docs', label: 'Documentation', icon: 'logs' },
       { id: 'system', label: 'Machine', icon: 'machine' },
       { id: 'network', label: 'Networking', icon: 'services' },
+    ],
+  },
+  {
+    // Endpoints get their own section: the fleet is inspected on its own, and
+    // it used to be buried as a tab inside Networking next to topology scans.
+    group: 'Endpoints',
+    items: [
+      { id: 'endpoint-agents', label: 'Endpoint agents', icon: 'machine' },
     ],
   },
   {
@@ -330,6 +341,7 @@ export default function App() {
             {panel === 'docs' && <Documentation />}
             {panel === 'system' && <System />}
             {panel === 'network' && <Network />}
+            {panel === 'endpoint-agents' && <EndpointAgents />}
             {panel === 'logs' && <Logs />}
             {panel === 'artifacts' && <Artifacts />}
             {panel === 'threat-intel' && <ThreatIntelligence />}
