@@ -624,11 +624,11 @@ def _run_profile(job_id: str, repo: Path, target: str,
         return
 
     try:
-        with target_log.open("r", encoding="utf-8", errors="replace") as stream:
-            for line in stream:
-                _append(job_id, line.rstrip("\r\n"))
+        lines = target_log.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as exc:
-        _append(job_id, f"could not read target log: {exc}")
+        lines = [f"could not read target log: {exc}"]
+    with _jobs_lock:
+        job["target_log"] = lines[-MAX_LOG_LINES:]
     if returncode != 0:
         with _jobs_lock:
             job["warning"] = (
