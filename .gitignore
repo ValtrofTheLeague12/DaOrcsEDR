@@ -305,3 +305,11 @@ python/clamd/_configure_clamd.pyc
 .env
 .env.*
 !.env.example
+
+# VM credential files: name, address and SSH password of the lab machines.
+# The .example variants are the sanitized templates; the real files carry
+# VM_PASSWORD and stay out of the tree.
+vm_info.json
+qiling_dlls/vm_info.json
+python/clamd/vm_info.json
+
