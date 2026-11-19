@@ -93,7 +93,17 @@ def collect(vectors_dir: Path, splits: list[str], log) -> tuple[dict, list, Coun
                     stats["bad_sha256"] += 1
                     continue
 
-                label = 1 if rec.get("label") else 0
+                # Only an explicit 1 is malicious. The old `1 if label else 0`
+                # turned an unlabeled -1 into "malicious". The challenge archive
+                # is all-malicious and may carry no label at all.
+                raw_label = rec.get("label")
+                if split == "challenge":
+                    label = 1
+                elif raw_label in (0, 1):
+                    label = int(raw_label)
+                else:
+                    stats["unlabeled"] += 1
+                    continue
                 family = rec.get("family") or None
 
                 idx = order.get(sha)
@@ -137,6 +147,8 @@ def summarize(rows: list[tuple[str, list]], stats: Counter, log) -> None:
     log.info("[+]   families %d", len(families))
     log.info("[+]   multi-split %d", multi)
     log.info("[*] duplicates collapsed %d", stats["duplicate"])
+    if stats["unlabeled"]:
+        log.warning("[!] skipped %d unlabeled row(s)", stats["unlabeled"])
     if stats["malformed"] or stats["bad_sha256"]:
         log.warning("[!] skipped %d malformed line(s), %d unusable sha256",
                     stats["malformed"], stats["bad_sha256"])
@@ -182,10 +194,3 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-# Bit values mirror known_pe::split_bit in include/file/known_pe_hashes.hpp.
-SPLIT_BITS = {"train": 1, "test": 2, "challenge": 4}
-BIT_NAMES = {bit: name for name, bit in SPLIT_BITS.items()}
-
-
-def split_names(mask: int) -> list[str]:
-    return [BIT_NAMES[bit] for bit in sorted(BIT_NAMES) if mask & bit]
