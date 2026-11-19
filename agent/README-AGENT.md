@@ -34,18 +34,19 @@ files are copied:
 
 | Switch | Meaning | Default when omitted |
 | --- | --- | --- |
-| `/APIHOST=` | The address the agent's heartbeat API binds on **this** machine; the panel probes `http://<APIHOST>:8787/api/v1/health`. | `0.0.0.0` |
+| `/APIHOST=` | The address the agent's heartbeat API binds on **this** machine; the panel probes `http://<APIHOST>:<APIPORT>/api/v1/health`. | `0.0.0.0` |
+| `/APIPORT=` | TCP port the heartbeat API binds on this machine. Must be 1-65535. | `8787` |
 | `/BROKERS=` | Comma-separated `host:port` Kafka bootstrap entries (the panel host's broker). | `192.168.56.1:9092` |
 | `/TOPIC=` | Kafka topic the agent publishes to. | `analysis-artifacts` |
 
-The values are validated before setup runs: an invalid address, broker list or
-topic aborts the install with an explanation rather than silently producing a
-configuration that can never report. On an upgrade the switches are ignored —
-the existing `agent.json` is kept — and they never overwrite an `agent.json`
-that already exists on a fresh install. Whatever is written is logged in
-`install.log`. Port 8787 still needs an inbound firewall rule on the endpoint,
-restricted to the panel's subnet; the agent logs a warning about the widened
-bind itself.
+The values are validated before setup runs: an invalid address, port, broker
+list or topic aborts the install with an explanation rather than silently
+producing a configuration that can never report. On an upgrade the switches are
+ignored — the existing `agent.json` is kept — and they never overwrite an
+`agent.json` that already exists on a fresh install. Whatever is written is
+logged in `install.log`. The API port (8787 by default) still needs an inbound
+firewall rule on the endpoint, restricted to the panel's subnet; the agent logs
+a warning about the widened bind itself.
 
 ### Upgrading an existing install
 
@@ -202,15 +203,15 @@ older installs, because the API no longer reads one.
 | GET | `/api/v1/heartbeat` | Same as `/api/v1/health` |
 | GET | `/api/v1/agent` | Same as `/api/v1/health` |
 | GET | `/api/v1/detections?limit=N` | Newest detections from `detections.log` (default 20, max 500) |
+| POST | `/api/v1/control` | Body `{"action": "stop"}` pauses the scan loop after the current scan; `{"action": "start"}` resumes it. The heartbeat and detections keep answering in both states. This is the one deliberate write; it is how the panel's Terminate agent / Start agent buttons work, since a stopped Windows service could not answer a remote start anyway. |
 
-Anything else returns `404`; `POST` and other methods return `405` because the
-API is read-only.
+Anything else returns `404`; other methods return `405`.
 
-The snapshot includes the service state (`starting`, `running`,
-`scanning`, `idle`, `stopping`), uptime, watch directories, Kafka broker and
-topic, last publish result, counters, last scan duration, last detection and
-last error. Overall `status` is `ok`, `degraded` (the last Kafka publish
-failed) or `starting`.
+The snapshot includes the service state (`starting`, `running`, `scanning`,
+`idle`, `paused`, `stopping`) plus `agent.scan_paused` (`true` while the scan
+loop is parked), uptime, watch directories, Kafka broker and topic, last publish
+result, counters, last scan duration, last detection and last error. Overall
+`status` is `ok`, `degraded` (the last Kafka publish failed) or `starting`.
 
 ### Checking an agent
 

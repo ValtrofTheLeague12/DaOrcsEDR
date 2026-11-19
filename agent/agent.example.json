@@ -1,8 +1,9 @@
 {
   "watch_dirs": [
     "%PUBLIC%\\Downloads",
-    "%PUBLIC%\\Desktop"
-  ],
+    "%PUBLIC%\\Desktop",
+    "%USERPROFILE%\\Downloads"
+   ],
   "scan_interval_seconds": 5,
   "stable_seconds": 2,
   "chunk_bytes": 262144,

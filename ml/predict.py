@@ -160,6 +160,7 @@ def score_file(
 
 
 def check_against_thrember(json_path: Path, target: Path) -> int:
+    """ Checks wether the features extracted by the EMBER are compatible withe EMBER Vector for results hygeine"""
     """Diff the analyzer's two EMBER vectors against thrember's, element-wise."""
     from thrember.features import ByteEntropyHistogram, ByteHistogram
 
@@ -169,7 +170,6 @@ def check_against_thrember(json_path: Path, target: Path) -> int:
         ByteHistogram().raw_features(raw, None)), dtype=np.float64)
     be = ByteEntropyHistogram()
     ref_b = np.asarray(be.process_raw_features(be.raw_features(raw, None)), dtype=np.float64)
-
     ok = _compare_analyzer_vectors((ref_h, ref_b), (mine_h, mine_b))
     if ok:
         log.info("\n[+] vectors match; the C++ exporter is EMBER-compatible.")

@@ -35,7 +35,7 @@ from .clamd import clamd
 from .core import auth, config, docs
 from .core.yamlview import jsonable as _jsonable, spans as _yaml_spans
 from .host import (agents as agent_fleet, containers, endpoints, launcher,
-                   logs, services, stats, system, trace)
+                   agent_deploy, logs, services, stats, system, trace)
 from .network import netmap, vms, vmmetrics
 from .pipeline import pipeline_run
 from .qiling import qiling
@@ -4632,6 +4632,138 @@ def create_app() -> Flask:
         except agent_fleet.AgentError as exc:
             return _agent_error(exc)
         return jsonify(result)
+
+    # --- agent installer deploy ----------------------------------------------
+
+    def _deploy_error(exc: agent_deploy.DeployError):
+        return jsonify(ok=False, error=str(exc), code=exc.code), exc.status
+
+    @app.post("/api/network/agents/deploy")
+    def agent_deploy_start():
+        """Build the Agent Installer and Share It as a Public MEGA Link
+        ---
+        tags: [network]
+        consumes: [application/json]
+        parameters:
+          - name: body
+            in: body
+            required: true
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, description: "the agent this package is for"}
+                port: {type: integer, description: "heartbeat API port seeded into agent.json (1-65535, default 8787)"}
+        responses:
+          200:
+            description: Job handle; poll GET /api/network/agents/deploy/<job_id>
+          400:
+            description: Invalid name or port, missing build script, MEGAcmd
+                         missing or logged out, or a broken share-link expiry
+                         policy
+          409:
+            description: A deploy job is already running
+        description: >
+          One deploy = build + stage + share. The build runs agent/build.ps1
+          (PyInstaller + Inno Setup), so it runs for minutes and returns a job
+          handle instead of a result. The staged package pairs the Setup exe
+          with the per-agent files: the agent.json template (brokers/topic from
+          .env, heartbeat API on 0.0.0.0 with the requested port, default
+          8787) and an install-agent.ps1 with the silent-install switches
+          baked in. The folder is uploaded to /DaOrcsAgent on MEGA and its
+          public link is created, honouring the expiry in config/share.json -
+          a broken policy fails the deploy before the build starts, not after
+          the upload.
+
+          The link is created only by this route. No poll ever publishes one.
+        """
+        body = request.get_json(silent=True) or {}
+        try:
+            started = agent_deploy.start_deploy(
+                body.get("name"), body.get("port"))
+        except agent_deploy.DeployError as exc:
+            return _deploy_error(exc)
+        status = 200 if started.get("ok") else 409
+        return jsonify(started), status
+
+    @app.get("/api/network/agents/deploy")
+    def agent_deploy_current():
+        """The Newest Installer Deploy Job, if Any
+        ---
+        tags: [network]
+        responses:
+          200:
+            description: The newest job (running or finished), or null
+        description: >
+          So a reload reattaches to a deploy that is already going, and shows
+          the last link instead of an empty panel after one finished.
+        """
+        return jsonify(agent_deploy.current())
+
+    @app.get("/api/network/agents/deploy/<job_id>")
+    def agent_deploy_job(job_id: str):
+        """Live Output of an Installer Deploy
+        ---
+        tags: [network]
+        parameters:
+          - name: job_id
+            in: path
+            required: true
+            type: string
+        responses:
+          200:
+            description: State, log, and the MEGA link once done
+          404:
+            description: Unknown or expired job
+        description: >
+          The log is returned whole so a reload restores the full output. On
+          success the job carries `link` (the public mega.nz URL), the staged
+          `artifact` path, the Setup exe's `sha256` and `bytes`, the
+          `remote_path`, the MEGA `account`, and the `expire` policy applied.
+        """
+        job = agent_deploy.job(job_id)
+        if job is None:
+            return jsonify(error="unknown or expired job id"), 404
+        return jsonify(job)
+
+    @app.post("/api/network/agents/<path:name>/control")
+    def agent_fleet_control(name: str):
+        """Terminate or Resume One Endpoint Agent's Scanning
+        ---
+        tags: [network]
+        consumes: [application/json]
+        parameters:
+          - name: body
+            in: body
+            required: true
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: {type: string, enum: [stop, start],
+                         description: "stop pauses the scan loop, start resumes it"}
+        responses:
+          200:
+            description: The agent acknowledged the action; scan_paused state
+          400:
+            description: action is not stop/start
+          404:
+            description: No such agent
+          502:
+            description: The agent could not be reached, rejected the request,
+                         or predates the control endpoint
+        description: >
+          Proxies POST /api/v1/control on the agent. Terminate means scan
+          pause, not a service stop: a stopped Windows service listens on
+          nothing, so a remote start could never bring it back. Paused agents
+          keep answering the heartbeat and detections, which is what the
+          Start agent button needs.
+        """
+        body = request.get_json(silent=True) or {}
+        try:
+            return jsonify(agent_fleet.agent_control(name, body.get("action")))
+        except agent_fleet.AgentError as exc:
+            return _agent_error(exc)
 
     @app.get("/api/network/agents/<path:name>/detections")
     def agent_fleet_detections(name: str):
