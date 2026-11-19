@@ -360,3 +360,59 @@ def detections(name: str, limit: int) -> dict:
     body["agent"] = entry["name"]
     body["url"] = entry["url"]
     return body
+
+
+def agent_control(name: str, action: object) -> dict:
+    """POST {action: stop|start} to one agent's /api/v1/control.
+
+    "stop" pauses the agent's scan loop (the panel's Terminate agent button);
+    "start" resumes it. A remote *service* start is impossible - a stopped
+    Windows service listens on nothing - so scan pause/resume is the symmetric
+    pair the fleet buttons can actually drive. The API keeps answering the
+    heartbeat while paused, so the card flips back to startable.
+    """
+    action = str(action or "").strip().lower()
+    if action not in ("stop", "start"):
+        raise AgentError(
+            "action must be 'stop' or 'start'", "invalid-action", 400)
+    with _LOCK:
+        entry = _find(_load(), name)
+    if entry is None:
+        raise AgentError(f"agent not found: {name}", "not-found", 404)
+    endpoint = f"{entry['url'].rstrip('/')}/api/v1/control"
+    payload = json.dumps({"action": action}).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint, data=payload, method="POST")
+    request.add_header("Accept", "application/json")
+    request.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=PROBE_TIMEOUT) as resp:
+            body = json.loads(resp.read(1024 * 1024).decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        # A 405/404 means the endpoint predates the control route: the agent
+        # is too old to be paused from here, and that is the honest answer.
+        if exc.code in (404, 405):
+            raise AgentError(
+                "the agent does not expose /api/v1/control; update it to a "
+                "build with scan pause/resume", "unsupported", 502) from exc
+        code = "auth" if exc.code in (401, 403) else "http-error"
+        raise AgentError(
+            "the agent requires a token (0.4.0 or older); update it to 0.4.1 "
+            "or later" if code == "auth"
+            else f"the agent answered HTTP {exc.code}", code, 502) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise AgentError(f"cannot reach the agent: {exc}", "unreachable",
+                         502) from exc
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise AgentError(f"the agent did not return a control result: {exc}",
+                         "invalid-response", 502) from exc
+    if not isinstance(body, dict):
+        raise AgentError("the agent did not return a control result",
+                         "invalid-response", 502)
+    return {
+        "ok": bool(body.get("ok")),
+        "action": action,
+        "agent": entry["name"],
+        "url": entry["url"],
+        "scan_paused": body.get("scan_paused"),
+    }

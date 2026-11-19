@@ -10,6 +10,7 @@ import type {
   AnalyzerPackedStop,
   AgentSaveResult,
   AgentDetections,
+  AgentDeployJob,
   AgentFleetEntry,
   AgentFleetMutation,
   AgentFleetSnapshot,
@@ -257,6 +258,53 @@ export const api = {
   agentDetections: (name: string, limit = 20) =>
     json<AgentDetections>(
       `/api/network/agents/${encodeURIComponent(name)}/detections?limit=${limit}`,
+    ),
+  /**
+   * Pause ("stop") or resume ("start") one agent's scan loop via the agent's
+   * POST /api/v1/control. Terminate is scan pause, not a service stop: a
+   * stopped Windows service listens on nothing, so a remote start could
+   * never bring it back. Paused agents keep their heartbeat, which is what
+   * the Start button reads.
+   */
+  agentControl: async (name: string, action: 'stop' | 'start') => {
+    const res = await fetch(
+      `/api/network/agents/${encodeURIComponent(name)}/control`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      },
+    )
+    return await res.json().catch(
+      () => ({ ok: false, error: `HTTP ${res.status}` }),
+    ) as { ok: boolean; scan_paused?: boolean; error?: string }
+  },
+  /**
+   * Deploy the endpoint-agent installer for one agent: build (PyInstaller +
+   * Inno Setup), stage the per-agent package, upload to MEGA, share the link.
+   * Job-based, because the build runs for minutes. The refusal payload comes
+   * back on 4xx rather than thrown so the button can name the blocker
+   * (missing Inno Setup, no MEGA session, a build already running).
+   */
+  agentDeploy: async (name: string, port?: number) => {
+    const res = await fetch('/api/network/agents/deploy', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(port ? { name, port } : { name }),
+    })
+    return await res.json().catch(
+      () => ({ ok: false, error: `HTTP ${res.status}` }),
+    ) as { ok: boolean; job_id?: string; agent?: string; error?: string;
+           detail?: string }
+  },
+  /** The newest deploy job, so a reload reattaches and the link survives. */
+  agentDeployCurrent: () =>
+    json<AgentDeployJob | null>('/api/network/agents/deploy'),
+  agentDeployJob: (jobId: string) =>
+    json<AgentDeployJob>(
+      `/api/network/agents/deploy/${encodeURIComponent(jobId)}`,
     ),
   // Every endpoint this lab exposes. The panel's own routes are introspected
   // from the live URL map server-side, so this is a reference that cannot drift
