@@ -4239,6 +4239,14 @@ select.field {
   padding-bottom: 0.7rem;
 }
 
+/* Add-an-agent row. `.field` sets width: 100% outside Tailwind's layers, so
+   the `w-*` utilities on those inputs never win; these widths are unlayered
+   and sit after `.field`, which makes the row lay out as intended. The port
+   is deliberately narrow - it is only ever four or five digits. */
+.agent-name-field { width: 11rem; }
+.agent-address-field { width: 15rem; }
+.agent-port-field { width: 5rem; }
+
 .network-map-content {
   overflow: hidden;
   border-top: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);

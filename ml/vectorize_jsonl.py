@@ -106,12 +106,18 @@ def stream_split(zpath: Path, out: Path, split: str, extractor,
                     except json.JSONDecodeError:
                         n_skip += 1
                         continue
+                    # Label first: an unlabeled (-1) row must never reach the
+                    # matrix, because train.py's LightGBM objective needs 0/1.
+                    # The challenge archive is all-malicious by definition.
+                    label = 1 if split == "challenge" else label_of(rec)
+                    if label not in (0, 1):
+                        n_skip += 1
+                        continue
                     vec = to_vector(rec, extractor)
                     if vec is None:
                         n_skip += 1
                         continue
                     vec.astype(np.float32, copy=False).tofile(stage)
-                    label = label_of(rec)
                     labels.append(label)
                     rec_meta = {"source": name, "label": label}
                     if isinstance(rec, dict):
@@ -225,4 +231,4 @@ if __name__ == "__main__":
         raise
     except Exception:  # noqa: BLE001
         logging.getLogger("ml.vectorize_jsonl").exception("vectorize_jsonl crashed")
-        sys.exit(1)
+        sys.exit(1)

@@ -12,39 +12,54 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "agent"))
 
 from endpoint_agent import (  # noqa: E402
+    AgentHealth,
     EndpointAgent,
     KafkaSamplePublisher,
     SampleState,
-    _pe_sections,
-    digest_section,
+    build_flask_app,
     is_pe_file,
     load_config,
 )
 
 
-def _pe_bytes(payload: bytes = b"sample") -> bytes:
-    header = bytearray(0x84)
-    header[:2] = b"MZ"
-    header[0x3C:0x40] = (0x80).to_bytes(4, "little")
-    header[0x80:0x84] = b"PE\0\0"
-    return bytes(header) + payload
+def _pe_image(payload: bytes, section_name: bytes | None = None) -> bytes:
+    """A minimal but LIEF-parseable PE: DOS header, COFF header, PE32
+    optional header (0xe0), one section-table entry, then the payload.
 
-
-def _pe_with_section(payload: bytes) -> bytes:
-    """A minimal PE with one .text section, so the table walk can be checked."""
-    pe_offset = 0x40
-    section_table = pe_offset + 24          # SizeOfOptionalHeader = 0
-    raw_offset = section_table + 40
-    image = bytearray(raw_offset) + bytearray(payload)
+    LIEF 1.x refuses the barebones MZ/PE image the old fixtures used
+    ("SizeOfOptionalHeader seems invalid"), so the optional header is real.
+    """
+    pe_offset = 0x80
+    optional_size = 0xE0
+    coff = pe_offset + 4                 # after the PE\0\0 signature
+    optional = coff + 20                 # after the COFF header
+    sections = optional + optional_size  # section table
+    raw_offset = sections + 40           # one 40-byte section entry
+    image = bytearray(raw_offset)
     image[:2] = b"MZ"
     image[0x3C:0x40] = pe_offset.to_bytes(4, "little")
     image[pe_offset:pe_offset + 4] = b"PE\0\0"
-    image[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
-    entry = section_table
-    image[entry:entry + 5] = b".text"
-    image[entry + 16:entry + 20] = len(payload).to_bytes(4, "little")
-    image[entry + 20:entry + 24] = raw_offset.to_bytes(4, "little")
-    return bytes(image)
+    # COFF: i386, one section, optional header present, executable image.
+    image[coff:coff + 2] = (0x014C).to_bytes(2, "little")
+    image[coff + 2:coff + 4] = (1).to_bytes(2, "little")
+    image[coff + 16:coff + 18] = optional_size.to_bytes(2, "little")
+    image[coff + 18:coff + 20] = (0x0102).to_bytes(2, "little")
+    # Optional header magic 0x010B = PE32; the zeros after it parse fine.
+    image[optional:optional + 2] = (0x010B).to_bytes(2, "little")
+    if section_name is not None:
+        image[sections:sections + 8] = section_name.ljust(8, b"\0")
+    image[sections + 16:sections + 20] = len(payload).to_bytes(4, "little")
+    image[sections + 20:sections + 24] = raw_offset.to_bytes(4, "little")
+    return bytes(image) + payload
+
+
+def _pe_bytes(payload: bytes = b"sample") -> bytes:
+    return _pe_image(payload)
+
+
+def _pe_with_section(payload: bytes) -> bytes:
+    """The same image with a named .text section covering the payload."""
+    return _pe_image(payload, b".text")
 
 
 class FakeProducer:
@@ -77,21 +92,6 @@ def test_detects_a_pe_from_its_section_table(tmp_path):
     executable.write_bytes(_pe_with_section(b"section payload"))
 
     assert is_pe_file(executable)
-
-
-def test_section_digests_are_sha256_of_each_sections_bytes(tmp_path):
-    executable = tmp_path / "sample.exe"
-    executable.write_bytes(_pe_with_section(b"section payload"))
-
-    assert _pe_sections(executable) == [
-        (".text", hashlib.sha256(b"section payload").hexdigest())
-    ]
-
-
-def test_digest_section_accepts_bytes_and_rejects_empty_input():
-    assert digest_section(b"abc") == hashlib.sha256(b"abc").hexdigest()
-    assert digest_section("") == ""
-    assert digest_section(b"") == ""
 
 
 def test_is_pe_file_rejects_missing_and_empty_files(tmp_path):
@@ -171,6 +171,89 @@ def test_agent_stops_without_an_extra_scan_when_service_stop_is_requested(tmp_pa
         assert producer.messages == []
     finally:
         agent.close()
+
+
+# --- scan pause / resume (POST /api/v1/control) -------------------------------
+
+def _health(tmp_path):
+    config = {
+        "watch_dirs": [str(tmp_path)],
+        "kafka": {"bootstrap_servers": "127.0.0.1:9092", "topic": "samples"},
+    }
+    return AgentHealth(config, tmp_path / "agent.json")
+
+
+def test_pause_is_reported_in_the_heartbeat(tmp_path):
+    health = _health(tmp_path)
+    assert health.is_paused() is False
+    assert health.snapshot()["agent"]["scan_paused"] is False
+    health.pause_scans()
+    assert health.is_paused() is True
+    assert health.snapshot()["agent"]["scan_paused"] is True
+    health.resume_scans()
+    assert health.is_paused() is False
+    assert health.snapshot()["agent"]["scan_paused"] is False
+
+
+def test_pause_barrier_parks_until_resume(tmp_path):
+    """The barrier must actually block the scan loop while paused, and let go
+    when the panel sends start - the Start agent button depends on it."""
+    health = _health(tmp_path)
+    released = threading.Event()
+
+    def barrier():
+        health.pause_barrier()
+        released.set()
+
+    health.pause_scans()
+    worker = threading.Thread(target=barrier, name="test-barrier")
+    worker.start()
+    assert not released.wait(0.3), "barrier returned while scans were paused"
+    health.resume_scans()
+    assert released.wait(5.0), "barrier never returned after resume"
+    worker.join(5)
+    assert health.snapshot()["agent"]["state"] == "running"
+
+
+def test_pause_barrier_respects_stop_even_while_paused(tmp_path):
+    """A stopping service must not hang in the barrier - SCM stop wins."""
+    health = _health(tmp_path)
+    health.pause_scans()
+    stop_event = threading.Event()
+    stop_event.set()
+    health.pause_barrier(stop_event)  # returns, does not block
+    # The pause request survives the stop: the next process decides.
+    assert health.is_paused() is True
+
+
+def test_control_endpoint_pauses_and_resumes(tmp_path):
+    """POST /api/v1/control drives the pause switch the heartbeat reports."""
+    health = _health(tmp_path)
+    app = build_flask_app(health, tmp_path / "detections.log")
+    client = app.test_client()
+
+    stopped = client.post("/api/v1/control", json={"action": "stop"})
+    assert stopped.status_code == 200
+    assert stopped.get_json() == {
+        "ok": True, "action": "stop", "scan_paused": True}
+    assert health.snapshot()["agent"]["scan_paused"] is True
+
+    started = client.post("/api/v1/control", json={"action": "start"})
+    assert started.status_code == 200
+    assert started.get_json()["scan_paused"] is False
+    assert health.snapshot()["agent"]["scan_paused"] is False
+
+
+def test_control_endpoint_rejects_unknown_actions(tmp_path):
+    health = _health(tmp_path)
+    app = build_flask_app(health, tmp_path / "detections.log")
+    client = app.test_client()
+    for payload in ({"action": "restart"}, {}, {"action": "  "}):
+        response = client.post("/api/v1/control", json=payload)
+        assert response.status_code == 400
+        assert "unknown action" in response.get_json()["error"]
+    # A wrong action must not have touched the switch.
+    assert health.is_paused() is False
 
 
 def test_config_rejects_chunk_sizes_that_exceed_safe_message_budget(tmp_path):

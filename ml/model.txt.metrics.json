@@ -1,39 +1,183 @@
 {
   "params": {
-    "num_iterations": 500,
+    "boosting_type": "gbdt",
+    "objective": "binary",
+    "metric": [
+      "binary_logloss",
+      "auc"
+    ],
+    "num_iterations": 2000,
     "learning_rate": 0.05,
-    "num_leaves": 1024,
-    "feature_fraction": 0.8,
+    "num_leaves": 127,
+    "min_data_in_leaf": 100,
+    "lambda_l2": 10.0,
+    "feature_fraction": 0.5,
     "bagging_fraction": 0.8,
-    "device": "cpu"
+    "bagging_freq": 1,
+    "seed": 59571,
+    "deterministic": true,
+    "force_row_wise": true,
+    "verbose": -1,
+    "device": "cpu",
+    "num_threads": 0
   },
-  "trees": 500,
+  "train_seconds": 275.62,
+  "trees": 568,
+  "best_iteration": 568,
   "n_features": 2568,
+  "feature_layout": [
+    {
+      "group": "general",
+      "offset": 0,
+      "dim": 7,
+      "analyzer_supplied": false
+    },
+    {
+      "group": "histogram",
+      "offset": 7,
+      "dim": 256,
+      "analyzer_supplied": true
+    },
+    {
+      "group": "byteentropy",
+      "offset": 263,
+      "dim": 256,
+      "analyzer_supplied": true
+    },
+    {
+      "group": "strings",
+      "offset": 519,
+      "dim": 177,
+      "analyzer_supplied": false
+    },
+    {
+      "group": "header",
+      "offset": 696,
+      "dim": 74,
+      "analyzer_supplied": false
+    },
+    {
+      "group": "section",
+      "offset": 770,
+      "dim": 224,
+      "analyzer_supplied": false
+    },
+    {
+      "group": "imports",
+      "offset": 994,
+      "dim": 1282,
+      "analyzer_supplied": false
+    },
+    {
+      "group": "exports",
+      "offset": 2276,
+      "dim": 129,
+      "analyzer_supplied": false
+    },
+    {
+      "group": "datadirectories",
+      "offset": 2405,
+      "dim": 34,
+      "analyzer_supplied": false
+    },
+    {
+      "group": "richheader",
+      "offset": 2439,
+      "dim": 33,
+      "analyzer_supplied": false
+    },
+    {
+      "group": "authenticode",
+      "offset": 2472,
+      "dim": 8,
+      "analyzer_supplied": false
+    },
+    {
+      "group": "pefilewarnings",
+      "offset": 2480,
+      "dim": 88,
+      "analyzer_supplied": false
+    }
+  ],
   "max_fpr_target": 0.005,
+  "data": {
+    "train_dedup": {
+      "rows": 300000,
+      "kept": 150000,
+      "duplicate_rows": 150000,
+      "label_conflicts": 0,
+      "deduplicated": true
+    },
+    "fit_files": 123157,
+    "validation_files": 30000,
+    "val_frac": 0.15,
+    "challenge_train_rows": 3157
+  },
+  "validation": {
+    "n": 30000,
+    "max_fpr": 0.005,
+    "seconds": 0.73,
+    "roc_auc": 0.9979837022222222,
+    "average_precision": 0.998324077621135,
+    "tpr_at_max_fpr": 0.9607333333333333,
+    "fpr_at_max_fpr": 0.005,
+    "oracle_threshold": 0.8750881716190935,
+    "tpr_at_0.5": 0.983,
+    "fpr_at_0.5": 0.016866666666666665,
+    "operating_threshold": 0.8750881716190935
+  },
+  "operating_threshold": 0.8750881716190935,
   "test": {
     "n": 120000,
-    "roc_auc": 0.9974903533333332,
-    "average_precision": 0.9976217799665571,
-    "tpr_at_max_fpr": 0.9249666666666667,
     "max_fpr": 0.005,
-    "note": "official EMBER2024 Win64 test split (120k rows), matches test_metrics.json"
+    "seconds": 15.12,
+    "roc_auc": 0.9967672766666669,
+    "average_precision": 0.9971261378481892,
+    "tpr_at_max_fpr": 0.9227,
+    "fpr_at_max_fpr": 0.005,
+    "oracle_threshold": 0.932384300878605,
+    "tpr_at_0.5": 0.9709,
+    "fpr_at_0.5": 0.020466666666666668,
+    "operating_threshold": 0.8750881716190935,
+    "tpr_at_operating_threshold": 0.9398666666666666,
+    "fpr_at_operating_threshold": 0.007166666666666667,
+    "note": "operating_threshold was chosen on validation and only applied here; oracle_threshold is the test-selected value (optimistic, kept for comparison with older reports)"
+  },
+  "analyzer_skew": {
+    "columns_perturbed": 512,
+    "groups": [
+      "histogram",
+      "byteentropy"
+    ],
+    "tolerance": 1e-06,
+    "rows": 50000,
+    "max_abs_score_change": 0.06790793105450227,
+    "verdict_flips_at_0.5": 31,
+    "verdict_flips_at_operating_threshold": 24
   },
   "train_fit": {
-    "n": 300000,
-    "roc_auc": 0.9999932392888888,
-    "average_precision": 0.9999954912415172,
-    "tpr_at_max_fpr": 0.9999866666666667,
+    "n": 120000,
     "max_fpr": 0.005,
-    "note": "fit statistic on the training split, not a generalisation measure"
+    "seconds": 18.43,
+    "roc_auc": 0.9999999988888889,
+    "average_precision": 0.9999999988889167,
+    "tpr_at_max_fpr": 1.0,
+    "fpr_at_max_fpr": 0.005,
+    "oracle_threshold": 0.10143430199612104,
+    "tpr_at_0.5": 0.9999833333333333,
+    "fpr_at_0.5": 3.3333333333333335e-05,
+    "note": "fit statistic on a subsample of the training split, not a generalisation measure"
   },
   "challenge": {
-    "n": 6315,
-    "roc_auc": null,
-    "average_precision": 1.0,
-    "tpr_at_max_fpr": 0.0,
+    "n": 3158,
     "max_fpr": 0.005,
-    "seconds": 0.39,
-    "caught_at_0.5": 0.5022961203483769,
-    "note": "single-class split (all-malicious): ROC-AUC and average precision are undefined, so only caught_at_0.5 is meaningful"
+    "seconds": 0.4,
+    "roc_auc": null,
+    "average_precision": null,
+    "tpr_at_max_fpr": null,
+    "caught_at_0.5": 0.8882203926535782,
+    "caught_at_operating_threshold": 0.7827739075364154,
+    "note": "single-class split: ROC-AUC/AP undefined, only the catch rates are meaningful",
+    "held_out_fraction": 0.5001
   }
 }

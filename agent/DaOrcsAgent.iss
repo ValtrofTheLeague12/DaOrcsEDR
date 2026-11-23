@@ -75,9 +75,9 @@ const
   AgentServiceKey = 'SYSTEM\CurrentControlSet\Services\DaOrcsEndpointAgent';
 
   { Per-target configuration seeded into agent.json on a fresh install.
-    The tokens are replaced with the /APIHOST, /BROKERS and /TOPIC values
-    (or the defaults below) before the file is written. The result must stay
-    valid JSON: every value is character-validated, so a mistyped switch
+    The tokens are replaced with the /APIHOST, /APIPORT, /BROKERS and /TOPIC
+    values (or the defaults below) before the file is written. The result must
+    stay valid JSON: every value is character-validated, so a mistyped switch
     aborts setup instead of producing an agent that cannot reach the broker. }
   SeedConfigTemplate =
     '{"watch_dirs":["%PUBLIC%\\Downloads","%PUBLIC%\\Desktop"],' +
@@ -88,7 +88,7 @@ const
     '"log_file":"%APPDATA%\\DaOrcs\\Agent\\logs\\agent.log",' +
     '"detections_file":"%APPDATA%\\DaOrcs\\Agent\\logs\\detections.log",' +
     '"log_level":"INFO",' +
-    '"api":{"enabled":true,"host":"@APIHOST@","port":8787},' +
+    '"api":{"enabled":true,"host":"@APIHOST@","port":@APIPORT@},' +
     '"kafka":{"bootstrap_servers":"@BROKERS@","topic":"@TOPIC@",' +
     '"producer_config":{}}}';
 
@@ -103,6 +103,7 @@ var
   ContentsPage: TWizardPage;
   ContentsMemo: TNewMemo;
   DeployApiHost: string;
+  DeployApiPort: string;
   DeployBrokers: string;
   DeployTopic: string;
   DeployParamsGiven: Boolean;
@@ -159,6 +160,7 @@ begin
     DeployNote :=
       'DEPLOY CONFIGURATION' + #13#10 +
       '  /APIHOST=' + DeployApiHost + #13#10 +
+      '  /APIPORT=' + DeployApiPort + #13#10 +
       '  /BROKERS=' + DeployBrokers + #13#10 +
       '  /TOPIC=' + DeployTopic + #13#10 +
       '  A fresh install writes these into agent.json. An upgrade keeps the' + #13#10 +
@@ -169,7 +171,7 @@ begin
     DeployNote :=
       'DEPLOY CONFIGURATION' + #13#10 +
       '  Not supplied. A fresh install uses the defaults' + #13#10 +
-      '  (APIHOST 0.0.0.0, broker 192.168.56.1:9092, topic analysis-artifacts).' + #13#10 +
+      '  (APIHOST 0.0.0.0:8787, broker 192.168.56.1:9092, topic analysis-artifacts).' + #13#10 +
       '  Run setup with /APIHOST=<this machine''s IP> so the panel can reach' + #13#10 +
       '  the heartbeat.' + #13#10 +
       '' + #13#10 +
@@ -382,6 +384,22 @@ begin
   Result := OnlyAllowedChars(Value, '._-', 249);
 end;
 
+function ValidDeployPort(const Value: string): Boolean;
+var
+  Index: Integer;
+  PortNum: Integer;
+begin
+  { Digits only, in range; the seeded JSON must stay a bare JSON number. }
+  Result := False;
+  if (Value = '') or (Length(Value) > 5) then
+    exit;
+  for Index := 1 to Length(Value) do
+    if (Value[Index] < '0') or (Value[Index] > '9') then
+      exit;
+  PortNum := StrToInt(Value);
+  Result := (PortNum >= 1) and (PortNum <= 65535);
+end;
+
 function ValidDeployBrokers(const Value: string): Boolean;
 var
   Rest, Entry, Host, PortText: string;
@@ -431,9 +449,10 @@ end;
 procedure LoadDeployParameters(var Problems: string);
 var
   Value: string;
-  HasApiHost, HasBrokers, HasTopic: Boolean;
+  HasApiHost, HasApiPort, HasBrokers, HasTopic: Boolean;
 begin
   DeployApiHost := '0.0.0.0';
+  DeployApiPort := '8787';
   DeployBrokers := '192.168.56.1:9092';
   DeployTopic := 'analysis-artifacts';
   HasApiHost := GetDeployValue('/APIHOST', Value);
@@ -445,6 +464,16 @@ begin
       Problems := Problems +
         '  /APIHOST=' + Value +
         ' is not an IP address or host name.' + #13#10;
+  end;
+  HasApiPort := GetDeployValue('/APIPORT', Value);
+  if HasApiPort then
+  begin
+    if ValidDeployPort(Value) then
+      DeployApiPort := Value
+    else
+      Problems := Problems +
+        '  /APIPORT=' + Value +
+        ' is not a TCP port between 1 and 65535.' + #13#10;
   end;
   HasBrokers := GetDeployValue('/BROKERS', Value);
   if HasBrokers then
@@ -466,7 +495,7 @@ begin
         '  /TOPIC=' + Value +
         ' uses characters outside A-Z a-z 0-9 . _ -.' + #13#10;
   end;
-  DeployParamsGiven := HasApiHost or HasBrokers or HasTopic;
+  DeployParamsGiven := HasApiHost or HasApiPort or HasBrokers or HasTopic;
 end;
 
 function PromptWipeLogs: Boolean;
@@ -552,14 +581,15 @@ begin
     SuppressibleMsgBox(
       'DaOrcs Endpoint Agent setup was given invalid deploy parameters:' + #13#10 + #13#10 +
       Problems + #13#10 +
-      'Re-run with corrected /APIHOST, /BROKERS and /TOPIC values, or ' +
-      'without them to use the defaults.',
+      'Re-run with corrected /APIHOST, /APIPORT, /BROKERS and /TOPIC values, ' +
+      'or without them to use the defaults.',
       mbError, MB_OK, IDOK);
     Result := False;
     exit;
   end;
   if DeployParamsGiven then
     DaOrcsLog('Deploy parameters: APIHOST=' + DeployApiHost +
+      ' APIPORT=' + DeployApiPort +
       ' BROKERS=' + DeployBrokers + ' TOPIC=' + DeployTopic)
   else
     DaOrcsLog('No deploy parameters: a fresh install will use the defaults');
@@ -653,6 +683,7 @@ begin
   end;
   Payload := SeedConfigTemplate;
   StringChangeEx(Payload, '@APIHOST@', DeployApiHost, True);
+  StringChangeEx(Payload, '@APIPORT@', DeployApiPort, True);
   StringChangeEx(Payload, '@BROKERS@', DeployBrokers, True);
   StringChangeEx(Payload, '@TOPIC@', DeployTopic, True);
   try
@@ -662,10 +693,11 @@ begin
   end;
   if SaveStringToFile(Target, Payload + #13#10, False) then
     DaOrcsLog('Seeded agent.json: APIHOST=' + DeployApiHost +
+      ' APIPORT=' + DeployApiPort +
       ' BROKERS=' + DeployBrokers + ' TOPIC=' + DeployTopic +
-      ' (the panel can reach the heartbeat on port 8787; allow inbound ' +
-      'port 8787 in this endpoint''s firewall, restricted to the panel''s ' +
-      'subnet)')
+      ' (the panel can reach the heartbeat; allow inbound port ' +
+      DeployApiPort + ' in this endpoint''s firewall, restricted to the ' +
+      'panel''s subnet)')
   else
     DaOrcsLog('WARNING: could not write ' + Target +
       '; the example agent.json is installed instead');

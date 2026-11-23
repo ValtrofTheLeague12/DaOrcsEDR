@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Shared logging for the ml/ scripts.
 
-Each run appends to a timestamped file under logs/ at the repo root
-($ML_LOG_DIR overrides it when ml/ is copied onto a training VM):
+Each run appends to a timestamped file under the AppData root:
+
+    %APPDATA%/IAProject/logs/ml_<script>_<UTC yyyymmdd-HHMMSS>.log
+
+so run logs join the analyzer's under the one generated-state tree instead of
+landing in the repo. $ML_LOG_DIR overrides it when ml/ is copied onto a
+training VM, and IA_APPDATA_DIR relocates the AppData root itself:
 
     logs/ml_<script>_<UTC yyyymmdd-HHMMSS>.log
 
@@ -32,12 +37,28 @@ _FILE_DATE = "%Y-%m-%d %H:%M:%S"
 
 
 def log_dir() -> Path:
-    """Destination for log files: $ML_LOG_DIR, else <repo>/logs."""
+    """Destination for log files: $ML_LOG_DIR, else <AppData>/IAProject/logs.
+
+    Mirrors python/panel/core/config.py and include/core/app_paths.hpp: every
+    component writes its run logs under one AppData root, so a run leaves
+    nothing behind in the repo or in whatever directory it was started from.
+    IA_APPDATA_DIR relocates that root, which is what the tests use.
+    """
     override = os.environ.get("ML_LOG_DIR")
     if override:
         return Path(override)
-    # ml/mllog.py -> repo root is parents[1].
-    return Path(__file__).resolve().parents[1] / "logs"
+    appdata = os.environ.get("IA_APPDATA_DIR")
+    if appdata:
+        return Path(appdata) / "logs"
+    if os.name == "nt":
+        base = os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "IAProject" / "logs"
+        return Path.home() / "AppData" / "Roaming" / "IAProject" / "logs"
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if xdg:
+        return Path(xdg) / "IAProject" / "logs"
+    return Path.home() / ".local" / "share" / "IAProject" / "logs"
 
 
 class _LevelRange(logging.Filter):

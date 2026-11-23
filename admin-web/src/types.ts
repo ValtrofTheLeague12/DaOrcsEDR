@@ -2924,6 +2924,9 @@ export interface AgentHeartbeatAgent {
   started_at: string
   uptime_seconds: number
   state: string
+  /** True while POST /api/v1/control {"action":"stop"} has parked the scan
+   *  loop; the agent keeps answering the heartbeat in this state. */
+  scan_paused: boolean
 }
 
 export interface AgentHeartbeat {
@@ -2995,5 +2998,40 @@ export interface AgentDetections {
   file: string
   count: number
   detections: Array<Record<string, unknown>>
+}
+
+/**
+ * One installer deploy: build (agent/build.ps1), stage (Setup exe +
+ * per-agent agent.json + install script), upload to MEGA, share the link.
+ */
+export interface AgentDeployJob {
+  id: string
+  kind: 'agent-deploy'
+  agent: string
+  state: 'running' | 'done' | 'error'
+  started_at: number | null
+  finished_at: number | null
+  exit_code: number | null
+  error: string | null
+  /** The whole log so far; it grows with every poll. */
+  log: string[]
+  log_truncated?: number
+  /** The staged Setup exe on this machine, once built. */
+  artifact: string | null
+  bytes: number | null
+  sha256: string | null
+  remote_path: string | null
+  /** The public mega.nz URL - the whole point of the deploy. */
+  link: string | null
+  account: string | null
+  /** The share.json expiry policy applied, null for permanent. */
+  expire: string | null
+  /** The per-agent configuration the staged package seeds into agent.json,
+   *  shown on the deploy section so the fleet card can display the port and
+   *  values without parsing the file. */
+  api_host: string | null
+  api_port: number | null
+  brokers: string | null
+  topic: string | null
 }
 
